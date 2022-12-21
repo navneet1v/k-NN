@@ -12,13 +12,13 @@ from .util import bulk_transform, parse_string_parameter, parse_int_parameter, \
 
 
 def register(registry):
-    # registry.register_param_source(
-    #     "bulk-from-data-set", BulkVectorsFromDataSetParamSource
-    # )
+    registry.register_param_source(
+        "bulk-from-data-set", BulkVectorsFromDataSetParamSource
+    )
 
-    # registry.register_param_source(
-    #     "knn-query-from-data-set", QueryVectorsFromDataSetParamSource
-    # )
+    registry.register_param_source(
+        "knn-query-from-data-set", QueryVectorsFromDataSetParamSource
+    )
 
     registry.register_param_source(
         "es-bulk-from-data-set", ESBulkVectorsFromDataSetParamSource
