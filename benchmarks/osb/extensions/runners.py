@@ -16,12 +16,12 @@ def register(registry):
     registry.register_runner(
         "custom-refresh", CustomRefreshRunner(), async_runner=True
     )
-    registry.register_runner(
-        "train-model", TrainModelRunner(), async_runner=True
-    )
-    registry.register_runner(
-        "delete-model", DeleteModelRunner(), async_runner=True
-    )
+    # registry.register_runner(
+    #     "train-model", TrainModelRunner(), async_runner=True
+    # )
+    # registry.register_runner(
+    #     "delete-model", DeleteModelRunner(), async_runner=True
+    # )
 
 
 class BulkVectorsFromDataSetRunner:

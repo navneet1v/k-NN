@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "index": {
+      "number_of_shards": {{ target_index_primary_shards }},
+      "number_of_replicas": {{ target_index_replica_shards }}
+    }
+  },
+  "mappings": {
+    "properties": {
+      "target_field": {
+        "type": "dense_vector",
+        "dims": {{ target_index_dimension }},
+        "index": true,
+        "similarity": "dot_product",
+        "index_options": {
+          "type": "hnsw",
+          "m": {{ hnsw_m }},
+          "ef_construction": {{ hnsw_ef_construction }}
+        }
+      }
+    }
+  }
+}
+

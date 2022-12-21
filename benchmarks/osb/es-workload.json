@@ -1,0 +1,13 @@
+{% import "benchmark.helpers" as benchmark with context %}
+{
+  "version": 2,
+  "description": "ES k-NN Plugin workload",
+  "indices": [
+    {
+      "name": "{{ target_index_name }}",
+      "body": "{{ target_index_body }}"
+    }
+  ],
+  "operations": {{ benchmark.collect(parts="operations/default-2.json") }},
+  "test_procedures": [{{ benchmark.collect(parts="procedures/es-test.json") }}]
+}
