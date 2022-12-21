@@ -1,6 +1,6 @@
 {% import "benchmark.helpers" as benchmark with context %}
 {
-  "name": "no-train-test",
+  "name": "es-test",
   "default": true,
   "schedule": [
     {
@@ -29,7 +29,7 @@
     "operation": {
       "name": "custom-vector-bulk",
       "operation-type": "custom-vector-bulk",
-      "param-source": "bulk-from-data-set",
+      "param-source": "es-bulk-from-data-set",
       "index": "{{ target_index_name }}",
       "field": "{{ target_field_name }}",
       "bulk_size": {{ target_index_bulk_size }},
@@ -48,7 +48,7 @@
     },
     {
       "operation": {
-        "name": "knn-query-from-data-set",
+        "name": "es-knn-query-from-data-set",
         "operation-type": "search",
         "index": "{{ target_index_name }}",
         "param-source": "knn-query-from-data-set",

@@ -12,12 +12,20 @@ from .util import bulk_transform, parse_string_parameter, parse_int_parameter, \
 
 
 def register(registry):
+    # registry.register_param_source(
+    #     "bulk-from-data-set", BulkVectorsFromDataSetParamSource
+    # )
+
+    # registry.register_param_source(
+    #     "knn-query-from-data-set", QueryVectorsFromDataSetParamSource
+    # )
+
     registry.register_param_source(
-        "bulk-from-data-set", BulkVectorsFromDataSetParamSource
+        "es-bulk-from-data-set", ESBulkVectorsFromDataSetParamSource
     )
 
     registry.register_param_source(
-        "knn-query-from-data-set", QueryVectorsFromDataSetParamSource
+        "es-knn-query-from-data-set", ESQueryVectorsFromDataSetParamSource
     )
 
 
@@ -178,6 +186,77 @@ class QueryVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
         }
 
 
+class ESQueryVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
+    """ Query parameter source for k-NN. Queries are created from data set
+    provided.
+
+    Attributes:
+        k: The number of results to return for the search
+        vector_batch: List of vectors to be read from data set. Read are batched
+                        so that we do not need to read from disk for each query
+    """
+
+    VECTOR_READ_BATCH_SIZE = 100  # batch size to read vectors from data-set
+
+    def __init__(self, workload, params, **kwargs):
+        super().__init__(params, Context.QUERY)
+        self.k = parse_int_parameter("k", params)
+        self.vector_batch = None
+
+    def params(self):
+        """
+        Returns: A query parameter with a vector from a data set
+        """
+        if self.current >= self.num_vectors + self.offset:
+            raise StopIteration
+
+        if self.vector_batch is None or len(self.vector_batch) == 0:
+            self.vector_batch = self._batch_read(self.data_set)
+            if self.vector_batch is None:
+                raise StopIteration
+        vector = self.vector_batch.pop(0)
+        self.current += 1
+        self.percent_completed = self.current / self.total
+
+        return self._build_query_body(self.index_name, self.field_name, self.k,
+                                      vector)
+
+    def _batch_read(self, data_set: DataSet):
+        return list(data_set.read(self.VECTOR_READ_BATCH_SIZE))
+
+    def _build_query_body(self, index_name: str, field_name: str, k: int,
+                          vector) -> dict:
+        """Builds a k-NN query that can be used to execute an approximate nearest
+        neighbor search against a k-NN plugin index
+        Args:
+            index_name: name of index to search
+            field_name: name of field to search
+            k: number of results to return
+            vector: vector used for query
+        Returns:
+            A dictionary containing the body used for search, a set of request
+            parameters to attach to the search and the name of the index.
+        """
+        return {
+            "index": index_name,
+            "request-params": {
+                "_source": {
+                    "exclude": [field_name]
+                }
+            },
+            "body": {
+                "size": k,
+                "knn": {
+                    "field": field_name,
+                    "query_vector": vector,
+                    "k": k,
+                    "num_candidates": 100
+                }
+
+            }
+        }
+
+
 class BulkVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
     """ Create bulk index requests from a data set of vectors.
 
@@ -206,6 +285,46 @@ class BulkVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
 
         partition = self.data_set.read(self.bulk_size)
         body = bulk_transform(partition, self.field_name, action, self.current)
+        size = len(body) // 2
+        self.current += size
+        self.percent_completed = self.current / self.total
+
+        return {
+            "body": body,
+            "retries": self.retries,
+            "size": size
+        }
+
+
+class ESBulkVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
+    """ Create bulk index requests from a data set of vectors.
+
+    Attributes:
+        bulk_size: number of vectors per request
+        retries: number of times to retry the request when it fails
+    """
+
+    DEFAULT_RETRIES = 10
+
+    def __init__(self, workload, params, **kwargs):
+        super().__init__(params, Context.INDEX)
+        self.bulk_size: int = parse_int_parameter("bulk_size", params)
+        self.retries: int = parse_int_parameter("retries", params,
+                                                self.DEFAULT_RETRIES)
+
+    def params(self):
+        """
+        Returns: A bulk index parameter with vectors from a data set.
+        """
+        if self.current >= self.num_vectors + self.offset:
+            raise StopIteration
+
+        def action(doc_id):
+            return {'index': {'_index': self.index_name, '_id': doc_id}}
+
+        partition = self.data_set.read(self.bulk_size)
+        body = bulk_transform(partition, self.field_name, action, self.current)
+        print(body)
         size = len(body) // 2
         self.current += size
         self.percent_completed = self.current / self.total

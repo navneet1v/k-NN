@@ -11,7 +11,7 @@
         "type": "dense_vector",
         "dims": {{ target_index_dimension }},
         "index": true,
-        "similarity": "dot_product",
+        "similarity": "l2_norm",
         "index_options": {
           "type": "hnsw",
           "m": {{ hnsw_m }},
