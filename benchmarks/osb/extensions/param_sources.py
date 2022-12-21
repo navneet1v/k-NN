@@ -324,7 +324,6 @@ class ESBulkVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
 
         partition = self.data_set.read(self.bulk_size)
         body = bulk_transform(partition, self.field_name, action, self.current)
-        print(body)
         size = len(body) // 2
         self.current += size
         self.percent_completed = self.current / self.total

@@ -48,10 +48,10 @@
     },
     {
       "operation": {
-        "name": "es-knn-query-from-data-set",
+        "name": "knn-query-from-data-set",
         "operation-type": "search",
         "index": "{{ target_index_name }}",
-        "param-source": "knn-query-from-data-set",
+        "param-source": "es-knn-query-from-data-set",
         "k": {{ query_k }},
         "field": "{{ target_field_name }}",
         "data_set_format": "{{ query_data_set_format }}",
