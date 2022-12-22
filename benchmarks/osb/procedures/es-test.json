@@ -48,6 +48,20 @@
     },
     {
       "operation": {
+        "operation-type": "force-merge",
+        "request-timeout": 7200,
+        "max-num-segments": 30
+      }
+    },
+    {
+      "name": "wait-for-cluster-to-be-green",
+      "operation": "cluster-health",
+        "request-params": {
+        "wait_for_status": "green"
+      }
+    },
+    {
+      "operation": {
         "name": "knn-query-from-data-set",
         "operation-type": "search",
         "index": "{{ target_index_name }}",
