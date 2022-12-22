@@ -8,7 +8,10 @@
         "name": "delete-target-index",
         "operation-type": "delete-index",
         "only-if-exists": true,
-        "index": "{{ target_index_name }}"
+        "index": "{{ target_index_name }}",
+        "request-params" : {
+            "timeout": "5m"
+        }
       }
     },
     {
