@@ -57,8 +57,7 @@ class CustomRefreshRunner:
         for _ in range(retries):
             try:
                 await opensearch.indices.refresh(
-                    index=parse_string_parameter("index", params),
-                    timeout='5m'
+                    index=parse_string_parameter("index", params)
                 )
 
                 return
