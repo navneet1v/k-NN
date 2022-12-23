@@ -1,6 +1,6 @@
 {% import "benchmark.helpers" as benchmark with context %}
 {
-  "name": "os-nsmlib-test",
+  "name": "os-nmslib-test",
   "default": true,
   "schedule": [
     {
