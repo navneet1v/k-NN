@@ -54,7 +54,7 @@
       }
     },
     {
-      "name": "wait-for-cluster-to-be-green",
+      "name": "wait-for-cluster-to-be-green-2",
       "operation": "cluster-health",
         "request-params": {
         "wait_for_status": "green"
