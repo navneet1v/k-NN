@@ -1,7 +1,7 @@
 {% import "benchmark.helpers" as benchmark with context %}
 {
   "version": 2,
-  "description": "OS k-NN Plugin workload-Lucene",
+  "description": "OS k-NN Plugin workload-NMSLib",
   "indices": [
     {
       "name": "{{ target_index_name }}",
@@ -9,5 +9,5 @@
     }
   ],
   "operations": {{ benchmark.collect(parts="operations/default-2.json") }},
-  "test_procedures": [{{ benchmark.collect(parts="procedures/os-lucene-test.json") }}]
+  "test_procedures": [{{ benchmark.collect(parts="procedures/os-nsmlib-test.json") }}]
 }

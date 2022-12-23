@@ -1,0 +1,20 @@
+{
+  "target_index_name": "target_index_nmslib",
+  "target_field_name": "target_field",
+  "target_index_body": "indices/nsmlib-index.json",
+  "target_index_primary_shards": 3,
+  "target_index_replica_shards": 0,
+  "target_index_dimension": 128,
+  "target_index_space_type": "l2",
+  "target_index_bulk_size": 200,
+  "target_index_bulk_index_data_set_format": "hdf5",
+  "target_index_bulk_index_data_set_path": "dataset/sift-128-euclidean.hdf5",
+  "target_index_bulk_index_clients": 10,
+  "hnsw_ef_construction": 512,
+  "hnsw_m": 16,
+
+  "query_k": 10,
+  "query_clients": 10,
+  "query_data_set_format": "hdf5",
+  "query_data_set_path": "dataset/sift-128-euclidean.hdf5"
+}
