@@ -16,5 +16,6 @@
   "query_k": 10,
   "query_clients": 10,
   "query_data_set_format": "hdf5",
-  "query_data_set_path": "dataset/sift-128-euclidean.hdf5"
+  "query_data_set_path": "dataset/sift-128-euclidean.hdf5",
+  "warmup_iterations" : 50
 }

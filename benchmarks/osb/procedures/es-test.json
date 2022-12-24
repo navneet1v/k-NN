@@ -71,6 +71,7 @@
         "data_set_format": "{{ query_data_set_format }}",
         "data_set_path": "{{ query_data_set_path }}"
       },
+      "warmup-iterations": {{warmup_iterations}},
       "clients": {{ query_clients }}
     }
   ]
