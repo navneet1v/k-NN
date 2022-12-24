@@ -39,12 +39,8 @@
       "clients": {{ target_index_bulk_index_clients }}
     },
     {
-    "operation": {
-        "name": "refresh-target-index",
-        "operation-type": "custom-refresh",
-        "index": "{{ target_index_name }}",
-        "retries": 100
-      }
+      "name": "refresh-after-index",
+      "operation": "refresh"
     },
     {
     "operation": {
@@ -52,6 +48,13 @@
       "request-timeout": 7200,
         "max-num-segments": 30
       }
+    },
+    {
+      "name": "refresh-after-force-merge",
+      "operation": "refresh"
+    },
+    {
+      "operation": "wait-until-merges-finish"
     },
     {
       "name": "wait-for-cluster-to-be-green-2",
