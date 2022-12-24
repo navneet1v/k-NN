@@ -9,5 +9,5 @@
     }
   ],
   "operations": {{ benchmark.collect(parts="operations/default-2.json") }},
-  "test_procedures": [{{ benchmark.collect(parts="procedures/os-nsmlib-test.json") }}]
+  "test_procedures": [{{ benchmark.collect(parts="procedures/os-nmslib-test.json") }}]
 }

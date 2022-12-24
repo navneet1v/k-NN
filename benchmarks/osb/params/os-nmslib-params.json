@@ -1,7 +1,7 @@
 {
   "target_index_name": "target_index_nmslib",
   "target_field_name": "target_field",
-  "target_index_body": "indices/nsmlib-index.json",
+  "target_index_body": "indices/nmslib-index.json",
   "target_index_primary_shards": 3,
   "target_index_replica_shards": 0,
   "target_index_dimension": 128,
