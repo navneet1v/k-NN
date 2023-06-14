@@ -11,6 +11,7 @@
 
 package org.opensearch.knn.plugin.transport;
 
+import org.apache.commons.lang.StringUtils;
 import org.opensearch.action.ActionRequest;
 import org.opensearch.action.ActionRequestValidationException;
 import org.opensearch.common.Strings;
@@ -43,7 +44,7 @@ public class DeleteModelRequest extends ActionRequest {
 
     @Override
     public ActionRequestValidationException validate() {
-        if (Strings.hasText(modelID)) {
+        if (StringUtils.isNotBlank(modelID)) {
             return null;
         }
         return addValidationError("Model id cannot be empty ", null);
