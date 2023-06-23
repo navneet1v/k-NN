@@ -204,7 +204,10 @@ class BulkVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
         def action(doc_id):
             return {'index': {'_index': self.index_name, '_id': doc_id}}
 
-        partition = self.data_set.read(self.bulk_size)
+        # see how many vectors we can ingest, if we are going over the total number of vectors that this partition can
+        # ingest then reduce the bulk size.
+        vector_to_read = self.bulk_size if self.current <= self.num_vectors + self.offset + self.bulk_size else self.current - (self.num_vectors + self.offset)
+        partition = self.data_set.read(vector_to_read)
         body = bulk_transform(partition, self.field_name, action, self.current)
         size = len(body) // 2
         self.current += size
