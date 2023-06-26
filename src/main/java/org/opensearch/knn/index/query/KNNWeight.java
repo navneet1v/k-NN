@@ -99,11 +99,19 @@ public class KNNWeight extends Weight {
 
     @Override
     public Scorer scorer(LeafReaderContext context) throws IOException {
-        final int[] filterIdsArray = getFilterIdsArray(context);
+        final Bits liveDocs = context.reader().getLiveDocs();
+        final int maxDoc = context.reader().maxDoc();
+        DocIdSetIterator filteredocIdSetIterator = null;
+        int filterIdsSize = 0;
+        if(filterWeight != null) {
+            filteredocIdSetIterator = getFilteredDocsIdsIterator(context, this.filterWeight, liveDocs);
+        }
+
+        //final int[] filterIdsArray = getFilterIdsArray(context);
         // We don't need to go to JNI layer if no documents are found which satisfy the filters
         // We should give this condition a deeper look that where it should be placed. For now I feel this is a good
         // place,
-        if (filterWeight != null && filterIdsArray.length == 0) {
+        if (filterWeight != null && (filteredocIdSetIterator == null || filteredocIdSetIterator.cost() == 0)) {
             return KNNScorer.emptyScorer(this);
         }
         final Map<Integer, Float> docIdsToScoreMap = new HashMap<>();
@@ -113,10 +121,24 @@ public class KNNWeight extends Weight {
          * . Hence, if filtered results are less than K and filter query is present we should shift to exact search.
          * This improves the recall.
          */
-        if (filterWeight != null && filterIdsArray.length <= knnQuery.getK()) {
-            docIdsToScoreMap.putAll(doExactSearch(context, filterIdsArray));
+        if (filterWeight != null && filterIdsSize <= knnQuery.getK()) {
+            docIdsToScoreMap.putAll(doExactSearch(context, filteredocIdSetIterator));
         } else {
-            final Map<Integer, Float> annResults = doANNSearch(context, filterIdsArray);
+            char[] bitsetVector = new char[0];
+            if(filteredocIdSetIterator != null) {
+                int bitsetArraySize = (maxDoc >> 3) + 1;
+                bitsetVector = new char[bitsetArraySize];
+                while (true) {
+                    int docId = filteredocIdSetIterator.nextDoc();
+                    if (docId == DocIdSetIterator.NO_MORE_DOCS || docId + 1 == DocIdSetIterator.NO_MORE_DOCS) {
+                        break;
+                    }
+                    int bitsetArrayIndex = docId >> 3; // is equivalent to value / 8
+                    bitsetVector[bitsetArrayIndex] = (char) (bitsetVector[bitsetArrayIndex] | (1 << (docId & 7)));
+                }
+            }
+
+            final Map<Integer, Float> annResults = doANNSearch(context, bitsetVector);
             if (annResults == null) {
                 return null;
             }
@@ -140,7 +162,41 @@ public class KNNWeight extends Weight {
         return createBitSet(scorer.iterator(), liveDocs, maxDoc);
     }
 
+    private BitSet getFilteredDocsBitSet(final LeafReaderContext ctx, final Weight filterWeight, Bits liveDocs,
+                                         int maxDoc) throws IOException {
+        final Scorer scorer = filterWeight.scorer(ctx);
+        if (scorer == null) {
+            return new FixedBitSet(0);
+        }
+
+        return createBitSet(scorer.iterator(), liveDocs, maxDoc);
+    }
+
+    private DocIdSetIterator getFilteredDocsIdsIterator(final LeafReaderContext ctx, final Weight filterWeight, Bits liveDocs) throws IOException {
+        final Scorer scorer = filterWeight.scorer(ctx);
+        if (scorer == null) {
+            return DocIdSetIterator.empty();
+        }
+
+        // I think we can avoid creating and just use the iterator, but right now let just create a bitset.
+        if (liveDocs == null) {
+            // If we already have a BitSet and no deletions, reuse the BitSet
+            return scorer.iterator();
+        }
+        // Create a new BitSet from matching and live docs
+        return new FilteredDocIdSetIterator(scorer.iterator()) {
+            @Override
+            protected boolean match(int doc) {
+                return liveDocs.get(doc);
+            }
+        };
+        //return BitSet.of(filterIterator, maxDoc);
+
+        //return createBitSet(scorer.iterator(), liveDocs, maxDoc);
+    }
+
     private BitSet createBitSet(final DocIdSetIterator filteredDocIdsIterator, final Bits liveDocs, int maxDoc) throws IOException {
+        // I think we can avoid creating and just use the iterator, but right now let just create a bitset.
         if (liveDocs == null && filteredDocIdsIterator instanceof BitSetIterator) {
             // If we already have a BitSet and no deletions, reuse the BitSet
             return ((BitSetIterator) filteredDocIdsIterator).getBitSet();
@@ -176,7 +232,7 @@ public class KNNWeight extends Weight {
         return filteredIds;
     }
 
-    private Map<Integer, Float> doANNSearch(final LeafReaderContext context, final int[] filterIdsArray) throws IOException {
+    private Map<Integer, Float> doANNSearch(final LeafReaderContext context, final char[] filterIdsBitset) throws IOException {
         SegmentReader reader = (SegmentReader) FilterLeafReader.unwrap(context.reader());
         String directory = ((FSDirectory) FilterDirectory.unwrap(reader.directory())).getDirectory().toString();
 
@@ -254,12 +310,12 @@ public class KNNWeight extends Weight {
                 throw new RuntimeException("Index has already been closed");
             }
 
-            results = JNIService.queryIndex(
+            results = JNIService.queryIndex_withBits(
                 indexAllocation.getMemoryAddress(),
                 knnQuery.getQueryVector(),
                 knnQuery.getK(),
                 knnEngine.getName(),
-                filterIdsArray
+                filterIdsBitset
             );
 
         } catch (Exception e) {
@@ -284,7 +340,8 @@ public class KNNWeight extends Weight {
             .collect(Collectors.toMap(KNNQueryResult::getId, result -> knnEngine.score(result.getScore(), spaceType)));
     }
 
-    private Map<Integer, Float> doExactSearch(final LeafReaderContext leafReaderContext, final int[] filterIdsArray) {
+    private Map<Integer, Float> doExactSearch(final LeafReaderContext leafReaderContext,
+                                              final DocIdSetIterator docIdSetIterator) {
         final SegmentReader reader = (SegmentReader) FilterLeafReader.unwrap(leafReaderContext.reader());
         final FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(knnQuery.getField());
         float[] queryVector = this.knnQuery.getQueryVector();
@@ -295,8 +352,15 @@ public class KNNWeight extends Weight {
             final HitQueue queue = new HitQueue(this.knnQuery.getK(), true);
             ScoreDoc topDoc = queue.top();
             final Map<Integer, Float> docToScore = new HashMap<>();
-            for (int filterId : filterIdsArray) {
-                int docId = values.advance(filterId);
+            int docId = 0;
+            while(true) {
+                // get the Id
+                docId = docIdSetIterator.advance(docId);
+                if (docId == DocIdSetIterator.NO_MORE_DOCS || docId + 1 == DocIdSetIterator.NO_MORE_DOCS) {
+                    break;
+                }
+                // advance the docValue to that Id
+                values.advance(docId);
                 final BytesRef value = values.binaryValue();
                 final ByteArrayInputStream byteStream = new ByteArrayInputStream(value.bytes, value.offset, value.length);
                 final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
@@ -311,6 +375,8 @@ public class KNNWeight extends Weight {
                     // have seen till now on top.
                     topDoc = queue.updateTop();
                 }
+                // Move to next docId in the bitset
+                docId++;
             }
             // If scores are negative we will remove them.
             // This is done, because there can be negative values in the Heap as we init the heap with Score as -INF.

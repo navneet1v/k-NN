@@ -11,6 +11,7 @@
 
 package org.opensearch.knn.jni;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang.ArrayUtils;
 import org.opensearch.knn.index.query.KNNQueryResult;
 import org.opensearch.knn.index.util.KNNEngine;
@@ -20,6 +21,7 @@ import java.util.Map;
 /**
  * Service to distribute requests to the proper engine jni service
  */
+@Log4j2
 public class JNIService {
 
     /**
@@ -112,7 +114,26 @@ public class JNIService {
             // filterIds. FilterIds is coming as empty then its the case where we need to do search with Faiss engine
             // normally.
             if (ArrayUtils.isNotEmpty(filteredIds)) {
-                return FaissService.queryIndexWithFilter(indexPointer, queryVector, k, filteredIds);
+                return FaissService.queryIndexWithFilter(indexPointer, queryVector, k, filteredIds, null);
+            }
+            return FaissService.queryIndex(indexPointer, queryVector, k);
+        }
+        throw new IllegalArgumentException("QueryIndex not supported for provided engine");
+    }
+
+    public static KNNQueryResult[] queryIndex_withBits(long indexPointer, float[] queryVector, int k, String engineName,
+                                              char[] filteredIds) {
+        if (KNNEngine.NMSLIB.getName().equals(engineName)) {
+            return NmslibService.queryIndex(indexPointer, queryVector, k);
+        }
+
+        if (KNNEngine.FAISS.getName().equals(engineName)) {
+            // This code assumes that if filteredIds == null / filteredIds.length == 0 if filter is specified then empty
+            // k-NN results are already returned. Otherwise, it's a filter case and we need to run search with
+            // filterIds. FilterIds is coming as empty then its the case where we need to do search with Faiss engine
+            // normally.
+            if (ArrayUtils.isNotEmpty(filteredIds)) {
+                return FaissService.queryIndexWithFilter(indexPointer, queryVector, k, null, filteredIds);
             }
             return FaissService.queryIndex(indexPointer, queryVector, k);
         }

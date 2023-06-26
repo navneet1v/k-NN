@@ -93,6 +93,8 @@ namespace knn_jni {
 
         virtual jint * GetIntArrayElements(JNIEnv *env, jintArray array, jboolean * isCopy) = 0;
 
+        virtual jchar * GetCharArrayElements(JNIEnv *env, jcharArray array, jboolean * isCopy) = 0;
+
         virtual jobject GetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index) = 0;
 
         virtual jobject NewObject(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance) = 0;
@@ -106,6 +108,8 @@ namespace knn_jni {
         virtual void ReleaseFloatArrayElements(JNIEnv *env, jfloatArray array, jfloat *elems, int mode) = 0;
 
         virtual void ReleaseIntArrayElements(JNIEnv *env, jintArray array, jint *elems, jint mode) = 0;
+
+        virtual void ReleaseCharArrayElements(JNIEnv *env, jcharArray array, jchar *elems, jint mode) = 0;
 
         virtual void SetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index, jobject val) = 0;
 
@@ -145,6 +149,7 @@ namespace knn_jni {
         jbyte * GetByteArrayElements(JNIEnv *env, jbyteArray array, jboolean * isCopy);
         jfloat * GetFloatArrayElements(JNIEnv *env, jfloatArray array, jboolean * isCopy);
         jint * GetIntArrayElements(JNIEnv *env, jintArray array, jboolean * isCopy);
+        jchar * GetCharArrayElements(JNIEnv *env, jcharArray array, jboolean * isCopy);
         jobject GetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index);
         jobject NewObject(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance);
         jobjectArray NewObjectArray(JNIEnv *env, jsize len, jclass clazz, jobject init);
@@ -152,6 +157,7 @@ namespace knn_jni {
         void ReleaseByteArrayElements(JNIEnv *env, jbyteArray array, jbyte *elems, int mode);
         void ReleaseFloatArrayElements(JNIEnv *env, jfloatArray array, jfloat *elems, int mode);
         void ReleaseIntArrayElements(JNIEnv *env, jintArray array, jint *elems, jint mode);
+        void ReleaseCharArrayElements(JNIEnv *env, jcharArray array, jchar *elems, jint mode);
         void SetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index, jobject val);
         void SetByteArrayRegion(JNIEnv *env, jbyteArray array, jsize start, jsize len, const jbyte * buf);
 

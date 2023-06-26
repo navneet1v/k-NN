@@ -376,6 +376,17 @@ jint * knn_jni::JNIUtil::GetIntArrayElements(JNIEnv *env, jintArray array, jbool
     return intArray;
 }
 
+jchar * knn_jni::JNIUtil::GetCharArrayElements(JNIEnv *env, jcharArray array, jboolean * isCopy) {
+    // Lets check for error here
+    jchar * charArray =  env->GetCharArrayElements(array, isCopy);
+    if (charArray == nullptr) {
+        this->HasExceptionInStack(env, "Unable to get char array");
+        throw std::runtime_error("Unable to get char array");
+    }
+
+    return charArray;
+}
+
 jobject knn_jni::JNIUtil::GetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index) {
     jobject object = env->GetObjectArrayElement(array, index);
     this->HasExceptionInStack(env, "Unable to get object");
@@ -422,6 +433,10 @@ void knn_jni::JNIUtil::ReleaseFloatArrayElements(JNIEnv *env, jfloatArray array,
 
 void knn_jni::JNIUtil::ReleaseIntArrayElements(JNIEnv *env, jintArray array, jint *elems, jint mode) {
     env->ReleaseIntArrayElements(array, elems, mode);
+}
+
+void knn_jni::JNIUtil::ReleaseCharArrayElements(JNIEnv *env, jcharArray array, jchar *elems, jint mode) {
+    env->ReleaseCharArrayElements(array, elems, mode);
 }
 
 void knn_jni::JNIUtil::SetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index, jobject val) {
