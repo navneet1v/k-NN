@@ -9,6 +9,7 @@ import com.google.common.cache.CacheStats;
 import com.google.common.collect.ImmutableMap;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
+import org.opensearch.knn.index.perf.PerformanceManager;
 import org.opensearch.knn.index.util.KNNEngine;
 import org.opensearch.knn.indices.ModelCache;
 import org.opensearch.knn.indices.ModelDao;
@@ -16,6 +17,7 @@ import org.opensearch.knn.plugin.stats.suppliers.EventOccurredWithinThresholdSup
 import org.opensearch.knn.plugin.stats.suppliers.KNNCircuitBreakerSupplier;
 import org.opensearch.knn.plugin.stats.suppliers.KNNCounterSupplier;
 import org.opensearch.knn.plugin.stats.suppliers.KNNInnerCacheStatsSupplier;
+import org.opensearch.knn.plugin.stats.suppliers.KNNPerfStatsSupplier;
 import org.opensearch.knn.plugin.stats.suppliers.LibraryInitializedSupplier;
 import org.opensearch.knn.plugin.stats.suppliers.ModelIndexStatusSupplier;
 import org.opensearch.knn.plugin.stats.suppliers.ModelIndexingDegradingSupplier;
@@ -84,7 +86,13 @@ public class KNNStats {
         addEngineStats(builder);
         addScriptStats(builder);
         addModelStats(builder);
+        addPerfStats(builder);
         return builder.build();
+    }
+
+    private void addPerfStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {
+        builder.put(StatNames.KNN_PERF_STATS.getName(), new KNNStat<>(false,
+                new KNNPerfStatsSupplier<>(PerformanceManager::getPerformanceStats)));
     }
 
     private void addQueryStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {

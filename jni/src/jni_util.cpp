@@ -64,6 +64,8 @@ void knn_jni::JNIUtil::Initialize(JNIEnv *env) {
     tempLocalClassRef = env->FindClass("org/opensearch/knn/index/query/KNNQueryResult");
     this->cachedClasses["org/opensearch/knn/index/query/KNNQueryResult"] = (jclass) env->NewGlobalRef(tempLocalClassRef);
     this->cachedMethods["org/opensearch/knn/index/query/KNNQueryResult:<init>"] = env->GetMethodID(tempLocalClassRef, "<init>", "(IF)V");
+    // Method signature ref: https://www.rgagnon.com/javadetails/java-0286.html
+    this->cachedMethods["org/opensearch/knn/index/query/KNNQueryResult:<init2>"] = env->GetMethodID(tempLocalClassRef, "<init>", "(IFJ)V");
     env->DeleteLocalRef(tempLocalClassRef);
 }
 
@@ -384,6 +386,17 @@ jobject knn_jni::JNIUtil::GetObjectArrayElement(JNIEnv *env, jobjectArray array,
 
 jobject knn_jni::JNIUtil::NewObject(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance) {
     jobject object = env->NewObject(clazz, methodId, id, distance);
+    if (object == nullptr) {
+        this->HasExceptionInStack(env, "Unable to create object");
+        throw std::runtime_error("Unable to create object");
+    }
+
+    return object;
+}
+
+jobject knn_jni::JNIUtil::NewObject_WithLatency(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance,
+                                                long latency) {
+    jobject object = env->NewObject(clazz, methodId, id, distance, latency);
     if (object == nullptr) {
         this->HasExceptionInStack(env, "Unable to create object");
         throw std::runtime_error("Unable to create object");

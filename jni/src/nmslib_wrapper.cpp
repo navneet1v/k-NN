@@ -23,6 +23,7 @@
 
 #include <jni.h>
 #include <string>
+#include <chrono>
 
 
 std::string TranslateSpaceType(const std::string& spaceType);
@@ -232,14 +233,16 @@ jobjectArray knn_jni::nmslib_wrapper::QueryIndex(knn_jni::JNIUtilInterface * jni
     }
     jniUtil->ReleaseFloatArrayElements(env, queryVectorJ, rawQueryvector, JNI_ABORT);
 
+    auto start = std::chrono::high_resolution_clock::now();
     similarity::KNNQuery<float> knnQuery(*(indexWrapper->space), queryObject.get(), kJ);
     indexWrapper->index->Search(&knnQuery);
-
+    auto finish = std::chrono::high_resolution_clock::now();
+    long latency = (long) std::chrono::duration_cast<std::chrono::nanoseconds>(finish-start).count();
     std::unique_ptr<similarity::KNNQueue<float>> neighbors(knnQuery.Result()->Clone());
     int resultSize = neighbors->Size();
 
     jclass resultClass = jniUtil->FindClass(env,"org/opensearch/knn/index/query/KNNQueryResult");
-    jmethodID allArgs = jniUtil->FindMethod(env, "org/opensearch/knn/index/query/KNNQueryResult", "<init>");
+    jmethodID allArgs = jniUtil->FindMethod(env, "org/opensearch/knn/index/query/KNNQueryResult", "<init2>");
 
     jobjectArray results = jniUtil->NewObjectArray(env, resultSize, resultClass, nullptr);
 
@@ -249,7 +252,7 @@ jobjectArray knn_jni::nmslib_wrapper::QueryIndex(knn_jni::JNIUtilInterface * jni
     for(int i = 0; i < resultSize; ++i) {
         distance = neighbors->TopDistance();
         id = neighbors->Pop()->id();
-        result = jniUtil->NewObject(env, resultClass, allArgs, id, distance);
+        result = jniUtil->NewObject_WithLatency(env, resultClass, allArgs, id, distance, latency);
         jniUtil->SetObjectArrayElement(env, results, i, result);
     }
     return results;
