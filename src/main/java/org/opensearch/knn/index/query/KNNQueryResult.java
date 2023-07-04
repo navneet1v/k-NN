@@ -12,9 +12,19 @@ public class KNNQueryResult {
     private final int id;
     private final float score;
 
+    private final long latency;
+
     public KNNQueryResult(final int id, final float score) {
         this.id = id;
         this.score = score;
+        this.latency = 0;
+    }
+
+    // Don't want to use Lombok here as, this class is used for generating the JNI Code
+    public KNNQueryResult(final int id, final float score, long latency) {
+        this.id = id;
+        this.score = score;
+        this.latency = latency;
     }
 
     public int getId() {
@@ -23,5 +33,9 @@ public class KNNQueryResult {
 
     public float getScore() {
         return this.score;
+    }
+
+    public long getLatency() {
+        return latency;
     }
 }

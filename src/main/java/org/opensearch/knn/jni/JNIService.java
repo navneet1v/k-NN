@@ -12,6 +12,7 @@
 package org.opensearch.knn.jni;
 
 import org.apache.commons.lang.ArrayUtils;
+import org.opensearch.knn.index.perf.PerformanceManager;
 import org.opensearch.knn.index.query.KNNQueryResult;
 import org.opensearch.knn.index.util.KNNEngine;
 
@@ -21,6 +22,8 @@ import java.util.Map;
  * Service to distribute requests to the proper engine jni service
  */
 public class JNIService {
+
+    private static final PerformanceManager performanceManager = PerformanceManager.getInstance();
 
     /**
      * Create an index for the native library
@@ -103,7 +106,14 @@ public class JNIService {
      */
     public static KNNQueryResult[] queryIndex(long indexPointer, float[] queryVector, int k, String engineName, int[] filteredIds) {
         if (KNNEngine.NMSLIB.getName().equals(engineName)) {
-            return NmslibService.queryIndex(indexPointer, queryVector, k);
+            long startTime = System.nanoTime();
+            KNNQueryResult[] results = NmslibService.queryIndex(indexPointer, queryVector, k);
+            long endTime = System.nanoTime();
+            performanceManager.addNMSLibNativeLatency(endTime - startTime);
+            if(results != null && results.length > 0) {
+                performanceManager.addNMSLibLatency(results[0].getLatency());
+            }
+            return results;
         }
 
         if (KNNEngine.FAISS.getName().equals(engineName)) {
