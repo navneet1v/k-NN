@@ -11,94 +11,108 @@
 
 package org.opensearch.knn.index.perf;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.math.Quantiles;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.opensearch.knn.plugin.stats.KNNCounter;
 
-import java.util.DoubleSummaryStatistics;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.stream.DoubleStream;
+import java.util.stream.Collectors;
 
+@Log4j2
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class PerformanceManager {
     private static PerformanceManager INSTANCE;
+    private static Path LOG_FILE_PATH;
 
-    private final Queue<Double> nmslibNativeCodeLatencyQueue;
-    private final Queue<Double> nmslibLatencyQueue;
-
-    private static final int MAX_QUERIES = 10000; // this should come from cluster settings
+    private final String PERFORMANCE_STATS_FILE_NAME = "knn-perf-stats.log";
 
     public static synchronized PerformanceManager getInstance() {
-        if(INSTANCE == null) {
+        if (INSTANCE == null) {
             INSTANCE = new PerformanceManager();
         }
         return INSTANCE;
     }
 
-    private PerformanceManager() {
-        nmslibNativeCodeLatencyQueue = new ConcurrentLinkedQueue<>();
-        nmslibLatencyQueue = new ConcurrentLinkedQueue<>();
+    public static void setLogFilePath(Path logFilePath) {
+        LOG_FILE_PATH = logFilePath;
     }
 
     public Map<String, Object> getPerformanceStats() {
+        final Map<String, Object> stats = new LinkedHashMap<>();
         KNNCounter.KNN_PERF_STATS.increment();
-        return ImmutableMap.of(KNNCounter.KNN_PERF_STATS.getName(),
-                KNNCounter.KNN_PERF_STATS.getCount().toString(), "nmslibNativeStats(nanoSec)",
-                createNMSLibNativePerfStats(), "nmslibStats(nanoSec)",
-                createNMSLibPerfStats());
+        writeStatsToFile();
+        stats.put(KNNCounter.KNN_PERF_STATS.getName(), KNNCounter.KNN_PERF_STATS.getCount().toString());
+        Arrays.stream(PerformanceStats.values()).map(PerformanceStats::getStats).forEach(stats::putAll);
+        return stats;
     }
 
-    private Map<String, Double> createNMSLibNativePerfStats() {
-        final Map<String, Double> nsmLibStats = new LinkedHashMap<>();
-        if(nmslibNativeCodeLatencyQueue.size() > 0) {
-            DoubleStream doubleStream = nmslibNativeCodeLatencyQueue.stream().mapToDouble(v -> v);
-            DoubleSummaryStatistics doubleSummaryStatistics = doubleStream.summaryStatistics();
-            nsmLibStats.put("total_requests", (double) doubleSummaryStatistics.getCount());
-            nsmLibStats.put("max", doubleSummaryStatistics.getMax());
-            nsmLibStats.put("min", doubleSummaryStatistics.getMin());
-            nsmLibStats.put("average", doubleSummaryStatistics.getAverage());
-
-            final Quantiles.Scale percentiles = Quantiles.percentiles();
-            nsmLibStats.put("p50", percentiles.index(50).compute(nmslibNativeCodeLatencyQueue));
-            nsmLibStats.put("p90", percentiles.index(90).compute(nmslibNativeCodeLatencyQueue));
-            nsmLibStats.put("p99", percentiles.index(99).compute(nmslibNativeCodeLatencyQueue));
+    private void writeStatsToFile() {
+        final String statsFileName = LOG_FILE_PATH.toAbsolutePath() + File.separator + PERFORMANCE_STATS_FILE_NAME;
+        File statsFile = null;
+        FileWriter fr = null;
+        BufferedWriter br = null;
+        try {
+            statsFile = new File(statsFileName);
+            boolean fileCreated = statsFile.exists();
+            if (!fileCreated) {
+                fileCreated = statsFile.createNewFile();
+            }
+            if (fileCreated) {
+                fr = new FileWriter(statsFile, true);
+                br = new BufferedWriter(fr);
+                writeHeader(br);
+                writeStats(br);
+                br.close();
+                fr.close();
+            } else {
+                log.error(
+                    "Unable to write stats in the k-NN perf stats file as the file is not created. File Name: " + "{}",
+                    statsFileName
+                );
+            }
+        } catch (Exception e) {
+            log.error("Error happened while writing k-NN stats in stats file {}", statsFileName, e);
         }
-        return nsmLibStats;
     }
 
-    private Map<String, Double> createNMSLibPerfStats() {
-        final Map<String, Double> nsmLibStats = new LinkedHashMap<>();
-        if(nmslibLatencyQueue.size() > 0) {
-            DoubleStream doubleStream = nmslibLatencyQueue.stream().mapToDouble(v -> v);
-            DoubleSummaryStatistics doubleSummaryStatistics = doubleStream.summaryStatistics();
-            nsmLibStats.put("total_requests", (double) doubleSummaryStatistics.getCount());
-            nsmLibStats.put("max", doubleSummaryStatistics.getMax());
-            nsmLibStats.put("min", doubleSummaryStatistics.getMin());
-            nsmLibStats.put("average", doubleSummaryStatistics.getAverage());
-
-            final Quantiles.Scale percentiles = Quantiles.percentiles();
-            nsmLibStats.put("p50", percentiles.index(50).compute(nmslibLatencyQueue));
-            nsmLibStats.put("p90", percentiles.index(90).compute(nmslibLatencyQueue));
-            nsmLibStats.put("p99", percentiles.index(99).compute(nmslibLatencyQueue));
+    private void writeHeader(BufferedWriter br) throws IOException {
+        br.write("---------------------- " + KNNCounter.KNN_PERF_STATS.getCount() + " ------------------------");
+        br.newLine();
+        final PerformanceStats[] statsArray = PerformanceStats.values();
+        for (int i = 0; i < statsArray.length; i++) {
+            br.write(statsArray[i].getStatsHeaderName());
+            if (i + 1 < statsArray.length) {
+                br.write(",");
+            }
         }
-        return nsmLibStats;
+        br.newLine();
     }
 
-    public void addNMSLibNativeLatency(double latency) {
-        resizeQueue(nmslibNativeCodeLatencyQueue);
-        nmslibNativeCodeLatencyQueue.add(latency);
-    }
-
-    public void addNMSLibLatency(double latency) {
-        resizeQueue(nmslibLatencyQueue);
-        nmslibLatencyQueue.add(latency);
-    }
-
-    private void resizeQueue(final Queue<Double> queue) {
-        while(queue.size() >= MAX_QUERIES) {
-            queue.poll();
+    private void writeStats(BufferedWriter br) throws IOException {
+        final List<List<Double>> latenciesList = Arrays.stream(PerformanceStats.values())
+            .map(PerformanceStats::getLatencies)
+            .collect(Collectors.toList());
+        for (int i = 0;; i++) {
+            boolean canBreak = true;
+            for (List<Double> doubles : latenciesList) {
+                if (i < doubles.size()) {
+                    br.write(doubles.get(i).toString() + ",");
+                    canBreak = false;
+                }
+            }
+            br.newLine();
+            if (canBreak) {
+                break;
+            }
         }
     }
 

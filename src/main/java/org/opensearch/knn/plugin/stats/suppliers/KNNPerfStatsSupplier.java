@@ -11,7 +11,6 @@
 
 package org.opensearch.knn.plugin.stats.suppliers;
 
-import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
 import org.opensearch.knn.index.perf.PerformanceManager;
 
 import java.util.function.Function;

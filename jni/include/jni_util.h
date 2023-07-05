@@ -97,6 +97,8 @@ namespace knn_jni {
 
         virtual jobject NewObject(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance) = 0;
 
+        virtual jobject NewObject_WithLatency(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance, long latency) = 0;
+
         virtual jobjectArray NewObjectArray(JNIEnv *env, jsize len, jclass clazz, jobject init) = 0;
 
         virtual jbyteArray NewByteArray(JNIEnv *env, jsize len) = 0;
@@ -147,6 +149,7 @@ namespace knn_jni {
         jint * GetIntArrayElements(JNIEnv *env, jintArray array, jboolean * isCopy);
         jobject GetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index);
         jobject NewObject(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance);
+        jobject NewObject_WithLatency(JNIEnv *env, jclass clazz, jmethodID methodId, int id, float distance, long latency);
         jobjectArray NewObjectArray(JNIEnv *env, jsize len, jclass clazz, jobject init);
         jbyteArray NewByteArray(JNIEnv *env, jsize len);
         void ReleaseByteArrayElements(JNIEnv *env, jbyteArray array, jbyte *elems, int mode);

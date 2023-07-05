@@ -91,8 +91,10 @@ public class KNNStats {
     }
 
     private void addPerfStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {
-        builder.put(StatNames.KNN_PERF_STATS.getName(), new KNNStat<>(false,
-                new KNNPerfStatsSupplier<>(PerformanceManager::getPerformanceStats)));
+        builder.put(
+            StatNames.KNN_PERF_STATS.getName(),
+            new KNNStat<>(false, new KNNPerfStatsSupplier<>(PerformanceManager::getPerformanceStats))
+        );
     }
 
     private void addQueryStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {

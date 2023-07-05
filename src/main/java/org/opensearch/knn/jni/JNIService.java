@@ -13,6 +13,7 @@ package org.opensearch.knn.jni;
 
 import org.apache.commons.lang.ArrayUtils;
 import org.opensearch.knn.index.perf.PerformanceManager;
+import org.opensearch.knn.index.perf.PerformanceStats;
 import org.opensearch.knn.index.query.KNNQueryResult;
 import org.opensearch.knn.index.util.KNNEngine;
 
@@ -109,9 +110,9 @@ public class JNIService {
             long startTime = System.nanoTime();
             KNNQueryResult[] results = NmslibService.queryIndex(indexPointer, queryVector, k);
             long endTime = System.nanoTime();
-            performanceManager.addNMSLibNativeLatency(endTime - startTime);
-            if(results != null && results.length > 0) {
-                performanceManager.addNMSLibLatency(results[0].getLatency());
+            PerformanceStats.NMSLIB_JNI_LATENCY.addLatency(endTime - startTime);
+            if (results != null && results.length > 0) {
+                PerformanceStats.NMSLIB_LATENCY.addLatency(results[0].getLatency());
             }
             return results;
         }
