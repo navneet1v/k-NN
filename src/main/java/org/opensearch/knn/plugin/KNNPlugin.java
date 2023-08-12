@@ -75,6 +75,12 @@ import org.opensearch.knn.plugin.transport.UpdateModelMetadataAction;
 import org.opensearch.knn.plugin.transport.UpdateModelMetadataTransportAction;
 import org.opensearch.knn.plugin.transport.UpdateModelGraveyardAction;
 import org.opensearch.knn.plugin.transport.UpdateModelGraveyardTransportAction;
+import org.opensearch.knn.simpleapis.rest.SimpleQueryHandler;
+import org.opensearch.knn.simpleapis.rest.SimpleQueryHandler2;
+import org.opensearch.knn.simpleapis.transport.SimpleQueryAction;
+import org.opensearch.knn.simpleapis.transport.SimpleQueryAction2;
+import org.opensearch.knn.simpleapis.transport.SimpleQueryTransportAction;
+import org.opensearch.knn.simpleapis.transport.SimpleQueryTransportAction2;
 import org.opensearch.knn.training.TrainingJobRunner;
 import org.opensearch.knn.training.VectorReader;
 import org.opensearch.plugins.ActionPlugin;
@@ -231,6 +237,8 @@ public class KNNPlugin extends Plugin
         RestDeleteModelHandler restDeleteModelHandler = new RestDeleteModelHandler();
         RestTrainModelHandler restTrainModelHandler = new RestTrainModelHandler();
         RestSearchModelHandler restSearchModelHandler = new RestSearchModelHandler();
+        SimpleQueryHandler simpleQueryHandler = new SimpleQueryHandler();
+        SimpleQueryHandler2 simpleQueryHandler2 = new SimpleQueryHandler2();
 
         return ImmutableList.of(
             restKNNStatsHandler,
@@ -238,7 +246,9 @@ public class KNNPlugin extends Plugin
             restGetModelHandler,
             restDeleteModelHandler,
             restTrainModelHandler,
-            restSearchModelHandler
+            restSearchModelHandler,
+            simpleQueryHandler,
+            simpleQueryHandler2
         );
     }
 
@@ -258,7 +268,9 @@ public class KNNPlugin extends Plugin
             new ActionHandler<>(TrainingModelAction.INSTANCE, TrainingModelTransportAction.class),
             new ActionHandler<>(RemoveModelFromCacheAction.INSTANCE, RemoveModelFromCacheTransportAction.class),
             new ActionHandler<>(SearchModelAction.INSTANCE, SearchModelTransportAction.class),
-            new ActionHandler<>(UpdateModelGraveyardAction.INSTANCE, UpdateModelGraveyardTransportAction.class)
+            new ActionHandler<>(UpdateModelGraveyardAction.INSTANCE, UpdateModelGraveyardTransportAction.class),
+            new ActionHandler<>(SimpleQueryAction.INSTANCE, SimpleQueryTransportAction.class),
+            new ActionHandler<>(SimpleQueryAction2.INSTANCE, SimpleQueryTransportAction2.class)
         );
     }
 
