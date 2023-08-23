@@ -105,7 +105,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static java.util.Collections.singletonList;
 import static org.opensearch.knn.common.KNNConstants.KNN_THREAD_POOL_PREFIX;
@@ -355,10 +354,11 @@ public class KNNPlugin extends Plugin
         final List<String> engineSettings = Arrays.stream(KNNEngine.values())
             .flatMap(engine -> engine.mmapFileExtensions().stream())
             .collect(Collectors.toList());
-        final List<String> combinedSettings = Stream.concat(
-            IndexModule.INDEX_STORE_HYBRID_MMAP_EXTENSIONS.getDefault(Settings.EMPTY).stream(),
-            engineSettings.stream()
-        ).collect(Collectors.toList());
-        return Settings.builder().putList(IndexModule.INDEX_STORE_HYBRID_MMAP_EXTENSIONS.getKey(), combinedSettings).build();
+
+        List<String> finalSettings = IndexModule.INDEX_STORE_HYBRID_NIO_EXTENSIONS.getDefault(Settings.EMPTY)
+            .stream()
+            .filter(str -> !engineSettings.contains(str))
+            .collect(Collectors.toList());
+        return Settings.builder().putList(IndexModule.INDEX_STORE_HYBRID_NIO_EXTENSIONS.getKey(), finalSettings).build();
     }
 }
