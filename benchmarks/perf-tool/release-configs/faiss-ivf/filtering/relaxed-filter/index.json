@@ -3,15 +3,14 @@
     "index": {
       "knn": true,
       "number_of_shards": 24,
-      "number_of_replicas": 1,
-      "knn.algo_param.ef_search": 256
+      "number_of_replicas": 1
     }
   },
   "mappings": {
     "properties": {
       "target_field": {
-          "type": "knn_vector",
-          "model_id": "test-model"
+        "type": "knn_vector",
+        "model_id": "test-model"
       }
     }
   }
