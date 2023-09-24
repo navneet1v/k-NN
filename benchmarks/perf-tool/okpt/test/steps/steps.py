@@ -130,12 +130,14 @@ class ForceMergeStep(OpenSearchStep):
     def _action(self):
         while True:
             try:
-                self.opensearch.indices.forcemerge(
+                response = self.opensearch.indices.forcemerge(
                     index=self.index_name,
                     max_num_segments=self.max_num_segments)
+                print(f"Force merge is done: {response}")
                 return {}
-            except:
-                pass
+            except Exception as e:
+                print("Running force again due to error.....")
+                continue
 
     def _get_measures(self) -> List[str]:
         return ['took']

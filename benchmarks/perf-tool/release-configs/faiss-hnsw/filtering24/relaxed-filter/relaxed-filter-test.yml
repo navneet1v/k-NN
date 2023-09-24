@@ -1,7 +1,7 @@
 endpoint: internal-210-internal-193133252.us-east-1.elb.amazonaws.com
 port: 80
-test_name: "Faiss HNSW Restrictive Filter Test"
-test_id: "Faiss HNSW Restrictive Filter Test"
+test_name: "Faiss HNSW Relaxed Filter Test 24 shard"
+test_id: "Faiss HNSW Relaxed Filter Test 24 shard"
 num_runs: 10
 show_runs: false
 steps:
@@ -9,7 +9,7 @@ steps:
     index_name: target_index
   - name: create_index
     index_name: target_index
-    index_spec: /home/ec2-user/k-NN/benchmarks/perf-tool/release-configs/faiss-hnsw/filtering/restrictive-filter/index.json
+    index_spec: /home/ec2-user/k-NN/benchmarks/perf-tool/release-configs/faiss-hnsw/filtering24/relaxed-filter/index.json
   - name: ingest_multi_field
     index_name: target_index
     field_name: target_field
@@ -34,7 +34,7 @@ steps:
     dataset_format: hdf5
     dataset_path: /home/ec2-user/k-NN/benchmarks/perf-tool/dataset/sift-128-euclidean-with-attr.hdf5
     neighbors_format: hdf5
-    neighbors_path: /home/ec2-user/k-NN/benchmarks/perf-tool/dataset/sift-128-euclidean-with-filters.hdf5
-    neighbors_dataset: neighbors_filter_4
-    filter_spec: /home/ec2-user/k-NN/benchmarks/perf-tool/release-configs/faiss-hnsw/filtering/restrictive-filter/restrictive-filter-spec.json
+    neighbors_path: /home/ec2-user/k-NN/benchmarks/perf-tool/dataset/sift-128-euclidean-with-filters-updated.hdf5
+    neighbors_dataset: neighbors_filter_5
+    filter_spec: /home/ec2-user/k-NN/benchmarks/perf-tool/release-configs/faiss-hnsw/filtering24/relaxed-filter/relaxed-filter-spec.json
     filter_type: FILTER
