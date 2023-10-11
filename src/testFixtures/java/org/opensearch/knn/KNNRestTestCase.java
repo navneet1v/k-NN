@@ -14,6 +14,7 @@ import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.common.xcontent.XContentHelper;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.MediaType;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentParser;
 import org.opensearch.index.query.MatchAllQueryBuilder;
@@ -49,6 +50,7 @@ import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -632,11 +634,27 @@ public class KNNRestTestCase extends ODFERestTestCase {
      * Get specific Index setting value from response
      */
     protected String getIndexSettingByName(String indexName, String settingName) throws IOException {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> settings = (Map<String, Object>) ((Map<String, Object>) getIndexSettings(indexName).get(indexName)).get(
-            "settings"
-        );
-        return (String) settings.get(settingName);
+        return getIndexSettingByName(indexName, settingName, false);
+    }
+
+    protected String getIndexSettingByName(String indexName, String settingName, boolean includeDefaults) throws IOException {
+        Request request = new Request("GET", "/" + indexName + "/_settings");
+        if (includeDefaults) {
+            request.addParameter("include_defaults", "true");
+        }
+        request.addParameter("flat_settings", "true");
+        Response response = client().performRequest(request);
+        try (InputStream is = response.getEntity().getContent()) {
+            Map<String, Object> settings = (Map<String, Object>) XContentHelper.convertToMap(MediaTypeRegistry.JSON.xContent(), is, true)
+                .get(indexName);
+            Map<String, Object> defaultSettings = new HashMap<>();
+            if (includeDefaults) {
+                defaultSettings = (Map<String, Object>) settings.get("defaults");
+            }
+            Map<String, Object> userSettings = (Map<String, Object>) settings.get("settings");
+            // logger.error("Default settings: {}, index settings {}", defaultSettings, userSettings);
+            return (String) (userSettings.get(settingName) == null ? defaultSettings.get(settingName) : userSettings.get(settingName));
+        }
     }
 
     protected void createModelSystemIndex() throws IOException {
