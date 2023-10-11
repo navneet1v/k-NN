@@ -11,6 +11,7 @@
 
 package org.opensearch.knn.jni;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang.ArrayUtils;
 import org.opensearch.knn.index.query.KNNQueryResult;
 import org.opensearch.knn.index.util.KNNEngine;
@@ -20,6 +21,7 @@ import java.util.Map;
 /**
  * Service to distribute requests to the proper engine jni service
  */
+@Log4j2
 public class JNIService {
 
     /**
@@ -32,6 +34,7 @@ public class JNIService {
      * @param engineName name of engine to build index for
      */
     public static void createIndex(int[] ids, float[][] data, String indexPath, Map<String, Object> parameters, String engineName) {
+        log.error("index path {}, has the parameters : {}, engine: {}", indexPath, parameters, engineName);
         if (KNNEngine.NMSLIB.getName().equals(engineName)) {
             NmslibService.createIndex(ids, data, indexPath, parameters);
             return;

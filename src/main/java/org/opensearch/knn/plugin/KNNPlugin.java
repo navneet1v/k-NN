@@ -11,9 +11,11 @@ import org.opensearch.core.ParseField;
 import org.opensearch.core.action.ActionResponse;
 import org.opensearch.index.codec.CodecServiceFactory;
 import org.opensearch.index.engine.EngineFactory;
+import org.opensearch.index.shard.IndexSettingProvider;
 import org.opensearch.indices.SystemIndexDescriptor;
 import org.opensearch.knn.index.KNNCircuitBreaker;
 import org.opensearch.knn.index.KNNClusterUtil;
+import org.opensearch.knn.index.KNNIndexSettingProvider;
 import org.opensearch.knn.index.query.KNNQueryBuilder;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
@@ -360,5 +362,15 @@ public class KNNPlugin extends Plugin
             .filter(str -> !engineSettings.contains(str))
             .collect(Collectors.toList());
         return Settings.builder().putList(IndexModule.INDEX_STORE_HYBRID_NIO_EXTENSIONS.getKey(), finalSettings).build();
+    }
+
+    /**
+     * An {@link IndexSettingProvider} allows hooking in to parts of an index
+     * lifecycle to provide explicit default settings for newly created indices. Rather than changing
+     * the default values for an index-level setting, these act as though the setting has been set
+     * explicitly, but still allow the setting to be overridden by a template or creation request body.
+     */
+    public Collection<IndexSettingProvider> getAdditionalIndexSettingProviders() {
+        return List.of(new KNNIndexSettingProvider());
     }
 }
