@@ -12,6 +12,5 @@
             "body": "{{ train_index_body }}"
         }
     ],
-    "operations": {{ benchmark.collect(parts="operations/*.json") }},
-    "test_procedures": [{{ benchmark.collect(parts="procedures/*.json") }}]
+    "test_procedures": [{{ benchmark.collect(parts="/tmp/benchmark/osb_procedure.json") }}]
 }

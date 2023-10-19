@@ -16,7 +16,8 @@ import numpy as np
 import requests
 import time
 
-from opensearchpy import OpenSearch, RequestsHttpConnection
+from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
+import boto3
 
 from okpt.io.config.parsers.base import ConfigurationError
 from okpt.io.config.parsers.util import parse_string_param, parse_int_param, parse_dataset, parse_bool_param, \
@@ -35,9 +36,11 @@ class OpenSearchStep(base.Step):
         self.endpoint = parse_string_param('endpoint', step_config.config,
                                            step_config.implicit_config,
                                            'localhost')
-        default_port = 9200 if self.endpoint == 'localhost' else 80
+        # default_port = 9200 if self.endpoint == 'localhost' else 80
+        default_port = 443
         self.port = parse_int_param('port', step_config.config,
                                     step_config.implicit_config, default_port)
+        # self.port = 443
         self.timeout = parse_int_param('timeout', step_config.config, {}, 60)
         self.opensearch = get_opensearch_client(str(self.endpoint),
                                                 int(self.port), int(self.timeout))
@@ -477,7 +480,7 @@ class BaseQueryStep(OpenSearchStep):
         results['client_time'] = [
             float(query_response['client_time']) for query_response in query_responses
         ]
-        results['memory_kb'] = get_cache_size_in_kb(self.endpoint, self.port)
+        results['memory_kb'] = 0  # get_cache_size_in_kb(self.endpoint, port)
 
         if self.calculate_recall:
             ids = [[int(hit['_id'])
@@ -739,15 +742,20 @@ def get_opensearch_client(endpoint: str, port: int, timeout=60):
 
     """
     # TODO: fix for security in the future
+    service = 'es'
+    credentials = boto3.Session().get_credentials()
+    auth = AWSV4SignerAuth(credentials, "us-east-1", service)
     return OpenSearch(
         hosts=[{
             'host': endpoint,
-            'port': port
+            'port': 443
         }],
-        use_ssl=False,
-        verify_certs=False,
+        http_auth=auth,
+        use_ssl=True,
+        verify_certs=True,
         connection_class=RequestsHttpConnection,
-        timeout=timeout,
+        pool_maxsize=20,
+        timeout=300,
     )
 
 

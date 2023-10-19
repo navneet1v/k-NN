@@ -33,8 +33,7 @@ class BulkVectorsFromDataSetRunner:
         for _ in range(retries):
             try:
                 await opensearch.bulk(
-                    body=params["body"],
-                    timeout='5m'
+                    body=params["body"]
                 )
 
                 return size, "docs"

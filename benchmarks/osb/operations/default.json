@@ -3,7 +3,7 @@
         "name": "ivfpq-train-model",
         "operation-type": "train-model",
         "model_id": "{{ train_model_id }}",
-        "timeout": {{ train_timeout }},
+        "timeout": {{ train_timeout | default(1000) }},
         "body": {
             "training_index": "{{ train_index_name }}",
             "training_field": "{{ train_field_name }}",
@@ -34,8 +34,8 @@
         "model_id": "{{ train_model_id }}",
         "timeout": {{ train_timeout | default(1000) }},
         "body": {
-            "training_index": "{{ train_index_name }}",
-            "training_field": "{{ train_field_name }}",
+            "training_index": "{{ target_index_name }}",
+            "training_field": "{{ target_field }}",
             "search_size": {{ train_search_size }},
             "dimension": {{ target_index_dimension }},
             "max_training_vector_count": {{ train_index_num_vectors }},

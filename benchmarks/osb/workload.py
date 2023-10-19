@@ -11,7 +11,11 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.getcwd()))
 
-from extensions.registry import register as custom_register
+# from extensions.registry import register as custom_register
+
+# from current directory import extension registry as custom_register
+from .extensions.registry import register as custom_register
+
 
 
 def register(registry):
