@@ -156,9 +156,10 @@ class QueryVectorsFromRandomParamSource:
         return {
             "index": index_name,
             "request-params": {
-                "_source": {
-                    "exclude": [field_name]
-                }
+                "_source": "false",
+                #"_source": {
+                #    "exclude": [field_name]
+                #}
                 # we need to set it to true as this data source is used for warmup queries
             },
             "body": {
@@ -170,7 +171,9 @@ class QueryVectorsFromRandomParamSource:
                             "k": k
                         }
                     }
-                }
+                },
+                "docvalue_fields" : ["_id"],
+                "stored_fields": "_none_",
             }
         }
 
@@ -228,9 +231,10 @@ class QueryVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
         return {
             "index": index_name,
             "request-params": {
-                "_source": {
-                    "exclude": [field_name]
-                }
+                "_source": "false",
+                #"_source": {
+                #    "exclude": [field_name]
+                #}
             },
             "body": {
                 "size": k,
@@ -241,7 +245,9 @@ class QueryVectorsFromDataSetParamSource(VectorsFromDataSetParamSource):
                             "k": k
                         }
                     }
-                }
+                },
+                "docvalue_fields" : ["_id"],
+                "stored_fields": "_none_",
             }
         }
 

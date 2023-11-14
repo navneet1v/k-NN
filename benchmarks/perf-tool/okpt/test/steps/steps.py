@@ -483,7 +483,7 @@ class BaseQueryStep(OpenSearchStep):
         results['memory_kb'] = 0  # get_cache_size_in_kb(self.endpoint, port)
 
         if self.calculate_recall:
-            ids = [[int(hit['_id'])
+            ids = [[int(hit['fields']['_id'][0])
                     for hit in query_response['hits']['hits']]
                    for query_response in query_responses]
             results['recall@K'] = recall_at_r(ids, self.neighbors,
@@ -531,7 +531,9 @@ class QueryStep(BaseQueryStep):
                         'k': self.k
                     }
                 }
-            }
+            },
+            "docvalue_fields": ["_id"],
+            "stored_fields": "_none_",
         }
 
 
@@ -833,8 +835,8 @@ def query_index(opensearch: OpenSearch, index_name: str, body: dict,
                 excluded_fields: list):
     start_time = round(time.time()*1000)
     queryResponse = opensearch.search(index=index_name,
-                             body=body,
-                             _source_excludes=excluded_fields)
+                             body=body,_source=False)
+                             #_source_excludes=excluded_fields)
     end_time = round(time.time() * 1000)
     queryResponse['client_time'] = end_time - start_time
     return queryResponse
