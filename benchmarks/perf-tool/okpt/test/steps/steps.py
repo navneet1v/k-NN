@@ -67,6 +67,7 @@ class CreateIndexStep(OpenSearchStep):
         Returns:
             An OpenSearch index creation response body.
         """
+        print("Creating index")
         self.opensearch.indices.create(index=self.index_name, body=self.body)
         return {}
 
@@ -179,7 +180,7 @@ class WarmupStep(OpenSearchStep):
 
     def _action(self):
         """Performs warmup operation on an index."""
-        warmup_operation(self.endpoint, self.port, self.index_name)
+        warmup_operation(self.opensearch, self.index_name)
         return {}
 
     def _get_measures(self) -> List[str]:
@@ -480,17 +481,18 @@ class BaseQueryStep(OpenSearchStep):
         results['client_time'] = [
             float(query_response['client_time']) for query_response in query_responses
         ]
-        results['memory_kb'] = 0  # get_cache_size_in_kb(self.endpoint, port)
+        results['memory_kb'] = get_cache_size_in_kb(self.opensearch)
 
         if self.calculate_recall:
             ids = [[int(hit['fields']['_id'][0])
                     for hit in query_response['hits']['hits']]
                    for query_response in query_responses]
-            results['recall@K'] = recall_at_r(ids, self.neighbors,
+            results[f'recall@{self.k}'] = recall_at_r(ids, self.neighbors,
                                               self.k, self.k, self.query_count)
             self.neighbors.reset()
-            results[f'recall@{str(self.r)}'] = recall_at_r(
-                ids, self.neighbors, self.r, self.k, self.query_count)
+            if self.k != self.r:
+                results[f'recall@{str(self.r)}'] = recall_at_r(
+                    ids, self.neighbors, self.r, self.k, self.query_count)
             self.neighbors.reset()
 
         self.dataset.reset()
@@ -501,7 +503,10 @@ class BaseQueryStep(OpenSearchStep):
         measures = ['took', 'memory_kb', 'client_time']
 
         if self.calculate_recall:
-            measures.extend(['recall@K', f'recall@{str(self.r)}'])
+            if self.k != self.r:
+                measures.extend(['recall@K', f'recall@{str(self.r)}'])
+            else:
+                measures.extend([f'recall@{self.k}'])
 
         return measures
 
@@ -715,7 +720,7 @@ def delete_model(endpoint, port, model_id):
     return response.json()
 
 
-def warmup_operation(endpoint, port, index):
+def warmup_operation(client, index):
     """
     Performs warmup operation on index to load native library files
     of that index to reduce query latencies.
@@ -726,10 +731,13 @@ def warmup_operation(endpoint, port, index):
     Returns:
         number of shards the plugin succeeded and failed to warm up.
     """
-    response = requests.get('http://' + endpoint + ':' + str(port) +
-                               '/_plugins/_knn/warmup/' + index,
-                               headers={'content-type': 'application/json'})
-    return response.json()
+
+    response = client.transport.perform_request('GET', f'/_plugins/_knn/warmup/{index}')
+    
+    # response = requests.get('https://' + endpoint + ':' + str(port) +
+    #                            '/_plugins/_knn/warmup/' + index,
+    #                            headers={'content-type': 'application/json'})
+    return response
 
 
 def get_opensearch_client(endpoint: str, port: int, timeout=60):
@@ -809,7 +817,7 @@ def get_index_size_in_kb(opensearch, index_name):
         [index_name]['total']['store']['size_in_bytes']) / 1024
 
 
-def get_cache_size_in_kb(endpoint, port):
+def get_cache_size_in_kb(client):
     """
     Gets the size of the k-NN cache in kilobytes
     Args:
@@ -818,10 +826,12 @@ def get_cache_size_in_kb(endpoint, port):
     Returns:
         size of cache in kilobytes
     """
-    response = requests.get('http://' + endpoint + ':' + str(port) +
-                            '/_plugins/_knn/stats',
-                            headers={'content-type': 'application/json'})
-    stats = response.json()
+    stats = client.transport.perform_request('GET', f'/_plugins/_knn/stats')
+
+    # response = requests.get('http://' + endpoint + ':' + str(port) +
+    #                         '/_plugins/_knn/stats',
+    #                         headers={'content-type': 'application/json'})
+    # stats = response.json()
 
     keys = stats['nodes'].keys()
 

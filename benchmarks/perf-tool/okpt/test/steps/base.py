@@ -7,8 +7,10 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, List
+import logging
 
 from okpt.test import profile
+from okpt.io.config.parsers.util import parse_string_param
 
 
 @dataclass
@@ -23,6 +25,7 @@ class Step:
 
     Attributes:
         label: Name of the step.
+        custom_name: Name of the step you want to give to differentiate the same step label from others
 
     Methods:
         execute: Run the step and return a step response with the label and
@@ -33,6 +36,9 @@ class Step:
 
     def __init__(self, step_config: StepConfig):
         self.step_config = step_config
+        self.custom_name = parse_string_param('custom_name', step_config.config,
+                                              step_config.implicit_config,
+                                              self.label)
 
     def _action(self):
         """Step logic/behavior to be executed and profiled."""
@@ -48,6 +54,7 @@ class Step:
         Returns:
             Dict containing step label and various step measures.
         """
+        logging.info(f"************** Starting the step with name: {self.custom_name} **************")
         action = self._action
 
         # profile the action with measure decorators - add if necessary
@@ -55,6 +62,9 @@ class Step:
 
         result = action()
         if isinstance(result, dict):
-            return [{'label': self.label, **result}]
+            res = [{'label': self.label, 'custom_name': self.custom_name, **result}]
+            logging.info(f"************** Completed the step with name: {self.custom_name} **************")
+            return res
+        logging.info(f"************** Completed the step name: {self.custom_name} **************")
 
         raise ValueError('Invalid return by a step')

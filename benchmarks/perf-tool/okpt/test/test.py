@@ -99,15 +99,17 @@ def _aggregate_steps(step_results: List[Dict[str, Any]],
     # iterate over all test steps
     for step in step_results:
         step_label = step['label']
+        custom_name = step['custom_name']
 
         step_measure_labels = list(step.keys())
         step_measure_labels.remove('label')
+        step_measure_labels.remove('custom_name')
 
         # iterate over all measures in each test step
         for measure_label in step_measure_labels:
 
             step_measure = step[measure_label]
-            step_measure_label = f'{measure_label}' if step_label == 'get_stats' else f'{step_label}_{measure_label}'
+            step_measure_label = f'{measure_label}' if step_label == 'get_stats' else f'{custom_name}_{measure_label}'
 
             # Add cumulative test measures from steps to test measures
             if measure_label in measure_labels:

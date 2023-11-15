@@ -2,8 +2,8 @@
   "settings": {
     "index": {
       "knn": true,
-      "number_of_shards": 24,
-      "number_of_replicas": 1,
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
       "knn.algo_param.ef_search": 100
     }
   },
@@ -11,7 +11,7 @@
     "properties": {
       "target_field": {
           "type": "knn_vector",
-          "dimension": 128,
+          "dimension": 960,
       	  "method": {
         		"name": "hnsw",
         		"space_type": "l2",
