@@ -11,6 +11,10 @@ so the profiling decorators aren't needed for some functions.
 import json
 from abc import abstractmethod
 from typing import Any, Dict, List
+import logging
+import multiprocessing.pool
+from tqdm import tqdm
+import time
 
 import numpy as np
 import requests
@@ -540,6 +544,155 @@ class QueryStep(BaseQueryStep):
             "docvalue_fields": ["_id"],
             "stored_fields": "_none_",
         }
+
+
+class MultiProcessQueryStep(OpenSearchStep):
+    label = 'query_multi_process'
+
+    def __init__(self, step_config: StepConfig):
+        super().__init__(step_config)
+        self.k = parse_int_param('k', step_config.config, {}, 100)
+        self.r = parse_int_param('r', step_config.config, {}, 1)
+        self.index_name = parse_string_param('index_name', step_config.config,
+                                             {}, None)
+        self.field_name = parse_string_param('field_name', step_config.config,
+                                             {}, None)
+        self.calculate_recall = parse_bool_param('calculate_recall',
+                                                 step_config.config, {}, False)
+        dataset_format = parse_string_param('dataset_format',
+                                            step_config.config, {}, 'hdf5')
+        dataset_path = parse_string_param('dataset_path',
+                                          step_config.config, {}, None)
+        self.dataset = parse_dataset(dataset_format, dataset_path,
+                                     Context.QUERY)
+
+        input_query_count = parse_int_param('query_count',
+                                            step_config.config, {},
+                                            self.dataset.size())
+        self.query_count = min(input_query_count, self.dataset.size())
+
+        self.neighbors_format = parse_string_param('neighbors_format',
+                                                   step_config.config, {}, 'hdf5')
+        self.neighbors_path = parse_string_param('neighbors_path',
+                                                 step_config.config, {}, None)
+        self.neighbors = parse_dataset(self.neighbors_format, self.neighbors_path,
+                                       Context.NEIGHBORS)
+        #self.clients = parse_list_param('clients', step_config.config, {}, [2,4])
+        self.clients = parse_int_param('clients', step_config.config, {}, 2)
+        logging.info(f"Client are : {self.clients}")
+        self.implicit_config = step_config.implicit_config
+
+
+    def _get_measures(self) -> List[str]:
+        measures = ['took', 'memory_kb', 'client_time']
+
+        if self.calculate_recall:
+            if self.k != self.r:
+                measures.extend(['recall@K', f'recall@{str(self.r)}'])
+            else:
+                measures.extend([f'recall@{self.k}'])
+
+        return measures
+    
+    def _action(self):
+        queries_per_client = self.query_count // self.clients
+        logging.info(f"Queries per client: {queries_per_client}")
+        queries = []
+        batch = []
+        i = 0
+        for _ in range(self.query_count):
+            query = self.dataset.read(1).tolist()
+            i = i + 1
+            if len(batch) == queries_per_client:
+                queries.append(batch)
+                batch = []
+            batch.append(query)
+        # Put the last batch of queries
+        queries.append(batch)
+
+        query_responses = []
+        query_responses_per_client_map = {}
+
+        ctx = multiprocessing.get_context("fork")
+        with ctx.Pool(self.clients) as pool:
+            query_arg_tuple = [(idx + 1, queries[idx], self.opensearch, self.index_name, self.field_name, self.k) for idx in range(self.clients)]
+            queries_response = list(pool.starmap(run_search, query_arg_tuple))
+        for future in queries_response:
+            client_number, query_responses_per_client = future
+            query_responses_per_client_map[str(client_number)] = query_responses_per_client
+
+        # I need sort all the query_responses_per_client_list based on client number
+        for client_number in range(self.clients):
+            query_responses.extend(query_responses_per_client_map[str(client_number + 1)])
+
+
+        results = {}
+        
+        results['took'] = [
+            float(query_response['took']) for query_response in query_responses
+        ]
+        results['client_time'] = [
+            float(query_response['client_time']) for query_response in query_responses
+        ]
+        results['memory_kb'] = get_cache_size_in_kb(self.opensearch)
+
+        if self.calculate_recall:
+            ids = [[int(hit['fields']['_id'][0])
+                    for hit in query_response['hits']['hits']]
+                    for query_response in query_responses]
+            results[f'recall@{self.k}'] = recall_at_r(ids, self.neighbors,
+                                                self.k, self.k, self.query_count)
+            self.neighbors.reset()
+            if self.k != self.r:
+                results[f'recall@{str(self.r)}'] = recall_at_r(
+                    ids, self.neighbors, self.r, self.k, self.query_count)
+            self.neighbors.reset()
+
+        self.dataset.reset()
+
+        return results
+    
+def get_body(field_name, k, vec):
+    return {
+        'size': k,
+        'query': {
+            'knn': {
+                field_name: {
+                    'vector': vec[0],
+                    'k': k
+                }
+            }
+        },
+        "docvalue_fields": ["_id"],
+        "stored_fields": "_none_",
+    }    
+
+
+def run_search(client_number, query_list, opensearch_client, index_name, field_name, k):
+    query_responses = []
+    logging.info(f"client_number : {client_number}, query: {len(query_list)}")
+    # Doing an info call to make sure client is ready, this will avoid the latency for 1st connection
+    opensearch_client.info()
+    
+    for query in tqdm(query_list):
+        query_body = get_body(field_name, k, query)
+        #logging.info(f"Query body is : {query_body}")
+        query_responses.append(query_index(opensearch_client, index_name, query_body, [field_name]))
+
+    # ids = [[int(hit['fields']['_id'][0])
+    #                 for hit in query_response['hits']['hits']]
+    #                 for query_response in query_responses]
+    
+    # took_time = [
+    #         float(query_response['took']) for query_response in query_responses
+    #     ]
+    # client_time = [
+    #         float(query_response['client_time']) for query_response in query_responses
+    #     ]
+    
+    
+    return client_number, query_responses
+
 
 
 class QueryWithFilterStep(BaseQueryStep):

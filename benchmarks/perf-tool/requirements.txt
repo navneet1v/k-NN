@@ -34,6 +34,6 @@ urllib3==1.26.9
     # via
     #   opensearch-py
     #   requests
-
+tqdm
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
