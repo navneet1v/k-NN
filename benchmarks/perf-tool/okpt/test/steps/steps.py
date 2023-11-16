@@ -309,6 +309,30 @@ class DeleteIndexStep(OpenSearchStep):
         return ['took']
 
 
+# class UpdateIndexThreadQty(OpenSearchStep):
+#     """See base class."""
+
+#     label = 'update_index_thread_qty'
+
+#     def __init__(self, step_config: StepConfig):
+#         super().__init__(step_config)
+
+#         self.thread_qty = parse_int_param('thread_qty', step_config.config,
+#                                              {}, None)
+
+#     def _action(self):
+#         """update the index thread qty
+
+#         Returns:
+#             An empty dict
+#         """
+#         #self.opensearch
+#         return {}
+
+#     def _get_measures(self) -> List[str]:
+#         return ['took']
+
+
 class BaseIngestStep(OpenSearchStep):
     """See base class."""
     def __init__(self, step_config: StepConfig):
@@ -585,7 +609,7 @@ class MultiProcessQueryStep(OpenSearchStep):
 
 
     def _get_measures(self) -> List[str]:
-        measures = ['took', 'memory_kb', 'client_time']
+        measures = ['took', 'memory_kb', 'client_time', 'time_to_run_single_process_query', 'avg_time_to_run_single_process_query']
 
         if self.calculate_recall:
             if self.k != self.r:
@@ -613,13 +637,16 @@ class MultiProcessQueryStep(OpenSearchStep):
 
         query_responses = []
         query_responses_per_client_map = {}
+        # use a large value
+        time_to_run_single_process_query = 0.0
 
         ctx = multiprocessing.get_context("fork")
         with ctx.Pool(self.clients) as pool:
             query_arg_tuple = [(idx + 1, queries[idx], self.opensearch, self.index_name, self.field_name, self.k) for idx in range(self.clients)]
             queries_response = list(pool.starmap(run_search, query_arg_tuple))
         for future in queries_response:
-            client_number, query_responses_per_client = future
+            client_number, query_responses_per_client, single_process_time = future
+            time_to_run_single_process_query = max(single_process_time, time_to_run_single_process_query)
             query_responses_per_client_map[str(client_number)] = query_responses_per_client
 
         # I need sort all the query_responses_per_client_list based on client number
@@ -636,6 +663,8 @@ class MultiProcessQueryStep(OpenSearchStep):
             float(query_response['client_time']) for query_response in query_responses
         ]
         results['memory_kb'] = get_cache_size_in_kb(self.opensearch)
+        results['time_to_run_single_process_query'] = time_to_run_single_process_query
+        results['avg_time_to_run_single_process_query'] = time_to_run_single_process_query/queries_per_client
 
         if self.calculate_recall:
             ids = [[int(hit['fields']['_id'][0])
@@ -674,12 +703,12 @@ def run_search(client_number, query_list, opensearch_client, index_name, field_n
     logging.info(f"client_number : {client_number}, query: {len(query_list)}")
     # Doing an info call to make sure client is ready, this will avoid the latency for 1st connection
     opensearch_client.info()
-    
+    start_time = round(time.time()*1000)
     for query in tqdm(query_list):
         query_body = get_body(field_name, k, query)
         #logging.info(f"Query body is : {query_body}")
         query_responses.append(query_index(opensearch_client, index_name, query_body, [field_name]))
-
+    end_time = round(time.time()*1000)
     # ids = [[int(hit['fields']['_id'][0])
     #                 for hit in query_response['hits']['hits']]
     #                 for query_response in query_responses]
@@ -692,7 +721,7 @@ def run_search(client_number, query_list, opensearch_client, index_name, field_n
     #     ]
     
     
-    return client_number, query_responses
+    return client_number, query_responses, end_time - start_time
 
 
 
