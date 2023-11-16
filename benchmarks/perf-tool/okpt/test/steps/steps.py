@@ -309,28 +309,33 @@ class DeleteIndexStep(OpenSearchStep):
         return ['took']
 
 
-# class UpdateIndexThreadQty(OpenSearchStep):
-#     """See base class."""
+class UpdateIndexThreadQty(OpenSearchStep):
+    """See base class."""
 
-#     label = 'update_index_thread_qty'
+    label = 'update_index_thread_qty'
 
-#     def __init__(self, step_config: StepConfig):
-#         super().__init__(step_config)
+    def __init__(self, step_config: StepConfig):
+        super().__init__(step_config)
 
-#         self.thread_qty = parse_int_param('thread_qty', step_config.config,
-#                                              {}, None)
+        self.thread_qty = parse_int_param('thread_qty', step_config.config,
+                                             {}, None)
 
-#     def _action(self):
-#         """update the index thread qty
+    def _action(self):
+        """update the index thread qty
 
-#         Returns:
-#             An empty dict
-#         """
-#         #self.opensearch
-#         return {}
+        Returns:
+            An empty dict
+        """
+        body = {
+           "persistent" : {
+                "knn.algo_param.index_thread_qty" : self.thread_qty
+            }
+        }
+        self.opensearch.cluster.put_settings(body)
+        return {}
 
-#     def _get_measures(self) -> List[str]:
-#         return ['took']
+    def _get_measures(self) -> List[str]:
+        return []
 
 
 class BaseIngestStep(OpenSearchStep):

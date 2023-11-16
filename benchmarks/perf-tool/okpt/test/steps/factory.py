@@ -10,7 +10,7 @@ from okpt.test.steps.base import Step, StepConfig
 
 from okpt.test.steps.steps import CreateIndexStep, DisableRefreshStep, RefreshIndexStep, DeleteIndexStep, \
     TrainModelStep, DeleteModelStep, ForceMergeStep, ClearCacheStep, IngestStep, IngestMultiFieldStep, \
-    QueryStep, QueryWithFilterStep, GetStatsStep, WarmupStep, MultiProcessQueryStep
+    QueryStep, QueryWithFilterStep, GetStatsStep, WarmupStep, MultiProcessQueryStep, UpdateIndexThreadQty
 
 
 def create_step(step_config: StepConfig) -> Step:
@@ -44,5 +44,7 @@ def create_step(step_config: StepConfig) -> Step:
         return WarmupStep(step_config)
     elif step_config.step_name == MultiProcessQueryStep.label:
         return MultiProcessQueryStep(step_config)
+    elif step_config.step_name == UpdateIndexThreadQty.label:
+        return UpdateIndexThreadQty(step_config)
 
     raise ConfigurationError(f'Invalid step {step_config.step_name}')
