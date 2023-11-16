@@ -625,16 +625,24 @@ class MultiProcessQueryStep(OpenSearchStep):
         queries = []
         batch = []
         i = 0
-        for _ in range(self.query_count):
+        # First create the number of batches equal to number of clients
+        for _ in range(queries_per_client * self.clients):
             query = self.dataset.read(1).tolist()
             i = i + 1
             if len(batch) == queries_per_client:
                 queries.append(batch)
                 batch = []
             batch.append(query)
-        # Put the last batch of queries
         queries.append(batch)
-
+        
+        # if the queries cannot be equally divided in batches put all the remaining queries in the last batch
+        # This can add more queries in the last batch, but this is a limitation for us now.
+        if self.query_count % self.clients != 0:
+            batch = []
+            for _ in range(self.query_count - (queries_per_client * self.clients)):
+                query = self.dataset.read(1).tolist()
+                batch.append(query)
+            queries[-1].extend(batch)
         query_responses = []
         query_responses_per_client_map = {}
         # use a large value
@@ -978,6 +986,9 @@ def recall_at_r(results, neighbor_dataset, r, k, query_count):
         true_neighbors_set = set(true_neighbors[0][:k])
         true_neighbors_set.discard(-1)
         min_r = min(r, len(true_neighbors_set))
+        # logging.info(f"min_r is : {min_r}")
+        # logging.info(f"Query is : {query}")
+        # logging.info(f"Length of results[query] is : {len(results[query])}")
         total_num_of_results += min_r
         for j in range(min_r):
             if results[query][j] in true_neighbors_set:
