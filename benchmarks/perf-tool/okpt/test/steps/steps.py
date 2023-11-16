@@ -468,7 +468,8 @@ class BaseQueryStep(OpenSearchStep):
                                                  step_config.config, {}, None)
 
     def _action(self):
-
+        # Do info call to setup the connection
+        self.opensearch.info()
         results = {}
         query_responses = []
         for _ in range(self.query_count):

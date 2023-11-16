@@ -9,7 +9,7 @@
 
 from okpt.io.config.parsers.base import ConfigurationError
 from okpt.io.dataset import HDF5DataSet, BigANNNeighborDataSet, \
-    BigANNVectorDataSet, DataSet, Context
+    BigANNVectorDataSet, DataSet, Context, GistFvecsDataSet
 
 
 def parse_dataset(dataset_format: str, dataset_path: str,
@@ -22,6 +22,9 @@ def parse_dataset(dataset_format: str, dataset_path: str,
 
     if dataset_format == 'bigann':
         return BigANNVectorDataSet(dataset_path)
+
+    if dataset_format == 'fvecs' or dataset_format == 'ivecs':
+        return GistFvecsDataSet(dataset_path)    
 
     raise Exception("Unsupported data-set format")
 

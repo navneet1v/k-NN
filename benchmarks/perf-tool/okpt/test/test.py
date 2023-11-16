@@ -132,6 +132,10 @@ def _aggregate_steps(step_results: List[Dict[str, Any]],
 
         aggregate[step_measure_label + '_total'] = float(sum(step_measure))
 
+        avg = get_avg(step_measure)
+        if avg != -1:
+            aggregate[step_measure_label + '_avg'] = avg
+
         p50 = _pxx(step_measure, 0.50)
         if p50 != -1:
             aggregate[step_measure_label + '_p50'] = p50

@@ -103,6 +103,46 @@ class HDF5DataSet(DataSet):
             return custom_context
 
         raise Exception("Unsupported context")
+        
+
+class GistFvecsDataSet(DataSet):
+
+    def __init__(self, dataset_path: str, custom_context=None):
+        self.data = self._fvecs_read(dataset_path)
+        self.current = 0
+
+    def read(self, chunk_size: int):
+        if self.current >= self.size():
+            return None
+
+        end_i = self.current + chunk_size
+        if end_i > self.size():
+            end_i = self.size()
+
+        v = cast(np.ndarray, self.data[self.current:end_i])
+        self.current = end_i
+        return v
+
+    def size(self):
+        return len(self.data)
+
+    def reset(self):
+        self.current = 0
+
+    @staticmethod
+    def _fvecs_read(filename, c_contiguous=True):
+        fv = np.fromfile(filename, dtype=np.float32)
+        if fv.size == 0:
+            return np.zeros((0, 0))
+        dim = fv.view(np.int32)[0]
+        assert dim > 0
+        fv = fv.reshape(-1, 1 + dim)
+        if not all(fv.view(np.int32)[:, 0] == dim):
+            raise IOError("Non-uniform vector sizes in " + filename)
+        fv = fv[:, 1:]
+        if c_contiguous:
+            fv = fv.copy()
+        return fv
 
 
 class BigANNNeighborDataSet(DataSet):
