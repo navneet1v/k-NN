@@ -109,15 +109,15 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         // Get values to be indexed
         BinaryDocValues values = valuesProducer.getBinary(field);
         KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values);
-        if (pair.vectors.length == 0 || pair.docs.length == 0) {
+        if (pair.vectorsAddress == 0 && (pair.vectors.length == 0 || pair.docs.length == 0)) {
             logger.info("Skipping engine index creation as there are no vectors or docs in the documents");
             return;
         }
-        long arraySize = calculateArraySize(pair.vectors, pair.serializationMode);
+        //long arraySize = calculateArraySize(pair.vectors, pair.serializationMode);
         if (isMerge) {
             KNNGraphValue.MERGE_CURRENT_OPERATIONS.increment();
             KNNGraphValue.MERGE_CURRENT_DOCS.incrementBy(pair.docs.length);
-            KNNGraphValue.MERGE_CURRENT_SIZE_IN_BYTES.incrementBy(arraySize);
+            //KNNGraphValue.MERGE_CURRENT_SIZE_IN_BYTES.incrementBy(arraySize);
         }
         // Increment counter for number of graph index requests
         KNNCounter.GRAPH_INDEX_REQUESTS.increment();
@@ -150,7 +150,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         }
 
         if (isMerge) {
-            recordMergeStats(pair.docs.length, arraySize);
+            //recordMergeStats(pair.docs.length, arraySize);
         }
 
         if (isRefresh) {
@@ -223,7 +223,8 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
 
         // Pass the path for the nms library to save the file
         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            JNIService.createIndex(pair.docs, pair.vectors, indexPath, parameters, knnEngine.getName());
+            JNIService.createIndex(pair.docs, pair.vectors, pair.vectorsAddress, pair.dim, indexPath, parameters,
+                    knnEngine.getName());
             return null;
         });
     }

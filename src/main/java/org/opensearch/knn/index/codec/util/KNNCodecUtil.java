@@ -5,9 +5,12 @@
 
 package org.opensearch.knn.index.codec.util;
 
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
+import org.opensearch.knn.jni.JNIService;
+import org.apache.commons.lang.ArrayUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -26,37 +29,59 @@ public class KNNCodecUtil {
     // Java rounds each array size up to multiples of 8 bytes
     public static final int JAVA_ROUNDING_NUMBER = 8;
 
+    private static final int MAX_SIZE_OF_VECTOR_ARRAY = 10000;
+
     public static final class Pair {
         public Pair(int[] docs, float[][] vectors, SerializationMode serializationMode) {
             this.docs = docs;
             this.vectors = vectors;
             this.serializationMode = serializationMode;
+            this.vectorsAddress = 0;
+            this.dim = 0;
         }
 
         public int[] docs;
         public float[][] vectors;
         public SerializationMode serializationMode;
+        public long vectorsAddress;
+        public int dim;
     }
 
     public static KNNCodecUtil.Pair getFloats(BinaryDocValues values) throws IOException {
         ArrayList<float[]> vectorList = new ArrayList<>();
         ArrayList<Integer> docIdList = new ArrayList<>();
         SerializationMode serializationMode = SerializationMode.COLLECTION_OF_FLOATS;
+        long vectorAddress = 0;
+        int dim = 0;
         for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
             BytesRef bytesref = values.binaryValue();
             try (ByteArrayInputStream byteStream = new ByteArrayInputStream(bytesref.bytes, bytesref.offset, bytesref.length)) {
                 serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
                 final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
                 final float[] vector = vectorSerializer.byteToFloatArray(byteStream);
+                dim = vector.length;
                 vectorList.add(vector);
+            }
+            if(vectorList.size() == MAX_SIZE_OF_VECTOR_ARRAY) {
+                vectorAddress = JNIService.transferVectors(vectorAddress, vectorList.toArray(new float[][] {}));
+                vectorList = new ArrayList<>();
             }
             docIdList.add(doc);
         }
-        return new KNNCodecUtil.Pair(
+
+        if(vectorList.size() > 0) {
+            vectorAddress = JNIService.transferVectors(vectorAddress, vectorList.toArray(new float[][] {}));
+            vectorList = new ArrayList<>();
+        }
+        KNNCodecUtil.Pair pair = new KNNCodecUtil.Pair(
             docIdList.stream().mapToInt(Integer::intValue).toArray(),
-            vectorList.toArray(new float[][] {}),
+            new float[0][],
             serializationMode
         );
+        pair.vectorsAddress = vectorAddress;
+        pair.dim = dim;
+        return pair;
+
     }
 
     public static long calculateArraySize(float[][] vectors, SerializationMode serializationMode) {

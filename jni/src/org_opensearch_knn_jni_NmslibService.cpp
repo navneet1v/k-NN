@@ -48,6 +48,19 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_NmslibService_createIndex(JNI
     }
 }
 
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_NmslibService_createIndexWithMemoryAddress(JNIEnv * env, jclass cls, jintArray idsJ,
+                                                                             jlong vectorAddressJ, jint dim, jstring indexPathJ,
+                                                                             jobject parametersJ)
+{
+    try {
+        knn_jni::nmslib_wrapper::CreateIndex_With_Memory_Address(&jniUtil, env, idsJ, vectorAddressJ, dim ,indexPathJ, parametersJ);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+
+
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_NmslibService_loadIndex(JNIEnv * env, jclass cls,
                                                                             jstring indexPathJ, jobject parametersJ)
 {

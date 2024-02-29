@@ -48,6 +48,9 @@ class NmslibService {
      */
     public static native void createIndex(int[] ids, float[][] data, String indexPath, Map<String, Object> parameters);
 
+    public static native void createIndexWithMemoryAddress(int[] ids, long address, int dim, String indexPath,
+                                            Map<String, Object> parameters);
+
     /**
      * Load an index into memory
      *

@@ -45,6 +45,21 @@ public class JNIService {
         throw new IllegalArgumentException("CreateIndex not supported for provided engine");
     }
 
+    public static void createIndex(int[] ids, float[][] data, long vectorAddress, int dim, String indexPath,
+                                   Map<String, Object> parameters, String engineName) {
+        if (KNNEngine.NMSLIB.getName().equals(engineName)) {
+            NmslibService.createIndexWithMemoryAddress(ids, vectorAddress, dim, indexPath, parameters);
+            return;
+        }
+
+        if (KNNEngine.FAISS.getName().equals(engineName)) {
+            FaissService.createIndex(ids, data, indexPath, parameters);
+            return;
+        }
+
+        throw new IllegalArgumentException("CreateIndex not supported for provided engine");
+    }
+
     /**
      * Create an index for the native library with a provided template index
      *

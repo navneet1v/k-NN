@@ -26,6 +26,9 @@ extern "C" {
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_NmslibService_createIndex
   (JNIEnv *, jclass, jintArray, jobjectArray, jstring, jobject);
 
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_NmslibService_createIndexWithMemoryAddress
+  (JNIEnv *, jclass, jintArray, jlong, jint, jstring, jobject);
+
 /*
  * Class:     org_opensearch_knn_jni_NmslibService
  * Method:    loadIndex
