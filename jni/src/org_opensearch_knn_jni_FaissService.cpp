@@ -144,7 +144,7 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectors
 
     int dim = jniUtil.GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
     auto dataset = jniUtil.Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
-    vect->insert(vect->begin(), dataset.begin(), dataset.end());
+    vect->insert(vect->end(), dataset.begin(), dataset.end());
 
     return (jlong) vect;
 }
