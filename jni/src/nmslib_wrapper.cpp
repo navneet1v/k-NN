@@ -238,7 +238,7 @@ void knn_jni::nmslib_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilIn
     similarity::ObjectVector dataset;
     dataset.reserve(numVectors);
     int* idsCpp;
-    int topLevelPointer = 0;
+    long long topLevelPointer = 0;
     try {
         // Read in data set
         idsCpp = jniUtil->GetIntArrayElements(env, idsJ, nullptr);
