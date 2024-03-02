@@ -166,14 +166,14 @@ void knn_jni::faiss_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilInt
     //int dim = jniUtil->GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
     //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
     //auto dataset = jniUtil->GetFloatArrayElements(env, )
-    std::vector<float> dataset;
-    long long topLevelPointer = 0;
-    for (int i = 0; i < numVectors; i++) {
-        for(int j = 0 ; j < dim; j++) {
-            dataset.push_back(inputVectors->at(topLevelPointer));
-            topLevelPointer++;
-        }
-    }
+//    std::vector<float> dataset;
+//    long long topLevelPointer = 0;
+//    for (int i = 0; i < numVectors; i++) {
+//        for(int j = 0 ; j < dim; j++) {
+//            dataset.push_back(inputVectors->at(topLevelPointer));
+//            topLevelPointer++;
+//        }
+//    }
 
 
     // Create faiss index
@@ -205,12 +205,15 @@ void knn_jni::faiss_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilInt
 
     auto idVector = jniUtil->ConvertJavaIntArrayToCppIntVector(env, idsJ);
     faiss::IndexIDMap idMap = faiss::IndexIDMap(indexWriter.get());
-    idMap.add_with_ids(numVectors, dataset.data(), idVector.data());
+    idMap.add_with_ids(numVectors, inputVectors->data(), idVector.data());
 
     // Write the index to disk
     std::string indexPathCpp(jniUtil->ConvertJavaStringToCppString(env, indexPathJ));
     faiss::write_index(&idMap, indexPathCpp.c_str());
+    // Free up memory.
     delete inputVectors;
+    inputVectors = nullptr;
+    vectorAddressJ = 0;
 }
 
 
@@ -312,14 +315,14 @@ void knn_jni::faiss_wrapper::CreateIndexFromTemplate_With_Memory_Address(knn_jni
 
     //int dim = jniUtil->GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
     //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
-    std::vector<float> dataset;
-    long long topLevelPointer = 0;
-    for (int i = 0; i < numVectors; i++) {
-        for(int j = 0 ; j < dim; j++) {
-            dataset.push_back(inputVectors->at(topLevelPointer));
-            topLevelPointer++;
-        }
-    }
+//    std::vector<float> dataset;
+//    long long topLevelPointer = 0;
+//    for (int i = 0; i < numVectors; i++) {
+//        for(int j = 0 ; j < dim; j++) {
+//            dataset.push_back(inputVectors->at(topLevelPointer));
+//            topLevelPointer++;
+//        }
+//    }
 
     // Get vector of bytes from jbytearray
     int indexBytesCount = jniUtil->GetJavaBytesArrayLength(env, templateIndexJ);
@@ -337,12 +340,14 @@ void knn_jni::faiss_wrapper::CreateIndexFromTemplate_With_Memory_Address(knn_jni
 
     auto idVector = jniUtil->ConvertJavaIntArrayToCppIntVector(env, idsJ);
     faiss::IndexIDMap idMap =  faiss::IndexIDMap(indexWriter.get());
-    idMap.add_with_ids(numVectors, dataset.data(), idVector.data());
+    idMap.add_with_ids(numVectors, inputVectors->data(), idVector.data());
 
     // Write the index to disk
     std::string indexPathCpp(jniUtil->ConvertJavaStringToCppString(env, indexPathJ));
     faiss::write_index(&idMap, indexPathCpp.c_str());
     delete inputVectors;
+    inputVectors = nullptr;
+    vectorsAddress = 0;
 }
 
 jlong knn_jni::faiss_wrapper::LoadIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jstring indexPathJ) {
