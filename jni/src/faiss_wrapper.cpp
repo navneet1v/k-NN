@@ -167,8 +167,12 @@ void knn_jni::faiss_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilInt
     //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
     //auto dataset = jniUtil->GetFloatArrayElements(env, )
     std::vector<float> dataset;
+    long long topLevelPointer = 0;
     for (int i = 0; i < numVectors; i++) {
-        dataset.push_back(inputVectors->at(i));
+        for(int j = 0 ; j < dim; j++) {
+            dataset.push_back(inputVectors->at(topLevelPointer));
+            topLevelPointer++;
+        }
     }
 
 
@@ -309,8 +313,12 @@ void knn_jni::faiss_wrapper::CreateIndexFromTemplate_With_Memory_Address(knn_jni
     //int dim = jniUtil->GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
     //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
     std::vector<float> dataset;
+    long long topLevelPointer = 0;
     for (int i = 0; i < numVectors; i++) {
-        dataset.push_back(inputVectors->at(i));
+        for(int j = 0 ; j < dim; j++) {
+            dataset.push_back(inputVectors->at(topLevelPointer));
+            topLevelPointer++;
+        }
     }
 
     // Get vector of bytes from jbytearray
