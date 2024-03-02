@@ -261,6 +261,7 @@ void knn_jni::nmslib_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilIn
         // found: https://github.com/nmslib/nmslib/blob/v2.1.1/similarity_search/include/object.h#L61-L75
         std::unique_ptr<char[]> objectBuffer(new char[(similarity::ID_SIZE + similarity::LABEL_SIZE + similarity::DATALENGTH_SIZE + vectorSizeInBytes) * numVectors]);
         char* ptr = objectBuffer.get();
+        std::cout<<"Number of vectors: "<<numVectors<<std::endl;
         for (int i = 0; i < numVectors; i++) {
             dataset.push_back(new similarity::Object(ptr));
 
@@ -277,12 +278,13 @@ void knn_jni::nmslib_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilIn
 //            }
 
             //floatArrayCpp = jniUtil->GetFloatArrayElements(env, floatArrayJ, nullptr);
+            std::cout<<"Top Level Pointer before getting vectors"<<topLevelPointer<<std::endl;
             float floatArrayCpp[dim];
             for(int j = 0 ; j < dim; j ++) {
                 floatArrayCpp[j] = inputVectors->at(topLevelPointer);
                 topLevelPointer++;
             }
-
+            std::cout<<"Top Level Pointer after getting vectors"<<topLevelPointer<<std::endl;
             memcpy(ptr, &floatArrayCpp, vectorSizeInBytes);
             //jniUtil->ReleaseFloatArrayElements(env, floatArrayJ, floatArrayCpp, JNI_ABORT);
             ptr += vectorSizeInBytes;

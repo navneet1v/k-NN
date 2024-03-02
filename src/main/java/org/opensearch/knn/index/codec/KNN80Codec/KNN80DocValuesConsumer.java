@@ -184,7 +184,8 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
             KNNSettings.state().getSettingValue(KNNSettings.KNN_ALGO_PARAM_INDEX_THREAD_QTY)
         );
         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            JNIService.createIndexFromTemplate(pair.docs, pair.vectors, indexPath, model, parameters, knnEngine.getName());
+            JNIService.createIndexFromTemplate(pair.docs, pair.vectors, pair.vectorsAddress, pair.dim, indexPath, model,
+                    parameters, knnEngine.getName());
             return null;
         });
     }

@@ -63,14 +63,14 @@ public class KNNCodecUtil {
                 vectorList.add(vector);
             }
             if(vectorList.size() == MAX_SIZE_OF_VECTOR_ARRAY) {
-                vectorAddress = JNIService.transferVectors(vectorAddress, vectorList.toArray(new float[][] {}));
+                vectorAddress = JNIService.transferVectorsV2(vectorAddress, vectorList.toArray(new float[][] {}));
                 vectorList = new ArrayList<>();
             }
             docIdList.add(doc);
         }
 
         if(vectorList.size() > 0) {
-            vectorAddress = JNIService.transferVectors(vectorAddress, vectorList.toArray(new float[][] {}));
+            vectorAddress = JNIService.transferVectorsV2(vectorAddress, vectorList.toArray(new float[][] {}));
             vectorList = new ArrayList<>();
         }
         KNNCodecUtil.Pair pair = new KNNCodecUtil.Pair(

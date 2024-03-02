@@ -51,6 +51,17 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndex(JNIE
     }
 }
 
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexWithMemoryAddress(JNIEnv * env, jclass cls, jintArray idsJ,
+                                                                            jlong vectorAddress, jint dim, jstring indexPathJ,
+                                                                            jobject parametersJ)
+{
+    try {
+        knn_jni::faiss_wrapper::CreateIndex_With_Memory_Address(&jniUtil, env, idsJ, vectorAddress, dim, indexPathJ, parametersJ);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexFromTemplate(JNIEnv * env, jclass cls,
                                                                                         jintArray idsJ,
                                                                                         jobjectArray vectorsJ,
@@ -60,6 +71,21 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexFromT
 {
     try {
         knn_jni::faiss_wrapper::CreateIndexFromTemplate(&jniUtil, env, idsJ, vectorsJ, indexPathJ, templateIndexJ, parametersJ);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexFromTemplateWithMemoryAddress(JNIEnv * env, jclass cls,
+                                                                                        jintArray idsJ,
+                                                                                        jlong vectorsAddress,
+                                                                                        jint dim,
+                                                                                        jstring indexPathJ,
+                                                                                        jbyteArray templateIndexJ,
+                                                                                        jobject parametersJ)
+{
+    try {
+        knn_jni::faiss_wrapper::CreateIndexFromTemplate_With_Memory_Address(&jniUtil, env, idsJ, vectorsAddress, dim, indexPathJ, templateIndexJ, parametersJ);
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }
@@ -132,6 +158,24 @@ JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_trainIndex
 }
 
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectors(JNIEnv * env, jclass cls,
+                                                                                 jlong vectorsPointerJ,
+                                                                                 jobjectArray vectorsJ)
+{
+    std::vector<float> *vect;
+    if ((long) vectorsPointerJ == 0) {
+        vect = new std::vector<float>;
+    } else {
+        vect = reinterpret_cast<std::vector<float>*>(vectorsPointerJ);
+    }
+
+    int dim = jniUtil.GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
+    auto dataset = jniUtil.Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
+    vect->insert(vect->begin(), dataset.begin(), dataset.end());
+
+    return (jlong) vect;
+}
+
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectorsV2(JNIEnv * env, jclass cls,
                                                                                  jlong vectorsPointerJ,
                                                                                  jobjectArray vectorsJ)
 {

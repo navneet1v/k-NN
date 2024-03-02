@@ -26,6 +26,10 @@ extern "C" {
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndex
   (JNIEnv *, jclass, jintArray, jobjectArray, jstring, jobject);
 
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexWithMemoryAddress
+  (JNIEnv *, jclass, jintArray, jlong, jint, jstring, jobject);
+
 /*
  * Class:     org_opensearch_knn_jni_FaissService
  * Method:    createIndexFromTemplate
@@ -33,6 +37,9 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndex
  */
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexFromTemplate
   (JNIEnv *, jclass, jintArray, jobjectArray, jstring, jbyteArray, jobject);
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexFromTemplateWithMemoryAddress
+  (JNIEnv * , jclass, jintArray, jlong , jint , jstring , jbyteArray ,jobject);
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService
@@ -89,6 +96,9 @@ JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_trainIndex
  */
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectors
   (JNIEnv *, jclass, jlong, jobjectArray);
+
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectorsV2
+        (JNIEnv *, jclass, jlong, jobjectArray);
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService

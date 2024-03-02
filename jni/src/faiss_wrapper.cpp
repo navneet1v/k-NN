@@ -124,6 +124,92 @@ void knn_jni::faiss_wrapper::CreateIndex(knn_jni::JNIUtilInterface * jniUtil, JN
     faiss::write_index(&idMap, indexPathCpp.c_str());
 }
 
+
+void knn_jni::faiss_wrapper::CreateIndex_With_Memory_Address(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jintArray idsJ,
+                                         jlong vectorAddressJ, jint dim, jstring indexPathJ, jobject parametersJ) {
+
+    if (idsJ == nullptr) {
+        throw std::runtime_error("IDs cannot be null");
+    }
+
+//    if (vectorsJ == nullptr) {
+//        throw std::runtime_error("Vectors cannot be null");
+//    }
+
+    if (indexPathJ == nullptr) {
+        throw std::runtime_error("Index path cannot be null");
+    }
+
+    if (parametersJ == nullptr) {
+        throw std::runtime_error("Parameters cannot be null");
+    }
+
+    // parametersJ is a Java Map<String, Object>. ConvertJavaMapToCppMap converts it to a c++ map<string, jobject>
+    // so that it is easier to access.
+    auto parametersCpp = jniUtil->ConvertJavaMapToCppMap(env, parametersJ);
+
+    // Get space type for this index
+    jobject spaceTypeJ = knn_jni::GetJObjectFromMapOrThrow(parametersCpp, knn_jni::SPACE_TYPE);
+    std::string spaceTypeCpp(jniUtil->ConvertJavaObjectToCppString(env, spaceTypeJ));
+    faiss::MetricType metric = TranslateSpaceToMetric(spaceTypeCpp);
+
+    auto *inputVectors = reinterpret_cast<std::vector<float>*>(vectorAddressJ);
+
+    // Read data set
+    //int numVectors = jniUtil->GetJavaObjectArrayLength(env, vectorsJ);
+    int numVectors = inputVectors->size() / dim;
+    int numIds = jniUtil->GetJavaIntArrayLength(env, idsJ);
+    if (numIds != numVectors) {
+        throw std::runtime_error("Number of IDs does not match number of vectors");
+    }
+
+    //int dim = jniUtil->GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
+    //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
+    //auto dataset = jniUtil->GetFloatArrayElements(env, )
+    std::vector<float> dataset;
+    for (int i = 0; i < numVectors; i++) {
+        dataset.push_back(inputVectors->at(i));
+    }
+
+
+    // Create faiss index
+    jobject indexDescriptionJ = knn_jni::GetJObjectFromMapOrThrow(parametersCpp, knn_jni::INDEX_DESCRIPTION);
+    std::string indexDescriptionCpp(jniUtil->ConvertJavaObjectToCppString(env, indexDescriptionJ));
+
+    std::unique_ptr<faiss::Index> indexWriter;
+    indexWriter.reset(faiss::index_factory(dim, indexDescriptionCpp.c_str(), metric));
+
+    // Set thread count if it is passed in as a parameter. Setting this variable will only impact the current thread
+    if(parametersCpp.find(knn_jni::INDEX_THREAD_QUANTITY) != parametersCpp.end()) {
+        auto threadCount = jniUtil->ConvertJavaObjectToCppInteger(env, parametersCpp[knn_jni::INDEX_THREAD_QUANTITY]);
+        omp_set_num_threads(threadCount);
+    }
+
+    // Add extra parameters that cant be configured with the index factory
+    if(parametersCpp.find(knn_jni::PARAMETERS) != parametersCpp.end()) {
+        jobject subParametersJ = parametersCpp[knn_jni::PARAMETERS];
+        auto subParametersCpp = jniUtil->ConvertJavaMapToCppMap(env, subParametersJ);
+        SetExtraParameters(jniUtil, env, subParametersCpp, indexWriter.get());
+        jniUtil->DeleteLocalRef(env, subParametersJ);
+    }
+    jniUtil->DeleteLocalRef(env, parametersJ);
+
+    // Check that the index does not need to be trained
+    if(!indexWriter->is_trained) {
+        throw std::runtime_error("Index is not trained");
+    }
+
+    auto idVector = jniUtil->ConvertJavaIntArrayToCppIntVector(env, idsJ);
+    faiss::IndexIDMap idMap = faiss::IndexIDMap(indexWriter.get());
+    idMap.add_with_ids(numVectors, dataset.data(), idVector.data());
+
+    // Write the index to disk
+    std::string indexPathCpp(jniUtil->ConvertJavaStringToCppString(env, indexPathJ));
+    faiss::write_index(&idMap, indexPathCpp.c_str());
+    delete inputVectors;
+}
+
+
 void knn_jni::faiss_wrapper::CreateIndexFromTemplate(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jintArray idsJ,
                                                      jobjectArray vectorsJ, jstring indexPathJ,
                                                      jbyteArray templateIndexJ, jobject parametersJ) {
@@ -182,6 +268,73 @@ void knn_jni::faiss_wrapper::CreateIndexFromTemplate(knn_jni::JNIUtilInterface *
     // Write the index to disk
     std::string indexPathCpp(jniUtil->ConvertJavaStringToCppString(env, indexPathJ));
     faiss::write_index(&idMap, indexPathCpp.c_str());
+}
+
+void knn_jni::faiss_wrapper::CreateIndexFromTemplate_With_Memory_Address(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jintArray idsJ,
+                                                     jlong vectorsAddress, jint dim, jstring indexPathJ,
+                                                     jbyteArray templateIndexJ, jobject parametersJ) {
+    if (idsJ == nullptr) {
+        throw std::runtime_error("IDs cannot be null");
+    }
+
+//    if (vectorsJ == nullptr) {
+//        throw std::runtime_error("Vectors cannot be null");
+//    }
+
+    if (indexPathJ == nullptr) {
+        throw std::runtime_error("Index path cannot be null");
+    }
+
+    if (templateIndexJ == nullptr) {
+        throw std::runtime_error("Template index cannot be null");
+    }
+
+    // Set thread count if it is passed in as a parameter. Setting this variable will only impact the current thread
+    auto parametersCpp = jniUtil->ConvertJavaMapToCppMap(env, parametersJ);
+    if(parametersCpp.find(knn_jni::INDEX_THREAD_QUANTITY) != parametersCpp.end()) {
+        auto threadCount = jniUtil->ConvertJavaObjectToCppInteger(env, parametersCpp[knn_jni::INDEX_THREAD_QUANTITY]);
+        omp_set_num_threads(threadCount);
+    }
+    jniUtil->DeleteLocalRef(env, parametersJ);
+
+    // Read data set
+    //int numVectors = jniUtil->GetJavaObjectArrayLength(env, vectorsJ);
+    auto *inputVectors = reinterpret_cast<std::vector<float>*>(vectorsAddress);
+    int numVectors = inputVectors->size() / dim;
+    int numIds = jniUtil->GetJavaIntArrayLength(env, idsJ);
+    if (numIds != numVectors) {
+        throw std::runtime_error("Number of IDs does not match number of vectors");
+    }
+
+    //int dim = jniUtil->GetInnerDimensionOf2dJavaFloatArray(env, vectorsJ);
+    //auto dataset = jniUtil->Convert2dJavaObjectArrayToCppFloatVector(env, vectorsJ, dim);
+    std::vector<float> dataset;
+    for (int i = 0; i < numVectors; i++) {
+        dataset.push_back(inputVectors->at(i));
+    }
+
+    // Get vector of bytes from jbytearray
+    int indexBytesCount = jniUtil->GetJavaBytesArrayLength(env, templateIndexJ);
+    jbyte * indexBytesJ = jniUtil->GetByteArrayElements(env, templateIndexJ, nullptr);
+
+    faiss::VectorIOReader vectorIoReader;
+    for (int i = 0; i < indexBytesCount; i++) {
+        vectorIoReader.data.push_back((uint8_t) indexBytesJ[i]);
+    }
+    jniUtil->ReleaseByteArrayElements(env, templateIndexJ, indexBytesJ, JNI_ABORT);
+
+    // Create faiss index
+    std::unique_ptr<faiss::Index> indexWriter;
+    indexWriter.reset(faiss::read_index(&vectorIoReader, 0));
+
+    auto idVector = jniUtil->ConvertJavaIntArrayToCppIntVector(env, idsJ);
+    faiss::IndexIDMap idMap =  faiss::IndexIDMap(indexWriter.get());
+    idMap.add_with_ids(numVectors, dataset.data(), idVector.data());
+
+    // Write the index to disk
+    std::string indexPathCpp(jniUtil->ConvertJavaStringToCppString(env, indexPathJ));
+    faiss::write_index(&idMap, indexPathCpp.c_str());
+    delete inputVectors;
 }
 
 jlong knn_jni::faiss_wrapper::LoadIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jstring indexPathJ) {

@@ -53,7 +53,7 @@ public class JNIService {
         }
 
         if (KNNEngine.FAISS.getName().equals(engineName)) {
-            FaissService.createIndex(ids, data, indexPath, parameters);
+            FaissService.createIndexWithMemoryAddress(ids, vectorAddress, dim, indexPath, parameters);
             return;
         }
 
@@ -80,6 +80,25 @@ public class JNIService {
     ) {
         if (KNNEngine.FAISS.getName().equals(engineName)) {
             FaissService.createIndexFromTemplate(ids, data, indexPath, templateIndex, parameters);
+            return;
+        }
+
+        throw new IllegalArgumentException("CreateIndexFromTemplate not supported for provided engine");
+    }
+
+    public static void createIndexFromTemplate(
+            int[] ids,
+            float[][] data,
+            long vectorAddress,
+            int dim,
+            String indexPath,
+            byte[] templateIndex,
+            Map<String, Object> parameters,
+            String engineName
+    ) {
+        if (KNNEngine.FAISS.getName().equals(engineName)) {
+            FaissService.createIndexFromTemplateWithMemoryAddress(ids, vectorAddress, dim, indexPath, templateIndex,
+                    parameters);
             return;
         }
 
@@ -180,6 +199,10 @@ public class JNIService {
      */
     public static long transferVectors(long vectorsPointer, float[][] trainingData) {
         return FaissService.transferVectors(vectorsPointer, trainingData);
+    }
+
+    public static long transferVectorsV2(long vectorsPointer, float[][] trainingData) {
+        return FaissService.transferVectorsV2(vectorsPointer, trainingData);
     }
 
     /**

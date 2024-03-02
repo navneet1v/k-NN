@@ -48,6 +48,10 @@ class FaissService {
      */
     public static native void createIndex(int[] ids, float[][] data, String indexPath, Map<String, Object> parameters);
 
+
+    public static native void createIndexWithMemoryAddress(int[] ids, long vectorAddress, int dim, String indexPath,
+                                                           Map<String, Object> parameters);
+
     /**
      * Create an index for the native library with a provided template index
      *
@@ -63,6 +67,15 @@ class FaissService {
         String indexPath,
         byte[] templateIndex,
         Map<String, Object> parameters
+    );
+
+    public static native void createIndexFromTemplateWithMemoryAddress(
+            int[] ids,
+            long vectorAddress,
+            int dim,
+            String indexPath,
+            byte[] templateIndex,
+            Map<String, Object> parameters
     );
 
     /**
@@ -114,6 +127,8 @@ class FaissService {
      * @return pointer to native memory location of training data
      */
     public static native long transferVectors(long vectorsPointer, float[][] trainingData);
+
+    public static native long transferVectorsV2(long vectorsPointer, float[][] trainingData);
 
     /**
      * Free vectors from memory
