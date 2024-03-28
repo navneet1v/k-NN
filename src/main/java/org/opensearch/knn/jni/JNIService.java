@@ -257,4 +257,9 @@ public class JNIService {
     public static long transferVectorsV2(long vectorsPointer, float[][] trainingData) {
         return FaissService.transferVectorsV2(vectorsPointer, trainingData);
     }
+
+    public static long transferVectorsV3(long vectorsPointer, float[][] trainingData, long startingIndex,
+                                                long initialCapacity) {
+        return FaissService.transferVectorsV3(vectorsPointer, trainingData, startingIndex, initialCapacity);
+    }
 }

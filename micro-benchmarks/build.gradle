@@ -43,6 +43,8 @@ run {
     // This is required for C++ code
     systemProperty "java.library.path", "$rootDir/jni/release"
     executable = "${BuildParams.runtimeJavaHome}/bin/java"
+    var jvmHeapSize = System.getProperty("jvm.heap.size", "6g")
+    jvmArgs("-Xms" + jvmHeapSize, "-Xmx"  + jvmHeapSize)
 }
 
 

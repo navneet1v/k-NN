@@ -88,4 +88,8 @@ If you want to disassemble a single method do something like this:
 gradlew -p micro-benchmarks run --args ' MemoryStatsBenchmark -jvmArgs "-XX:+UnlockDiagnosticVMOptions -XX:CompileCommand=print,*.yourMethodName -XX:PrintAssemblyOptions=intel"
 ```
 
+```
+./gradlew -p micro-benchmarks run --args ' -gc true -jvmArgs "-Xms2048m -Xmx2048m"'
+```
+
 If you want `perf` to find the hot methods for you then do add `-prof:perfasm`.

@@ -122,8 +122,20 @@ JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_trainIndex
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectors
   (JNIEnv *, jclass, jlong, jobjectArray);
 
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    transferVectorsV2
+ * Signature: (J[[F)J
+ */
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectorsV2
         (JNIEnv *, jclass, jlong, jobjectArray);
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    transferVectorsV3
+ * Signature: (J[[F)J
+ */
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_transferVectorsV3(JNIEnv *, jclass ,
+jlong ,jobjectArray , jlong , jlong );
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService

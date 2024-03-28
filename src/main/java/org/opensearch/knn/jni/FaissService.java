@@ -11,6 +11,7 @@
 
 package org.opensearch.knn.jni;
 
+import lombok.extern.log4j.Log4j2;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.query.KNNQueryResult;
 import org.opensearch.knn.index.util.KNNEngine;
@@ -30,23 +31,26 @@ import static org.opensearch.knn.jni.PlatformUtils.isAVX2SupportedBySystem;
  *      src/main/java/org/opensearch/knn/index/query/KNNQueryResult.java
  *      src/main/java/org/opensearch/knn/common/KNNConstants.java
  */
+@Log4j2
 class FaissService {
 
     static {
         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            boolean isFaissAVX2Disabled = true;
-            try {
-                isFaissAVX2Disabled = isFaissAVX2Disabled();
-            } catch (Exception e) {
-
-            }
-            // Even if the underlying system supports AVX2, users can override and disable it by using the
-            // 'knn.faiss.avx2.disabled' setting by setting it to true in the opensearch.yml configuration
-            if (!isFaissAVX2Disabled && isAVX2SupportedBySystem()) {
-                System.loadLibrary(KNNConstants.FAISS_AVX2_JNI_LIBRARY_NAME);
-            } else {
+//            boolean isFaissAVX2Disabled = true;
+//            try {
+//                isFaissAVX2Disabled = isFaissAVX2Disabled();
+//            } catch (Exception e) {
+//
+//            }
+//            // Even if the underlying system supports AVX2, users can override and disable it by using the
+//            // 'knn.faiss.avx2.disabled' setting by setting it to true in the opensearch.yml configuration
+//            if (!isFaissAVX2Disabled && isAVX2SupportedBySystem()) {
+//                log.error("SIMD is enabled");
+//                System.loadLibrary(KNNConstants.FAISS_AVX2_JNI_LIBRARY_NAME);
+//            } else {
+                log.error("SIMD is not enabled");
                 System.loadLibrary(KNNConstants.FAISS_JNI_LIBRARY_NAME);
-            }
+            //}
 
             initLibrary();
             KNNEngine.FAISS.setInitialized(true);
@@ -187,6 +191,8 @@ class FaissService {
     public static native long transferVectors(long vectorsPointer, float[][] trainingData);
 
     public static native long transferVectorsV2(long vectorsPointer, float[][] trainingData);
+
+    public static native long transferVectorsV3(long vectorsPointer, float[][] trainingData, long startingIndex, long initialCapacity);
 
     /**
      * Free vectors from memory

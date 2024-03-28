@@ -27,8 +27,8 @@ public class TransferVectorsBenchmarksIT extends OpenSearchTestCase {
     private static final int MAX_DATA_SIZE_TO_BE_TRANSFERRED_IN_MB = 100;
     private static final int CONVERSION_CONSTANT = 1024;
 
-    private static final List<Integer> DIMENSIONS_LIST = List.of(1024, 1536,  968, 768, 512, 256, 128);
-    //List.of(128, 256, 512, 768, 968, 1024, 1536);
+    private static final List<Integer> DIMENSIONS_LIST = List.of(1024, 1536, 968, 768, 512, 256, 128);
+    // List.of(128, 256, 512, 768, 968, 1024, 1536);
 
     public void test_transferVectorV2Speed() {
         final List<Double> elapsedTime = new ArrayList<>();
@@ -36,13 +36,13 @@ public class TransferVectorsBenchmarksIT extends OpenSearchTestCase {
         System.out.println("Dimension, Elapsed Time");
         for (int i = 0; i < DIMENSIONS_LIST.size(); i++) {
             System.gc();
-            int vectorsPerTransfer = (MAX_DATA_SIZE_TO_BE_TRANSFERRED_IN_MB * CONVERSION_CONSTANT * CONVERSION_CONSTANT) / (DIMENSIONS_LIST.get(i) * Float.BYTES);
+            int vectorsPerTransfer = (MAX_DATA_SIZE_TO_BE_TRANSFERRED_IN_MB * CONVERSION_CONSTANT * CONVERSION_CONSTANT) / (DIMENSIONS_LIST
+                .get(i) * Float.BYTES);
             elapsedTime.add(transferVectorUtil(DIMENSIONS_LIST.get(i), 1000000, vectorsPerTransfer));
             System.out.println(DIMENSIONS_LIST.get(i) + " , " + elapsedTime.get(i));
         }
         Assert.assertTrue(true);
     }
-
 
     public void test_transferVectorOfSpecificCount() {
         final List<Double> elapsedTime = new ArrayList<>();
@@ -73,7 +73,6 @@ public class TransferVectorsBenchmarksIT extends OpenSearchTestCase {
         Assert.assertTrue(true);
     }
 
-
     private static float[] generateRandomVector(int dimensions) {
         float[] vector = new float[dimensions];
         for (int i = 0; i < dimensions; i++) {
@@ -87,12 +86,11 @@ public class TransferVectorsBenchmarksIT extends OpenSearchTestCase {
         long vectorsAddress = 0;
         long timeInNano = 0;
 
-
         for (int i = 0; i < totalNumberOfVectorsToBeTransferred; i++) {
             vectorList.add(generateRandomVector(dimension));
             if (vectorList.size() == vectorsPerTransfer) {
                 long startTime = System.nanoTime();
-                vectorsAddress = FaissService.transferVectorsV2(vectorsAddress, vectorList.toArray(new float[][]{}));
+                vectorsAddress = FaissService.transferVectorsV2(vectorsAddress, vectorList.toArray(new float[][] {}));
                 long endTime = System.nanoTime();
                 timeInNano = timeInNano + (endTime - startTime);
                 vectorList = new ArrayList<>();
@@ -101,7 +99,7 @@ public class TransferVectorsBenchmarksIT extends OpenSearchTestCase {
 
         if (!CollectionUtils.isEmpty(vectorList)) {
             long startTime = System.nanoTime();
-            vectorsAddress = FaissService.transferVectorsV2(vectorsAddress, vectorList.toArray(new float[][]{}));
+            vectorsAddress = FaissService.transferVectorsV2(vectorsAddress, vectorList.toArray(new float[][] {}));
             long endTime = System.nanoTime();
             timeInNano = timeInNano + (endTime - startTime);
             vectorList = new ArrayList<>();

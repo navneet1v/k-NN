@@ -30,12 +30,13 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
-@Warmup(iterations = 1, timeUnit = TimeUnit.SECONDS, time = 20)
-@Measurement(iterations = 3, timeUnit = TimeUnit.SECONDS, time = 20)
-@Fork(1)
-@BenchmarkMode(Mode.AverageTime)
+@Warmup(iterations = 1, timeUnit = TimeUnit.SECONDS, time = 300)
+@Measurement(iterations = 1, timeUnit = TimeUnit.SECONDS, time = 300)
+@Fork(3)
+@BenchmarkMode(Mode.SingleShotTime)
 @OutputTimeUnit(TimeUnit.SECONDS)
 @State(Scope.Benchmark)
+
 public class TransferVectorsBenchmarks {
     private static final Random random = new Random(1212121212);
     private static final int TOTAL_NUMBER_OF_VECTOR_TO_BE_TRANSFERRED = 1000000;
@@ -43,8 +44,7 @@ public class TransferVectorsBenchmarks {
     @Param({ "128", "256", "384", "512" })
     private int dimension;
 
-    //@Param({ "1000000", "500000", "100000" })
-    @Param({ "500000"})
+    @Param({ "100000", "500000", "1000000" })
     private int vectorsPerTransfer;
 
     private List<float[]> vectorList;
@@ -61,6 +61,7 @@ public class TransferVectorsBenchmarks {
     public void transferVectors() {
         long vectorsAddress = 0;
         List<float[]> vectorToTransfer = new ArrayList<>();
+        long startTime = System.currentTimeMillis();
         for (float[] floats : vectorList) {
             if (vectorToTransfer.size() == vectorsPerTransfer) {
                 vectorsAddress = JNIService.transferVectorsV2(vectorsAddress, vectorToTransfer.toArray(new float[][]{}));
@@ -73,6 +74,34 @@ public class TransferVectorsBenchmarks {
         }
 
         JNIService.freeVectors(vectorsAddress);
+        long endTime = System.currentTimeMillis();
+        System.out.println("Time taken to transfer vectors " + (endTime - startTime));
+    }
+
+    @Benchmark
+    public void transferVectorsInitialCapacity() {
+        long vectorsAddress = 0;
+        long startingIndex = 0;
+        long startTime = System.currentTimeMillis();
+        List<float[]> vectorToTransfer = new ArrayList<>();
+        for (float[] floats : vectorList) {
+            if (vectorToTransfer.size() == vectorsPerTransfer) {
+                vectorsAddress = JNIService.transferVectorsV3(vectorsAddress,
+                        vectorToTransfer.toArray(new float[][]{}), startingIndex,
+                        TOTAL_NUMBER_OF_VECTOR_TO_BE_TRANSFERRED * dimension);
+                vectorToTransfer = new ArrayList<>();
+                startingIndex += vectorsPerTransfer;
+            }
+            vectorToTransfer.add(floats);
+        }
+        if(!vectorToTransfer.isEmpty()) {
+            vectorsAddress = JNIService.transferVectorsV3(vectorsAddress, vectorToTransfer.toArray(new float[][]{}),
+                    startingIndex, TOTAL_NUMBER_OF_VECTOR_TO_BE_TRANSFERRED * dimension);
+            startingIndex += vectorToTransfer.size();
+        }
+        JNIService.freeVectors(vectorsAddress);
+        long endTime = System.currentTimeMillis();
+        System.out.println("Time taken to transferVectorsInitialCapacity " + (endTime - startTime));
     }
 
     private float[] generateRandomVector(int dimensions) {
