@@ -9,6 +9,7 @@ import com.google.common.collect.ImmutableMap;
 import lombok.NonNull;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.util.Bits;
 import org.opensearch.common.StopWatch;
 import org.opensearch.common.xcontent.XContentHelper;
 import org.opensearch.core.common.bytes.BytesArray;
@@ -110,6 +111,17 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         throws IOException {
         // Get values to be indexed
         BinaryDocValues values = valuesProducer.getBinary(field);
+//        int maxNumberOfDocs = this.state.segmentInfo.maxDoc();
+//        if (valuesProducer instanceof KNN80DocValuesReader) {
+//            MergeState mergeState = ((KNN80DocValuesReader) valuesProducer).getMergeState();
+//            Bits[] liveDocsArray = mergeState.liveDocs;
+//            int liveDocs = 0;
+//            for(Bits bit : liveDocsArray) {
+//
+//            }
+//        }
+
+
         KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values);
         if (pair.vectors.length == 0 || pair.docs.length == 0) {
             logger.info("Skipping engine index creation as there are no vectors or docs in the documents");

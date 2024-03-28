@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.codec.KNN80Codec;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.opensearch.knn.index.codec.util.BinaryDocValuesSub;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DocIDMerger;
@@ -15,9 +17,16 @@ import java.io.IOException;
 /**
  * A per-document kNN numeric value.
  */
-class KNN80BinaryDocValues extends BinaryDocValues {
+public class KNN80BinaryDocValues extends BinaryDocValues {
 
     private DocIDMerger<BinaryDocValuesSub> docIDMerger;
+
+    @Setter
+    private long cost;
+
+    @Getter
+    @Setter
+    private long liveDocs;
 
     KNN80BinaryDocValues(DocIDMerger<BinaryDocValuesSub> docIdMerger) {
         this.docIDMerger = docIdMerger;
@@ -54,7 +63,7 @@ class KNN80BinaryDocValues extends BinaryDocValues {
 
     @Override
     public long cost() {
-        throw new UnsupportedOperationException();
+        return cost;
     }
 
     @Override

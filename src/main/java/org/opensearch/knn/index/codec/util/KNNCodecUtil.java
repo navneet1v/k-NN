@@ -5,14 +5,17 @@
 
 package org.opensearch.knn.index.codec.util;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
+import org.opensearch.knn.index.codec.KNN80Codec.KNN80BinaryDocValues;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 
+@Log4j2
 public class KNNCodecUtil {
 
     public static final String HNSW_EXTENSION = ".hnsw";
@@ -42,6 +45,11 @@ public class KNNCodecUtil {
         ArrayList<float[]> vectorList = new ArrayList<>();
         ArrayList<Integer> docIdList = new ArrayList<>();
         SerializationMode serializationMode = SerializationMode.COLLECTION_OF_FLOATS;
+        long liveDocs = 0;
+        if(values instanceof KNN80BinaryDocValues) {
+            liveDocs = ((KNN80BinaryDocValues) values).getLiveDocs();
+        }
+
         for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
             BytesRef bytesref = values.binaryValue();
             try (ByteArrayInputStream byteStream = new ByteArrayInputStream(bytesref.bytes, bytesref.offset, bytesref.length)) {
@@ -52,6 +60,8 @@ public class KNNCodecUtil {
             }
             docIdList.add(doc);
         }
+        log.info("The cost of the iterator is : {} and docIds are: {} and liveDocs : {}", values.cost(),
+                docIdList.size(), liveDocs);
         return new KNNCodecUtil.Pair(
             docIdList.stream().mapToInt(Integer::intValue).toArray(),
             vectorList.toArray(new float[][] {}),
