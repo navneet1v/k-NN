@@ -430,3 +430,35 @@ original PR with an appropriate label `backport <backport-branch-name>` is merge
 run successfully on the PR. For example, if a PR on main needs to be backported to `1.x` branch, add a label 
 `backport 1.x` to the PR and make sure the backport workflow runs on the PR along with other checks. Once this PR is 
 merged to main, the workflow will create a backport PR to the `1.x` branch.
+
+
+## Creating graphs once
+1. Run this command to setup the cluster (code for OS: https://github.com/navneet1v/OpenSearch/tree/build-time)
+```
+./gradlew run -PcustomDistributionUrl="/path/to/repo/k-NN/temp/cluster.tar.gz"
+```
+2. First disable graph creation:
+```
+PUT _cluster/settings
+{
+	"persistent": {
+		"knn.create_graphs": false
+	}
+}
+```
+
+3. Now go ahead and index your data. and force merge segments down to 1.
+4. Now enable the graph creation.
+```
+PUT _cluster/settings
+{
+	"persistent": {
+		"knn.create_graphs": true
+	}
+}
+```
+5. Now hit this API:
+```
+POST <index-name>/_forcemerge?one_merge=true
+```
+The above API will create a new segment and graph will be generated for that segment.

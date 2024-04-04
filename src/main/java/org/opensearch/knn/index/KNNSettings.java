@@ -117,6 +117,12 @@ public class KNNSettings {
         Setting.Property.Deprecated
     );
 
+    public static final Setting<Boolean> CREATE_GRAPHS = Setting.boolSetting(
+        "knn.create_graphs",
+        false,
+        NodeScope, Dynamic
+    );
+
     /**
      * M - the number of bi-directional links created for every new element during construction.
      * Reasonable range for M is 2-100. Higher M work better on datasets with high intrinsic
@@ -367,6 +373,10 @@ public class KNNSettings {
             return KNN_VECTOR_STREAMING_MEMORY_LIMIT_IN_MB_SETTING;
         }
 
+        if("knn.create_graphs".equals(key)) {
+            return CREATE_GRAPHS;
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -385,7 +395,8 @@ public class KNNSettings {
             MODEL_CACHE_SIZE_LIMIT_SETTING,
             ADVANCED_FILTERED_EXACT_SEARCH_THRESHOLD_SETTING,
             KNN_FAISS_AVX2_DISABLED_SETTING,
-            KNN_VECTOR_STREAMING_MEMORY_LIMIT_IN_MB_SETTING
+            KNN_VECTOR_STREAMING_MEMORY_LIMIT_IN_MB_SETTING,
+            CREATE_GRAPHS
         );
         return Stream.concat(settings.stream(), dynamicCacheSettings.values().stream()).collect(Collectors.toList());
     }
@@ -529,6 +540,10 @@ public class KNNSettings {
             // TODO: replace cache-rebuild with index reload into the cache
             NativeMemoryCacheManager.getInstance().rebuildCache();
         });
+    }
+
+    public static boolean canCreateGraphs() {
+        return KNNSettings.state().getSettingValue("knn.create_graphs");
     }
 
     private static String percentageAsString(Integer percentage) {
