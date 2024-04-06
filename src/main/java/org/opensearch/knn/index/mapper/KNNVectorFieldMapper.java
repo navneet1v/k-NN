@@ -563,14 +563,15 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             context.doc().add(point);
             addStoredFieldForVectorField(context, fieldType, name(), point);
         } else if (VectorDataType.FLOAT == vectorDataType) {
-            Optional<float[]> floatsArrayOptional = getFloatsFromContext(context, dimension, methodComponentContext);
+            Optional<String> floatsArrayOptional = getFloatsFromContextString(context, dimension,
+                    methodComponentContext);
 
             if (floatsArrayOptional.isEmpty()) {
                 return;
             }
-            final float[] array = floatsArrayOptional.get();
-            spaceType.validateVector(array);
-            VectorField point = new VectorField(name(), array, fieldType);
+            //final float[] array = floatsArrayOptional.get();
+            //spaceType.validateVector(array);
+            VectorField point = new VectorField(name(), floatsArrayOptional.get(), fieldType);
             context.doc().add(point);
             addStoredFieldForVectorField(context, fieldType, name(), point);
         } else {
@@ -691,6 +692,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
         ArrayList<Float> vector = new ArrayList<>();
         XContentParser.Token token = context.parser().currentToken();
         float value;
+        String vectors;
         if (token == XContentParser.Token.START_ARRAY) {
             token = context.parser().nextToken();
             while (token != XContentParser.Token.END_ARRAY) {
@@ -733,6 +735,73 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             array[i++] = f;
         }
         return Optional.of(array);
+    }
+
+    Optional<String> getFloatsFromContextString(ParseContext context, int dimension,
+                                          MethodComponentContext methodComponentContext)
+            throws IOException {
+        context.path().add(simpleName());
+
+        // Returns an optional array of float values where each value in the vector is parsed as a float and validated
+        // if it is a finite number and within the fp16 range of [-65504 to 65504] by default if Faiss encoder is SQ and type is 'fp16'.
+        // If the encoder parameter, "clip" is set to True, if the vector value is outside the FP16 range then it will be
+        // clipped to FP16 range.
+        boolean isFaissSQfp16Flag = isFaissSQfp16(methodComponentContext);
+        boolean clipVectorValueToFP16RangeFlag = false;
+        if (isFaissSQfp16Flag) {
+            clipVectorValueToFP16RangeFlag = isFaissSQClipToFP16RangeEnabled(
+                    (MethodComponentContext) methodComponentContext.getParameters().get(METHOD_ENCODER_PARAMETER)
+            );
+        }
+
+        ArrayList<Float> vector = new ArrayList<>();
+        XContentParser.Token token = context.parser().currentToken();
+        float value;
+        String vectors = null;
+        if (token == XContentParser.Token.START_ARRAY) {
+            token = context.parser().nextToken();
+            while (token != XContentParser.Token.END_ARRAY) {
+                value = context.parser().floatValue();
+                if (isFaissSQfp16Flag) {
+                    if (clipVectorValueToFP16RangeFlag) {
+                        value = clipVectorValueToFP16Range(value);
+                    } else {
+                        validateFP16VectorValue(value);
+                    }
+                } else {
+                    validateFloatVectorValue(value);
+                }
+
+                vector.add(value);
+                token = context.parser().nextToken();
+            }
+        } else if (token == XContentParser.Token.VALUE_NUMBER) {
+            value = context.parser().floatValue();
+            if (isFaissSQfp16Flag) {
+                if (clipVectorValueToFP16RangeFlag) {
+                    value = clipVectorValueToFP16Range(value);
+                } else {
+                    validateFP16VectorValue(value);
+                }
+            } else {
+                validateFloatVectorValue(value);
+            }
+            vector.add(value);
+            context.parser().nextToken();
+        } else if (token == XContentParser.Token.VALUE_NULL) {
+            context.path().remove();
+            return Optional.empty();
+        } else if(token == XContentParser.Token.VALUE_STRING) {
+            vectors = context.parser().text();
+        }
+        //validateVectorDimension(dimension, vector.size());
+
+//        float[] array = new float[vector.size()];
+//        int i = 0;
+//        for (Float f : vector) {
+//            array[i++] = f;
+//        }
+        return Optional.ofNullable(vectors);
     }
 
     @Override
@@ -781,6 +850,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             FIELD_TYPE.setIndexOptions(IndexOptions.NONE);
             FIELD_TYPE.setDocValuesType(DocValuesType.BINARY);
             FIELD_TYPE.putAttribute(KNN_FIELD, "true"); // This attribute helps to determine knn field type
+            FIELD_TYPE.putAttribute("is_String", "true");
             FIELD_TYPE.freeze();
         }
     }

@@ -8,9 +8,11 @@ package org.opensearch.knn.index.codec.util;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
+import org.opensearch.common.StopWatch;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.codec.KNN80Codec.KNN80BinaryDocValues;
 import org.opensearch.knn.jni.JNICommons;
@@ -20,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+@Log4j2
 public class KNNCodecUtil {
     // Floats are 4 bytes in size
     public static final int FLOAT_BYTE_SIZE = 4;
@@ -43,7 +46,7 @@ public class KNNCodecUtil {
 
     }
 
-    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values) throws IOException {
+    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values, String isString) throws IOException {
         List<float[]> vectorList = new ArrayList<>();
         List<Integer> docIdList = new ArrayList<>();
         long vectorAddress = 0;
@@ -57,9 +60,27 @@ public class KNNCodecUtil {
         for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
             BytesRef bytesref = values.binaryValue();
             try (ByteArrayInputStream byteStream = new ByteArrayInputStream(bytesref.bytes, bytesref.offset, bytesref.length)) {
-                serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
-                final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
-                final float[] vector = vectorSerializer.byteToFloatArray(byteStream);
+                final float[] vector;
+                StopWatch stopWatch = new StopWatch();
+                stopWatch.start();
+                if("true".equals(isString)) {
+                    String vectorString = new String(byteStream.readAllBytes());
+                    String[] array = vectorString.split(",");
+                    vector = new float[array.length];
+                    for (int i = 0; i < array.length; i++) {
+                        vector[i] = Float.parseFloat(array[i]);
+                    }
+                    stopWatch.stop();
+                    log.info("Time taken to deserialize vector with string is : {} ms",
+                            stopWatch.totalTime().millis());
+                } else {
+                    serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
+                    final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
+                    vector = vectorSerializer.byteToFloatArray(byteStream);
+                    stopWatch.stop();
+                    log.info("Time taken to deserialize vector with float array is : {} ms",
+                            stopWatch.totalTime().millis());
+                }
                 dimension = vector.length;
 
                 if (vectorsPerTransfer == Integer.MIN_VALUE) {
@@ -69,17 +90,6 @@ public class KNNCodecUtil {
                     if (vectorsPerTransfer == 0) {
                         vectorsPerTransfer = totalLiveDocs;
                     }
-                }
-                if (vectorList.size() == vectorsPerTransfer) {
-                    vectorAddress = JNICommons.storeVectorData(
-                        vectorAddress,
-                        vectorList.toArray(new float[][] {}),
-                        totalLiveDocs * dimension
-                    );
-                    // We should probably come up with a better way to reuse the vectorList memory which we have
-                    // created. Problem here is doing like this can lead to a lot of list memory which is of no use and
-                    // will be garbage collected later on, but it creates pressure on JVM. We should revisit this.
-                    vectorList = new ArrayList<>();
                 }
                 vectorList.add(vector);
             }
