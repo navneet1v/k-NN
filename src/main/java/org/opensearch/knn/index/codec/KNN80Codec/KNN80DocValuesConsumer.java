@@ -118,7 +118,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         BinaryDocValues values = valuesProducer.getBinary(field);
         KNNCodecUtil.Pair pair = null;
         try {
-            pair = KNNCodecUtil.getFloats(values);
+            pair = KNNCodecUtil.getFloats(values, field.getAttribute("is_String"));
             if (pair.getVectorAddress() == 0 || pair.docs.length == 0) {
                 logger.info("Skipping engine index creation as there are no vectors or docs in the segment");
                 return;

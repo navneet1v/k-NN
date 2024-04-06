@@ -43,7 +43,7 @@ public class KNNCodecUtil {
 
     }
 
-    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values) throws IOException {
+    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values, String isString) throws IOException {
         List<float[]> vectorList = new ArrayList<>();
         List<Integer> docIdList = new ArrayList<>();
         long vectorAddress = 0;
@@ -57,26 +57,29 @@ public class KNNCodecUtil {
         for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
             BytesRef bytesref = values.binaryValue();
             try (ByteArrayInputStream byteStream = new ByteArrayInputStream(bytesref.bytes, bytesref.offset, bytesref.length)) {
-                serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
-                final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
-                final float[] vector = vectorSerializer.byteToFloatArray(byteStream);
-                dimension = vector.length;
+//                serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
+//                final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
 
-                if (vectorsPerTransfer == Integer.MIN_VALUE) {
-                    vectorsPerTransfer = (dimension * Float.BYTES * totalLiveDocs) / vectorsStreamingMemoryLimit;
+                if("true".equals(isString)) {
+                    String vectorString = new String(byteStream.readAllBytes());
+                    String[] array = vectorString.split(",");
+                    final float[] vector = new float[array.length];
+                    for (int i = 0; i < array.length; i++) {
+                        vector[i] = Float.parseFloat(array[i]);
+                    }
+                    dimension = vector.length;
+                    if (vectorsPerTransfer == Integer.MIN_VALUE) {
+                        vectorsPerTransfer = (dimension * Float.BYTES * totalLiveDocs) / vectorsStreamingMemoryLimit;
+                    }
+                    if (vectorList.size() == vectorsPerTransfer) {
+                        vectorAddress = JNICommons.storeVectorData(vectorAddress, vectorList.toArray(new float[][]{}), totalLiveDocs * dimension);
+                        // We should probably come up with a better way to reuse the vectorList memory which we have
+                        // created. Problem here is doing like this can lead to a lot of list memory which is of no use and
+                        // will be garbage collected later on, but it creates pressure on JVM. We should revisit this.
+                        vectorList = new ArrayList<>();
+                    }
+                    vectorList.add(vector);
                 }
-                if (vectorList.size() == vectorsPerTransfer) {
-                    vectorAddress = JNICommons.storeVectorData(
-                        vectorAddress,
-                        vectorList.toArray(new float[][] {}),
-                        totalLiveDocs * dimension
-                    );
-                    // We should probably come up with a better way to reuse the vectorList memory which we have
-                    // created. Problem here is doing like this can lead to a lot of list memory which is of no use and
-                    // will be garbage collected later on, but it creates pressure on JVM. We should revisit this.
-                    vectorList = new ArrayList<>();
-                }
-                vectorList.add(vector);
             }
             docIdList.add(doc);
         }

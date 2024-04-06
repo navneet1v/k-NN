@@ -24,6 +24,17 @@ public class VectorField extends Field {
         }
     }
 
+    public VectorField(String name, String vector, IndexableFieldType type) {
+        super(name, new BytesRef(), type);
+        try {
+            //final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getDefaultSerializer();
+            final byte[] floatToByte = vector.getBytes();
+            this.setBytesValue(floatToByte);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     /**
      * @param name FieldType name
      * @param value an array of byte vector values
