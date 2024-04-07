@@ -561,7 +561,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             VectorField point = new VectorField(name(), array, fieldType);
 
             context.doc().add(point);
-            addStoredFieldForVectorField(context, fieldType, name(), point.toString());
+            addStoredFieldForVectorField(context, fieldType, name(), point);
         } else if (VectorDataType.FLOAT == vectorDataType) {
             Optional<String> floatsArrayOptional = getFloatsFromContextString(context, dimension,
                     methodComponentContext);
@@ -573,7 +573,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             //spaceType.validateVector(array);
             VectorField point = new VectorField(name(), floatsArrayOptional.get(), fieldType);
             context.doc().add(point);
-            addStoredFieldForVectorField(context, fieldType, name(), point.toString());
+            addStoredFieldForVectorField(context, fieldType, name(), point);
         } else {
             throw new IllegalArgumentException(
                 String.format(Locale.ROOT, "Cannot parse context for unsupported values provided for field [%s]", VECTOR_DATA_TYPE_FIELD)

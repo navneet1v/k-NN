@@ -13,12 +13,14 @@ package org.opensearch.knn.index.mapper;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.DocValuesType;
 import org.opensearch.index.mapper.ParametrizedFieldMapper;
 import org.opensearch.index.mapper.ParseContext;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.VectorField;
 import org.opensearch.knn.index.util.KNNEngine;
 
 import java.util.Locale;
@@ -139,10 +141,10 @@ public class KNNVectorFieldMapperUtil {
         ParseContext context,
         FieldType fieldType,
         String mapperName,
-        String vectorFieldAsString
+        Field vector
     ) {
         if (fieldType.stored()) {
-            context.doc().add(new StoredField(mapperName, vectorFieldAsString));
+            context.doc().add(new StoredField(mapperName, vector.toString()));
         }
     }
 }
