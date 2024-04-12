@@ -17,6 +17,7 @@
 
 #include "faiss_wrapper.h"
 #include "jni_util.h"
+#include <iostream>
 
 static knn_jni::JNIUtil jniUtil;
 static const jint KNN_FAISS_JNI_VERSION = JNI_VERSION_1_1;
@@ -45,6 +46,29 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndex(JNIE
 {
     try {
         knn_jni::faiss_wrapper::CreateIndex(&jniUtil, env, idsJ, vectorsAddressJ, dimJ, indexPathJ, parametersJ);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexIteratively(JNIEnv * env, jclass cls, jintArray idsJ,
+                                                                            jlong vectorsAddressJ, jint dimJ,
+                                                                            jlong indexAddressJ, jobject parametersJ)
+{
+    try {
+        return (jlong)knn_jni::faiss_wrapper::CreateIndexIteratively(&jniUtil, env, idsJ, vectorsAddressJ, dimJ, indexAddressJ, parametersJ);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+    return 0;
+}
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_writeIndex(JNIEnv * env, jclass cls,
+                                                                            jlong indexAddressJ, jstring indexPathJ, jobject parametersJ)
+{
+    try {
+        knn_jni::faiss_wrapper::writeIndex(&jniUtil, env, indexAddressJ, indexPathJ, parametersJ);
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }

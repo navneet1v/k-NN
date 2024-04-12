@@ -49,6 +49,16 @@ class FaissService {
         });
     }
 
+    public static native long createIndexIteratively(
+        int[] ids,
+        long vectorsAddress,
+        int dim,
+        long indexAddress,
+        Map<String, Object> parameters
+    );
+
+    public static native void writeIndex(long indexAddress, String indexPath, Map<String, Object> parameters);
+
     /**
      * Create an index for the native library The memory occupied by the vectorsAddress will be freed up during the
      * function call. So Java layer doesn't need to free up the memory. This is not an ideal behavior because Java layer

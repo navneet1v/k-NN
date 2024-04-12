@@ -19,12 +19,68 @@
 #include "test_util.h"
 #include "faiss/IndexHNSW.h"
 #include "faiss/IndexIVFPQ.h"
+#include "faiss/utils/utils.h"
 
 using ::testing::NiceMock;
 using ::testing::Return;
 
 float randomDataMin = -500.0;
 float randomDataMax = 500.0;
+
+TEST(FaissCreateIndexIterativelyTest, BasicAssertions) {
+    // Define the data
+    faiss::idx_t numIds = 200;
+    std::vector<faiss::idx_t> ids;
+    auto *vectors = new std::vector<float>();
+    int dim = 2;
+    vectors->reserve(dim * numIds);
+    for (int64_t i = 0; i < numIds; ++i) {
+        ids.push_back(i);
+        for (int j = 0; j < dim; ++j) {
+            vectors->push_back(test_util::RandomFloat(-500.0, 500.0));
+        }
+    }
+
+    std::string indexPath = test_util::RandomString(10, "tmp/", ".faiss");
+    std::string spaceType = knn_jni::L2;
+    std::string index_description = "HNSW32,Flat";
+
+    std::unordered_map<std::string, jobject> parametersMap;
+    parametersMap[knn_jni::SPACE_TYPE] = (jobject)&spaceType;
+    parametersMap[knn_jni::INDEX_DESCRIPTION] = (jobject)&index_description;
+
+    // Set up jni
+    JNIEnv *jniEnv = nullptr;
+    NiceMock<test_util::MockJNIUtil> mockJNIUtil;
+
+    EXPECT_CALL(mockJNIUtil,
+                GetJavaObjectArrayLength(
+                        jniEnv, reinterpret_cast<jobjectArray>(&vectors)))
+            .WillRepeatedly(Return(vectors->size()));
+
+    // Create the index
+    long long indexAddress = knn_jni::faiss_wrapper::CreateIndexIteratively(
+            &mockJNIUtil, jniEnv, reinterpret_cast<jintArray>(&ids),
+            (jlong) vectors, dim, (jlong)0,
+            (jobject)&parametersMap);
+    knn_jni::faiss_wrapper::writeIndex(
+            &mockJNIUtil, jniEnv,(jlong)indexAddress, (jstring)&indexPath,
+            (jobject)&parametersMap);
+
+    // Make sure index can be loaded
+    std::unique_ptr<faiss::Index> index(test_util::FaissLoadIndex(indexPath));
+    // Clean up
+    ids.clear();
+    ids.shrink_to_fit();
+    vectors->clear();
+    vectors->shrink_to_fit();
+    size_t mem_usage = faiss::get_mem_usage_kb() / (1 << 10);
+
+    std::cout<<"======Memory Usage:[" << mem_usage << "mb]======" << std::endl;
+    // Clean up
+    std::remove(indexPath.c_str());
+}
+
 
 TEST(FaissCreateIndexTest, BasicAssertions) {
     // Define the data
@@ -40,7 +96,7 @@ TEST(FaissCreateIndexTest, BasicAssertions) {
         }
     }
 
-    std::string indexPath = test_util::RandomString(10, "tmp/", ".faiss");
+    std::string indexPath = test_util::RandomString(10, "/tmp/", ".faiss");
     std::string spaceType = knn_jni::L2;
     std::string index_description = "HNSW32,Flat";
 

@@ -28,6 +28,23 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_createIndex
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    createIndexIteratively
+ * Signature: ([IJIJLjava/util/Map;)J
+ */
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_createIndexIteratively
+  (JNIEnv *, jclass, jintArray, jlong, jint, jlong, jobject);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    writeIndex
+ * Signature: (JLjava/lang/String;Ljava/util/Map;)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_writeIndex
+  (JNIEnv *, jclass, jlong, jstring, jobject);
+
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
  * Method:    createIndexFromTemplate
  * Signature: ([IJILjava/lang/String;[BLjava/util/Map;)V
  */

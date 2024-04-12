@@ -8,19 +8,23 @@ package org.opensearch.knn.index.codec.KNN80Codec;
 import com.google.common.collect.ImmutableMap;
 import lombok.NonNull;
 import lombok.extern.log4j.Log4j2;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.util.BytesRef;
 import org.opensearch.common.xcontent.XContentType;
 import org.opensearch.common.StopWatch;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.codec.util.KNNVectorSerializer;
+import org.opensearch.knn.index.codec.util.KNNVectorSerializerFactory;
+import org.opensearch.knn.index.codec.util.SerializationMode;
+import org.opensearch.knn.jni.JNICommons;
 import org.opensearch.knn.jni.JNIService;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.util.KNNEngine;
-import org.opensearch.knn.indices.Model;
 import org.opensearch.knn.indices.ModelCache;
-import org.opensearch.knn.plugin.stats.KNNCounter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.codecs.DocValuesConsumer;
@@ -36,6 +40,7 @@ import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 
+import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -46,14 +51,15 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.apache.lucene.codecs.CodecUtil.FOOTER_MAGIC;
 import static org.opensearch.knn.common.KNNConstants.MODEL_ID;
 import static org.opensearch.knn.common.KNNConstants.PARAMETERS;
 import static org.opensearch.knn.index.codec.util.KNNCodecUtil.buildEngineFileName;
-import static org.opensearch.knn.index.codec.util.KNNCodecUtil.calculateArraySize;
 
 /**
  * This class writes the KNN docvalues to the segments
@@ -108,19 +114,11 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         throws IOException {
         // Get values to be indexed
         BinaryDocValues values = valuesProducer.getBinary(field);
-        KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values);
-        if (pair.getVectorAddress() == 0 || pair.docs.length == 0) {
-            logger.info("Skipping engine index creation as there are no vectors or docs in the segment");
+        if (values == null) {
+            log.info("BinaryDocValues is null. Returning..");
             return;
         }
-        long arraySize = calculateArraySize(pair.docs.length, pair.getDimension(), pair.serializationMode);
-        if (isMerge) {
-            KNNGraphValue.MERGE_CURRENT_OPERATIONS.increment();
-            KNNGraphValue.MERGE_CURRENT_DOCS.incrementBy(pair.docs.length);
-            KNNGraphValue.MERGE_CURRENT_SIZE_IN_BYTES.incrementBy(arraySize);
-        }
-        // Increment counter for number of graph index requests
-        KNNCounter.GRAPH_INDEX_REQUESTS.increment();
+        // Get the KNN engine
         final KNNEngine knnEngine = getKNNEngine(field);
         final String engineFileName = buildEngineFileName(
             state.segmentInfo.name,
@@ -132,33 +130,97 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
             ((FSDirectory) (FilterDirectory.unwrap(state.directory))).getDirectory().toString(),
             engineFileName
         ).toString();
-        NativeIndexCreator indexCreator;
-        // Create library index either from model or from scratch
-        if (field.attributes().containsKey(MODEL_ID)) {
-            String modelId = field.attributes().get(MODEL_ID);
-            Model model = ModelCache.getInstance().get(modelId);
-            if (model.getModelBlob() == null) {
-                throw new RuntimeException(String.format("There is no trained model with id \"%s\"", modelId));
-            }
-            indexCreator = () -> createKNNIndexFromTemplate(model.getModelBlob(), pair, knnEngine, indexPath);
-        } else {
-            indexCreator = () -> createKNNIndexFromScratch(field, pair, knnEngine, indexPath);
+        Map<String, Object> parametersMap = getKNNIndexFromScratchParameters(field, knnEngine);
+
+        long indexAddress = createIndex(values, knnEngine, parametersMap);
+
+        if (indexAddress == 0) {
+            log.info("Index is not created. Returning..");
         }
 
-        if (isMerge) {
-            recordMergeStats(pair.docs.length, arraySize);
-        }
-
-        if (isRefresh) {
-            recordRefreshStats();
-        }
-
-        // This is a bit of a hack. We have to create an output here and then immediately close it to ensure that
-        // engineFileName is added to the tracked files by Lucene's TrackingDirectoryWrapper. Otherwise, the file will
-        // not be marked as added to the directory.
         state.directory.createOutput(engineFileName, state.context).close();
-        indexCreator.createIndex();
+        // Now we can write the index
+        AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+            JNIService.writeIndex(indexAddress, parametersMap, indexPath, knnEngine);
+            return null;
+        });
         writeFooter(indexPath, engineFileName);
+    }
+
+    private long createIndex(BinaryDocValues values, final KNNEngine knnEngine, final Map<String, Object> parametersMap)
+        throws IOException {
+        List<float[]> vectorList = new ArrayList<>();
+        List<Integer> docIdList = new ArrayList<>();
+        int dimension = 0;
+        SerializationMode serializationMode = SerializationMode.COLLECTION_OF_FLOATS;
+
+        long totalLiveDocs = KNNCodecUtil.getTotalLiveDocsCount(values);
+        long vectorsStreamingMemoryLimit = KNNSettings.getVectorStreamingMemoryLimit().getBytes();
+        long vectorsPerTransfer = Integer.MIN_VALUE;
+        Long indexAddress = 0L;
+
+        for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
+            BytesRef bytesref = values.binaryValue();
+            try (ByteArrayInputStream byteStream = new ByteArrayInputStream(bytesref.bytes, bytesref.offset, bytesref.length)) {
+                final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
+                final float[] vector = vectorSerializer.byteToFloatArray(byteStream);
+                dimension = vector.length;
+
+                if (vectorsPerTransfer == Integer.MIN_VALUE) {
+                    vectorsPerTransfer = (dimension * Float.BYTES * totalLiveDocs) / vectorsStreamingMemoryLimit;
+                    if (vectorsPerTransfer == 0) {
+                        vectorsPerTransfer = totalLiveDocs;
+                    }
+                }
+                if (vectorList.size() == vectorsPerTransfer) {
+                    final long vectorAddress = JNICommons.storeVectorData(
+                        0,
+                        vectorList.toArray(new float[][] {}),
+                        (long) vectorList.size() * dimension
+                    );
+                    List<Integer> docIdList2 = docIdList;
+                    int finalDimension = dimension;
+                    long indexAddress2 = indexAddress;
+                    indexAddress = AccessController.doPrivileged(
+                        (PrivilegedAction<Long>) () -> JNIService.buildIndex(
+                            docIdList2.stream().mapToInt(Integer::intValue).toArray(),
+                            vectorAddress,
+                            indexAddress2,
+                            finalDimension,
+                            parametersMap,
+                            knnEngine
+                        )
+                    );
+
+                    // We should probably come up with a better way to reuse the vectorList memory which we have
+                    // created. Problem here is doing like this can lead to a lot of list memory which is of no use and
+                    // will be garbage collected later on, but it creates pressure on JVM. We should revisit this.
+                    vectorList = new ArrayList<>();
+                    docIdList = new ArrayList<>();
+                    // JNICommons.freeVectorData(vectorAddress);
+                }
+                vectorList.add(vector);
+            }
+            docIdList.add(doc);
+        }
+        if (vectorList.isEmpty() == false) {
+            long vectorAddress = JNICommons.storeVectorData(0, vectorList.toArray(new float[][] {}), (long) vectorList.size() * dimension);
+            List<Integer> docIdList2 = docIdList;
+            int finalDimension = dimension;
+            long indexAddress2 = indexAddress;
+            indexAddress = AccessController.doPrivileged(
+                (PrivilegedAction<Long>) () -> JNIService.buildIndex(
+                    docIdList2.stream().mapToInt(Integer::intValue).toArray(),
+                    vectorAddress,
+                    indexAddress2,
+                    finalDimension,
+                    parametersMap,
+                    knnEngine
+                )
+            );
+            // JNICommons.freeVectorData(vectorAddress);
+        }
+        return indexAddress;
     }
 
     private void recordMergeStats(int length, long arraySize) {
@@ -193,8 +255,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         });
     }
 
-    private void createKNNIndexFromScratch(FieldInfo fieldInfo, KNNCodecUtil.Pair pair, KNNEngine knnEngine, String indexPath)
-        throws IOException {
+    private Map<String, Object> getKNNIndexFromScratchParameters(FieldInfo fieldInfo, KNNEngine knnEngine) throws IOException {
         Map<String, Object> parameters = new HashMap<>();
         Map<String, String> fieldAttributes = fieldInfo.attributes();
         String parametersString = fieldAttributes.get(KNNConstants.PARAMETERS);
@@ -225,11 +286,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         // Used to determine how many threads to use when indexing
         parameters.put(KNNConstants.INDEX_THREAD_QTY, KNNSettings.state().getSettingValue(KNNSettings.KNN_ALGO_PARAM_INDEX_THREAD_QTY));
 
-        // Pass the path for the nms library to save the file
-        AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            JNIService.createIndex(pair.docs, pair.getVectorAddress(), pair.getDimension(), indexPath, parameters, knnEngine);
-            return null;
-        });
+        return parameters;
     }
 
     /**

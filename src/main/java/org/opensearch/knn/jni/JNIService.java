@@ -57,6 +57,29 @@ public class JNIService {
         throw new IllegalArgumentException(String.format("CreateIndex not supported for provided engine : %s", knnEngine.getName()));
     }
 
+    public static long buildIndex(
+        int[] ids,
+        long vectorsAddress,
+        long indexAddress,
+        int dim,
+        Map<String, Object> parameters,
+        KNNEngine knnEngine
+    ) {
+        if (KNNEngine.FAISS == knnEngine) {
+            return FaissService.createIndexIteratively(ids, vectorsAddress, dim, indexAddress, parameters);
+        }
+        throw new IllegalArgumentException(String.format("buildIndex not supported for provided engine : %s", knnEngine.getName()));
+
+    }
+
+    public static void writeIndex(long indexAddress, Map<String, Object> parameters, String indexPath, KNNEngine knnEngine) {
+        if (KNNEngine.FAISS == knnEngine) {
+            FaissService.writeIndex(indexAddress, indexPath, parameters);
+            return;
+        }
+        throw new IllegalArgumentException(String.format("writeIndex not supported for provided engine : %s", knnEngine.getName()));
+    }
+
     /**
      * Create an index for the native library with a provided template index
      *
