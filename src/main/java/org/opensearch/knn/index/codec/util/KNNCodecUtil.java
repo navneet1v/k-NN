@@ -46,7 +46,7 @@ public class KNNCodecUtil {
 
     }
 
-    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values, String isString) throws IOException {
+    public static KNNCodecUtil.Pair getFloats(BinaryDocValues values) throws IOException {
         List<float[]> vectorList = new ArrayList<>();
         List<Integer> docIdList = new ArrayList<>();
         long vectorAddress = 0;
@@ -63,23 +63,21 @@ public class KNNCodecUtil {
                 final float[] vector;
                 StopWatch stopWatch = new StopWatch();
                 stopWatch.start();
-                if("true".equals(isString)) {
-                    String vectorString = new String(byteStream.readAllBytes());
+                if (isVectorRepresentedAsString(bytesref)) {
+                    String vectorString = new String(bytesref.bytes, 1, bytesref.bytes.length - 1);
                     String[] array = vectorString.split(",");
                     vector = new float[array.length];
                     for (int i = 0; i < array.length; i++) {
                         vector[i] = Float.parseFloat(array[i]);
                     }
                     stopWatch.stop();
-                    log.info("Time taken to deserialize vector with string is : {} ms",
-                            stopWatch.totalTime().millis());
+                    log.info("Time taken to deserialize vector with string is : {} ms", stopWatch.totalTime().millis());
                 } else {
                     serializationMode = KNNVectorSerializerFactory.serializerModeFromStream(byteStream);
                     final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getSerializerByStreamContent(byteStream);
                     vector = vectorSerializer.byteToFloatArray(byteStream);
                     stopWatch.stop();
-                    log.info("Time taken to deserialize vector with float array is : {} ms",
-                            stopWatch.totalTime().millis());
+                    log.info("Time taken to deserialize vector with float array is : {} ms", stopWatch.totalTime().millis());
                 }
                 dimension = vector.length;
 
@@ -145,5 +143,10 @@ public class KNNCodecUtil {
             totalLiveDocs = binaryDocValues.cost();
         }
         return totalLiveDocs;
+    }
+
+    private static boolean isVectorRepresentedAsString(BytesRef bytesref) {
+        // Check if first bye is the special character that we have added or not.
+        return "$".equals(new String(bytesref.bytes, 0, 1));
     }
 }

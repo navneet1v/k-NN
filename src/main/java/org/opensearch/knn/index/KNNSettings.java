@@ -119,11 +119,7 @@ public class KNNSettings {
         Setting.Property.Deprecated
     );
 
-    public static final Setting<Boolean> CREATE_GRAPHS = Setting.boolSetting(
-        "knn.create_graphs",
-        false,
-        NodeScope, Dynamic
-    );
+    public static final Setting<Boolean> CREATE_GRAPHS = Setting.boolSetting("knn.create_graphs", false, NodeScope, Dynamic);
 
     /**
      * M - the number of bi-directional links created for every new element during construction.
@@ -375,7 +371,7 @@ public class KNNSettings {
             return KNN_VECTOR_STREAMING_MEMORY_LIMIT_PCT_SETTING;
         }
 
-        if("knn.create_graphs".equals(key)) {
+        if ("knn.create_graphs".equals(key)) {
             return CREATE_GRAPHS;
         }
 

@@ -83,7 +83,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
             stopWatch.stop();
             long time_in_millis = stopWatch.totalTime().millis();
             KNNGraphValue.REFRESH_TOTAL_TIME_IN_MILLIS.set(KNNGraphValue.REFRESH_TOTAL_TIME_IN_MILLIS.getValue() + time_in_millis);
-            logger.warn("Refresh operation complete in " + time_in_millis + " ms");
+            logger.info("Refresh operation complete in " + time_in_millis + " ms");
         }
     }
 
@@ -106,14 +106,14 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
 
     public void addKNNBinaryField(FieldInfo field, DocValuesProducer valuesProducer, boolean isMerge, boolean isRefresh)
         throws IOException {
-        if(KNNSettings.canCreateGraphs() == false) {
+        if (KNNSettings.canCreateGraphs() == false) {
             log.info("Not creating graphs as value is : {}", KNNSettings.canCreateGraphs());
             return;
         }
         log.info("Creating graphs as value is : {}", KNNSettings.canCreateGraphs());
         // Get values to be indexed
         BinaryDocValues values = valuesProducer.getBinary(field);
-        KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values, field.getAttribute("is_String"));
+        KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values);
         if (pair.getVectorAddress() == 0 || pair.docs.length == 0) {
             logger.info("Skipping engine index creation as there are no vectors or docs in the segment");
             return;
@@ -257,7 +257,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
                     stopWatch.stop();
                     long time_in_millis = stopWatch.totalTime().millis();
                     KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.set(KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.getValue() + time_in_millis);
-                    logger.warn("Merge operation complete in " + time_in_millis + " ms");
+                    logger.info("Merge operation complete in " + time_in_millis + " ms");
                 }
             }
         } catch (Exception e) {

@@ -27,7 +27,6 @@ public class VectorField extends Field {
     public VectorField(String name, String vector, IndexableFieldType type) {
         super(name, new BytesRef(), type);
         try {
-            //final KNNVectorSerializer vectorSerializer = KNNVectorSerializerFactory.getDefaultSerializer();
             final byte[] floatToByte = vector.getBytes();
             this.setBytesValue(floatToByte);
         } catch (Exception e) {

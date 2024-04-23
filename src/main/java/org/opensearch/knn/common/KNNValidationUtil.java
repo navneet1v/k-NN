@@ -80,4 +80,22 @@ public class KNNValidationUtil {
             throw new IllegalArgumentException(errorMessage);
         }
     }
+
+    public static void validateVectorDimension(int dimension, String vectors) {
+        int index = 0;
+        int count = 0;
+        while (index != -1) {
+            index = vectors.indexOf(',', index + 1);  // Slight improvement
+            if (index != -1) {
+                count++;
+            }
+        }
+        // ensuring we are counting floats
+        count++;
+
+        if (dimension != count) {
+            String errorMessage = String.format(Locale.ROOT, "Vector dimension mismatch. Expected: %d, Given: %d", dimension, count);
+            throw new IllegalArgumentException(errorMessage);
+        }
+    }
 }
