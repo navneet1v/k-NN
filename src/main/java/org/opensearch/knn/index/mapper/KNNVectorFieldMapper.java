@@ -753,7 +753,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
         int vectorIndex = 0;
         XContentParser.Token token = context.parser().currentToken();
         float value;
-        String vectors = "$";
+        String vectors = "N";
         final ParsedVector.ParsedVectorBuilder parsedVector = ParsedVector.builder();
         if (token == XContentParser.Token.START_ARRAY) {
             token = context.parser().nextToken();
@@ -811,7 +811,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             // as vectors have only $ so it will be fast
             vectors = vectors + context.parser().text();
         }
-        if (vectors.equals("$")) {
+        if (vectors.equals("N")) {
             validateVectorDimension(dimension, vectorIndex);
             parsedVector.vector(vector);
         } else {

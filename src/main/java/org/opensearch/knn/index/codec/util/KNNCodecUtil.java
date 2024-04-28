@@ -67,8 +67,12 @@ public class KNNCodecUtil {
                     String vectorString = new String(bytesref.bytes, 1, bytesref.bytes.length - 1);
                     String[] array = vectorString.split(",");
                     vector = new float[array.length];
-                    for (int i = 0; i < array.length; i++) {
-                        vector[i] = Float.parseFloat(array[i]);
+                    try {
+                        for (int i = 0; i < array.length; i++) {
+                            vector[i] = Float.parseFloat(array[i]);
+                        }
+                    } catch (Exception e) {
+                        log.error("Error while converting floats for str: {}", vectorString, e);
                     }
                     stopWatch.stop();
                     log.info("Time taken to deserialize vector with string is : {} ms", stopWatch.totalTime().millis());
@@ -147,6 +151,6 @@ public class KNNCodecUtil {
 
     private static boolean isVectorRepresentedAsString(BytesRef bytesref) {
         // Check if first bye is the special character that we have added or not.
-        return "$".equals(new String(bytesref.bytes, 0, 1));
+        return "N".equals(new String(bytesref.bytes, 0, 1));
     }
 }
