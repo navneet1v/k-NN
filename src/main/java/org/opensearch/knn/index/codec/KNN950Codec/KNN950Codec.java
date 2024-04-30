@@ -11,6 +11,8 @@ import org.apache.lucene.codecs.CompoundFormat;
 import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.FilterCodec;
 import org.apache.lucene.codecs.KnnVectorsFormat;
+import org.apache.lucene.codecs.SegmentInfoFormat;
+import org.apache.lucene.codecs.lucene99.Lucene99SegmentInfoFormat;
 import org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat;
 import org.opensearch.knn.index.codec.KNNCodecVersion;
 import org.opensearch.knn.index.codec.KNNFormatFacade;
@@ -19,6 +21,8 @@ public class KNN950Codec extends FilterCodec {
     private static final KNNCodecVersion VERSION = KNNCodecVersion.V_9_5_0;
     private final KNNFormatFacade knnFormatFacade;
     private final PerFieldKnnVectorsFormat perFieldKnnVectorsFormat;
+
+    private final SegmentInfoFormat segmentInfoFormat = new Lucene99SegmentInfoFormat();
 
     /**
      * No arg constructor that uses Lucene95 as the delegate
@@ -54,5 +58,10 @@ public class KNN950Codec extends FilterCodec {
     @Override
     public KnnVectorsFormat knnVectorsFormat() {
         return perFieldKnnVectorsFormat;
+    }
+
+    @Override
+    public SegmentInfoFormat segmentInfoFormat() {
+        return segmentInfoFormat;
     }
 }

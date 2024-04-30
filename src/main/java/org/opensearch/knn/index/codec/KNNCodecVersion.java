@@ -112,7 +112,7 @@ public enum KNNCodecVersion {
         KNN990Codec::new
     );
 
-    private static final KNNCodecVersion CURRENT = V_9_9_0;
+    private static final KNNCodecVersion CURRENT = V_9_5_0;
 
     private final String codecName;
     private final Codec defaultCodecDelegate;
