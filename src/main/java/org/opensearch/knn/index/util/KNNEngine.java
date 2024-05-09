@@ -7,6 +7,7 @@ package org.opensearch.knn.index.util;
 
 import com.google.common.collect.ImmutableSet;
 import org.opensearch.common.ValidationException;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNMethod;
 import org.opensearch.knn.index.KNNMethodContext;
 import org.opensearch.knn.index.SpaceType;
@@ -26,11 +27,13 @@ import static org.opensearch.knn.common.KNNConstants.NMSLIB_NAME;
 public enum KNNEngine implements KNNLibrary {
     NMSLIB(NMSLIB_NAME, Nmslib.INSTANCE),
     FAISS(FAISS_NAME, Faiss.INSTANCE),
-    LUCENE(LUCENE_NAME, Lucene.INSTANCE);
+    LUCENE(LUCENE_NAME, Lucene.INSTANCE),
+    JVECTOR(KNNConstants.JVECTOR_NAME, Jvector.INSTANCE);
 
     public static final KNNEngine DEFAULT = NMSLIB;
 
-    private static final Set<KNNEngine> CUSTOM_SEGMENT_FILE_ENGINES = ImmutableSet.of(KNNEngine.NMSLIB, KNNEngine.FAISS);
+    private static final Set<KNNEngine> CUSTOM_SEGMENT_FILE_ENGINES = ImmutableSet.of(KNNEngine.NMSLIB,
+            KNNEngine.FAISS, KNNEngine.JVECTOR);
     private static final Set<KNNEngine> ENGINES_SUPPORTING_FILTERS = ImmutableSet.of(KNNEngine.LUCENE, KNNEngine.FAISS);
     public static final Set<KNNEngine> ENGINES_SUPPORTING_RADIAL_SEARCH = ImmutableSet.of(KNNEngine.LUCENE, KNNEngine.FAISS);
 
@@ -40,7 +43,7 @@ public enum KNNEngine implements KNNLibrary {
         KNNEngine.FAISS,
         16_000,
         KNNEngine.LUCENE,
-        16_000
+        16_000, KNNEngine.JVECTOR, 16_000
     );
 
     /**
@@ -74,6 +77,10 @@ public enum KNNEngine implements KNNLibrary {
 
         if (LUCENE.getName().equalsIgnoreCase(name)) {
             return LUCENE;
+        }
+
+        if(JVECTOR.getName().equalsIgnoreCase(name)) {
+            return JVECTOR;
         }
 
         throw new IllegalArgumentException(String.format("Invalid engine type: %s", name));

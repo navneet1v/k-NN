@@ -6,4 +6,6 @@ grant {
     permission java.net.SocketPermission "*", "connect,resolve";
     permission java.lang.RuntimePermission "accessDeclaredMembers";
     permission java.io.FilePermission "/proc/cpuinfo", "read";
+    permission java.util.PropertyPermission "write";
+    permission jdk.incubator.vector.VECTOR_ACCESS_OOB_CHECK "write";
 };

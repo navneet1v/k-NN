@@ -22,6 +22,7 @@ import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.util.KNNEngine;
 import org.opensearch.knn.indices.Model;
 import org.opensearch.knn.indices.ModelCache;
+import org.opensearch.knn.jni.JVectorService;
 import org.opensearch.knn.plugin.stats.KNNCounter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -109,9 +110,17 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
     public void addKNNBinaryField(FieldInfo field, DocValuesProducer valuesProducer, boolean isMerge, boolean isRefresh)
         throws IOException {
         // Get values to be indexed
+        final KNNEngine knnEngine = getKNNEngine(field);
         BinaryDocValues values = valuesProducer.getBinary(field);
-        KNNCodecUtil.Pair pair = KNNCodecUtil.getFloats(values);
-        if (pair.getVectorAddress() == 0 || pair.docs.length == 0) {
+        KNNCodecUtil.Pair pair;
+
+        if(knnEngine == KNNEngine.JVECTOR) {
+            pair = KNNCodecUtil.getFloatsWithVector(values);
+        } else {
+            pair = KNNCodecUtil.getFloats(values);
+        }
+
+        if (pair.docs.length == 0) {
             logger.info("Skipping engine index creation as there are no vectors or docs in the segment");
             return;
         }
@@ -123,18 +132,27 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         }
         // Increment counter for number of graph index requests
         KNNCounter.GRAPH_INDEX_REQUESTS.increment();
-        final KNNEngine knnEngine = getKNNEngine(field);
-        final String engineFileName = buildEngineFileName(
-            state.segmentInfo.name,
-            knnEngine.getVersion(),
-            field.name,
-            knnEngine.getExtension()
-        );
+
+        final String engineFileName;
+        if(KNNEngine.JVECTOR == knnEngine) {
+            engineFileName = String.format("%s%s%s", KNNCodecUtil.buildEngineFilePrefix(state.segmentInfo.name),
+                    "v1", "_" + field.name + knnEngine.getExtension());
+        } else {
+            engineFileName = buildEngineFileName(
+                    state.segmentInfo.name,
+                    knnEngine.getVersion(),
+                    field.name,
+                    knnEngine.getExtension()
+            );
+        }
+
+
         final String indexPath = Paths.get(
             ((FSDirectory) (FilterDirectory.unwrap(state.directory))).getDirectory().toString(),
             engineFileName
         ).toString();
-        NativeIndexCreator indexCreator;
+
+        IndexCreator indexCreator;
         // Create library index either from model or from scratch
         if (field.attributes().containsKey(MODEL_ID)) {
             String modelId = field.attributes().get(MODEL_ID);
@@ -232,7 +250,11 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
 
         // Pass the path for the nms library to save the file
         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            JNIService.createIndex(pair.docs, pair.getVectorAddress(), pair.getDimension(), indexPath, parameters, knnEngine);
+            if(knnEngine == KNNEngine.JVECTOR) {
+                JVectorService.createIndex(pair.getDimension(), pair.vectors, indexPath);
+            } else {
+                JNIService.createIndex(pair.docs, pair.getVectorAddress(), pair.getDimension(), indexPath, parameters, knnEngine);
+            }
             return null;
         });
     }
@@ -291,7 +313,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
     }
 
     @FunctionalInterface
-    private interface NativeIndexCreator {
+    private interface IndexCreator {
         void createIndex() throws IOException;
     }
 

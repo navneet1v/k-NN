@@ -71,6 +71,7 @@ public class KNNConstants {
 
     // Lucene specific constants
     public static final String LUCENE_NAME = "lucene";
+    public static final String JVECTOR_NAME = "jvector";
 
     // nmslib specific constants
     public static final String NMSLIB_NAME = "nmslib";
