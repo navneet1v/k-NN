@@ -39,6 +39,7 @@ class KNN80DocValuesReader extends EmptyDocValuesProducer {
         long totalLiveDocs = 0;
         try {
             List<BinaryDocValuesSub> subs = new ArrayList<>(this.mergeState.docValuesProducers.length);
+            log.info("Number of segments getting merged : {}", mergeState.docValuesProducers.length);
             for (int i = 0; i < this.mergeState.docValuesProducers.length; i++) {
                 BinaryDocValues values = null;
                 DocValuesProducer docValuesProducer = mergeState.docValuesProducers[i];

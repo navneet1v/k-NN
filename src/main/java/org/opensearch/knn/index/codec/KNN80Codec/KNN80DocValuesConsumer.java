@@ -120,6 +120,7 @@ class KNN80DocValuesConsumer extends DocValuesConsumer implements Closeable {
         }
         long arraySize = calculateArraySize(pair.docs.length, pair.getDimension(), pair.serializationMode);
         if (isMerge) {
+            log.info("Creating graphs during merge");
             KNNGraphValue.MERGE_CURRENT_OPERATIONS.increment();
             KNNGraphValue.MERGE_CURRENT_DOCS.incrementBy(pair.docs.length);
             KNNGraphValue.MERGE_CURRENT_SIZE_IN_BYTES.incrementBy(arraySize);
