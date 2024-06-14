@@ -8,9 +8,12 @@ package org.opensearch.knn.index.query;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang.StringUtils;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.CodecReader;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.FilterCodecReader;
 import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -195,7 +198,13 @@ public class KNNWeight extends Weight {
 
     private Map<Integer, Float> doANNSearch(final LeafReaderContext context, final BitSet filterIdsBitSet, final int cardinality)
         throws IOException {
-        SegmentReader reader = (SegmentReader) FilterLeafReader.unwrap(context.reader());
+        final SegmentReader reader;
+        LeafReader leafReader = FilterLeafReader.unwrap(context.reader());
+        if (leafReader instanceof FilterCodecReader) {
+            reader = (SegmentReader) FilterCodecReader.unwrap((CodecReader) leafReader);
+        } else {
+            reader = (SegmentReader) leafReader;
+        }
         String directory = ((FSDirectory) FilterDirectory.unwrap(reader.directory())).getDirectory().toString();
 
         FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(knnQuery.getField());
