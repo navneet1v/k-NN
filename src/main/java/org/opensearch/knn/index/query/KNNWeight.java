@@ -10,7 +10,6 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -361,7 +360,7 @@ public class KNNWeight extends Weight {
 
     private FilteredIdsKNNIterator getFilteredKNNIterator(final LeafReaderContext leafReaderContext, final BitSet filterIdsBitSet)
         throws IOException {
-        final SegmentReader reader = (SegmentReader) FilterLeafReader.unwrap(leafReaderContext.reader());
+        final SegmentReader reader = Lucene.segmentReader(leafReaderContext.reader());
         final FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(knnQuery.getField());
         final BinaryDocValues values = DocValues.getBinary(leafReaderContext.reader(), fieldInfo.getName());
         final SpaceType spaceType = getSpaceType(fieldInfo);
