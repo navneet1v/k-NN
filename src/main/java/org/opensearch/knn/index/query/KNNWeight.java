@@ -8,12 +8,9 @@ package org.opensearch.knn.index.query;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang.StringUtils;
 import org.apache.lucene.index.BinaryDocValues;
-import org.apache.lucene.index.CodecReader;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FilterCodecReader;
 import org.apache.lucene.index.FilterLeafReader;
-import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -31,6 +28,7 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.DocIdSetBuilder;
 import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.common.io.PathUtils;
+import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
@@ -198,13 +196,19 @@ public class KNNWeight extends Weight {
 
     private Map<Integer, Float> doANNSearch(final LeafReaderContext context, final BitSet filterIdsBitSet, final int cardinality)
         throws IOException {
-        final SegmentReader reader;
-        LeafReader leafReader = FilterLeafReader.unwrap(context.reader());
-        if (leafReader instanceof FilterCodecReader) {
-            reader = (SegmentReader) FilterCodecReader.unwrap((CodecReader) leafReader);
-        } else {
-            reader = (SegmentReader) leafReader;
-        }
+        // When Segment replication is enabled, then for replicas IndexReaders are opened via passing directory path,
+        // rather than using IndexWriters to Open the IndexReaders. This happens because replicas don't take write for
+        // Segment Replication. To ensure that soft deletes are applied on replicas too, seg-rep engine uses
+        // SoftDeletesDirectoryReaderWrapper(which extends the FilterDirectoryReader) to open the directory with soft
+        // deletes field. During search when the LeafReader for this directory is provided the SegmentReader gets
+        // wrapped into different readers like SoftDeletesFilterCodecReader or SoftDeletesFilterLeafReader.
+        // So in order to get SegmentReader we need unwrap the reader properly. Here, the idea is first we unwrap the
+        // Reader via FilterLeafReader and if the instance is of FilterCodecReader(base class for
+        // SoftDeletesFilterCodecReader), we need another round of unwrapping via FilterCodecReader to get
+        // SegmentReader. If we don't do this kind of unwrapping then during query we get cast exceptions on query on
+        // replicas with deletes in segment replication cases.
+        // We are using a helper function from OpenSearch Core to do the same.
+        final SegmentReader reader = Lucene.segmentReader(context.reader());
         String directory = ((FSDirectory) FilterDirectory.unwrap(reader.directory())).getDirectory().toString();
 
         FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(knnQuery.getField());
