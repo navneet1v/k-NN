@@ -19,6 +19,9 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodContext;
 import org.opensearch.knn.index.mapper.KNNMappingConfig;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
+import org.opensearch.knn.index.mapper.ModelFieldMapper;
+import org.opensearch.knn.indices.ModelMetadata;
+import org.opensearch.knn.indices.ModelUtil;
 
 import java.util.Map;
 import java.util.Optional;
@@ -78,9 +81,17 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
             )
         ).fieldType(field);
 
-        KNNMappingConfig knnMappingConfig = mappedFieldType.getKnnMappingConfig();
-        KNNMethodContext knnMethodContext = knnMappingConfig.getKnnMethodContext()
-            .orElseThrow(() -> new IllegalArgumentException("KNN method context cannot be empty"));
+        final KNNMappingConfig knnMappingConfig = mappedFieldType.getKnnMappingConfig();
+        final KNNMethodContext knnMethodContext;
+        if (knnMappingConfig.getModelId().isPresent()) {
+            ModelMetadata modelMetadata = ModelUtil.getModelMetadata(knnMappingConfig.getModelId().get());
+            assert modelMetadata != null : String.format("Model ID '%s' is not " + "created.", knnMappingConfig.getModelId().get());
+            knnMethodContext = ModelFieldMapper.getKNNMethodContextFromModelMetadata(modelMetadata);
+        } else if (knnMappingConfig.getKnnMethodContext().isPresent()) {
+            knnMethodContext = knnMappingConfig.getKnnMethodContext().get();
+        } else {
+            throw new IllegalArgumentException("KNN method context cannot is empty and also model Id not present");
+        }
 
         final KNNEngine engine = knnMethodContext.getKnnEngine();
         final Map<String, Object> params = knnMethodContext.getMethodComponentContext().getParameters();

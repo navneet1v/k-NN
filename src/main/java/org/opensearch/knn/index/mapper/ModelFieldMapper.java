@@ -196,8 +196,8 @@ public class ModelFieldMapper extends KNNVectorFieldMapper {
         ModelMetadata modelMetadata = getModelMetadata(modelDao, modelId);
         if (useLuceneBasedVectorField) {
             int adjustedDimension = modelMetadata.getVectorDataType() == VectorDataType.BINARY
-                ? modelMetadata.getDimension()
-                : modelMetadata.getDimension() / 8;
+                ? modelMetadata.getDimension() / 8
+                : modelMetadata.getDimension();
             final VectorEncoding encoding = modelMetadata.getVectorDataType() == VectorDataType.FLOAT
                 ? VectorEncoding.FLOAT32
                 : VectorEncoding.BYTE;
@@ -212,7 +212,7 @@ public class ModelFieldMapper extends KNNVectorFieldMapper {
         parseCreateField(context, modelMetadata.getDimension(), modelMetadata.getVectorDataType());
     }
 
-    private static KNNMethodContext getKNNMethodContextFromModelMetadata(ModelMetadata modelMetadata) {
+    public static KNNMethodContext getKNNMethodContextFromModelMetadata(ModelMetadata modelMetadata) {
         MethodComponentContext methodComponentContext = modelMetadata.getMethodComponentContext();
         if (methodComponentContext == MethodComponentContext.EMPTY) {
             return null;
