@@ -8,6 +8,7 @@ package org.opensearch.knn.index.query;
 import com.google.common.annotations.VisibleForTesting;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -71,15 +72,8 @@ public class KNNWeight extends Weight {
     private final Weight filterWeight;
     private final ExactSearcher exactSearcher;
 
-    private static ExactSearcher DEFAULT_EXACT_SEARCHER;
-
     public KNNWeight(KNNQuery query, float boost) {
-        super(query);
-        this.knnQuery = query;
-        this.boost = boost;
-        this.nativeMemoryCacheManager = NativeMemoryCacheManager.getInstance();
-        this.filterWeight = null;
-        this.exactSearcher = DEFAULT_EXACT_SEARCHER;
+        this(query, boost, null);
     }
 
     public KNNWeight(KNNQuery query, float boost, Weight filterWeight) {
@@ -88,12 +82,11 @@ public class KNNWeight extends Weight {
         this.boost = boost;
         this.nativeMemoryCacheManager = NativeMemoryCacheManager.getInstance();
         this.filterWeight = filterWeight;
-        this.exactSearcher = DEFAULT_EXACT_SEARCHER;
+        this.exactSearcher = ExactSearcher.getInstance();
     }
 
     public static void initialize(ModelDao modelDao) {
         KNNWeight.modelDao = modelDao;
-        KNNWeight.DEFAULT_EXACT_SEARCHER = new ExactSearcher(modelDao);
     }
 
     @Override
@@ -373,24 +366,21 @@ public class KNNWeight extends Weight {
         return engineFiles;
     }
 
-    /**
-     * Execute exact search for the given matched doc ids and return the results as a map of docId to score.
-     *
-     * @param leafReaderContext The leaf reader context for the current segment.
-     * @param matchSet The filterIds to search for.
-     * @param isParentHits Whether the matchedDocs contains parent ids or child ids.
-     * @param k The number of results to return.
-     * @return Map of docId to score for the exact search results.
-     * @throws IOException If an error occurs during the search.
-     */
-    public Map<Integer, Float> exactSearch(final LeafReaderContext leafReaderContext, final BitSet matchSet, boolean isParentHits, int k)
+    private Map<Integer, Float> exactSearch(final LeafReaderContext leafReaderContext, final BitSet matchSet,
+                                      boolean isParentHits, int k)
         throws IOException {
-        return exactSearcher.searchLeaf(leafReaderContext, matchSet, knnQuery, k, isParentHits);
+        return exactSearcher.searchLeaf(
+            leafReaderContext,
+            matchSet,
+            ExactSearcher.ExactSearcherContext.buildExactSearcherContextFromKNNQuery(knnQuery),
+            k,
+            isParentHits
+        );
     }
 
     @Override
     public boolean isCacheable(LeafReaderContext context) {
-        return true;
+        return false;
     }
 
     public static float normalizeScore(float score) {

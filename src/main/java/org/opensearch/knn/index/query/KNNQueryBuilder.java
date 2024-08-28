@@ -377,10 +377,31 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> {
         if (!(mappedFieldType instanceof KNNVectorFieldType)) {
             throw new IllegalArgumentException(String.format(Locale.ROOT, "Field '%s' is not knn_vector type.", this.fieldName));
         }
+        final String indexName = context.index().getName();
         KNNVectorFieldType knnVectorFieldType = (KNNVectorFieldType) mappedFieldType;
         KNNMappingConfig knnMappingConfig = knnVectorFieldType.getKnnMappingConfig();
         final AtomicReference<QueryConfigFromMapping> queryConfigFromMapping = new AtomicReference<>();
         int fieldDimension = knnMappingConfig.getDimension();
+
+        if (knnVectorFieldType.isANNSearch() == false) {
+            if (k != 0) {
+                return ExactSearchQueryFactory.create(
+                    BaseQueryFactory.CreateQueryRequest.builder()
+                        .vector(vector)
+                        .fieldName(fieldName)
+                        .indexName(indexName)
+                        .k(k)
+                        .filter(filter)
+                        .vectorDataType(knnVectorFieldType.getVectorDataType())
+                        .build()
+                );
+            } else {
+                throw new IllegalArgumentException(
+                    "k must not be equal to 0 when field doesn't support Approximate " + "Nearest Neighbors Search"
+                );
+            }
+        }
+
         knnMappingConfig.getKnnMethodContext()
             .ifPresentOrElse(
                 knnMethodContext -> queryConfigFromMapping.set(
@@ -514,8 +535,6 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> {
             && !KNNEngine.getEnginesThatSupportsFilters().contains(knnEngine)) {
             throw new IllegalArgumentException(String.format(Locale.ROOT, "Engine [%s] does not support filters", knnEngine));
         }
-
-        String indexName = context.index().getName();
 
         if (k != 0) {
             KNNQueryFactory.CreateQueryRequest createQueryRequest = KNNQueryFactory.CreateQueryRequest.builder()

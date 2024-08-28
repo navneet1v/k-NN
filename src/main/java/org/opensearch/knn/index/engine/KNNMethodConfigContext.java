@@ -27,6 +27,8 @@ public final class KNNMethodConfigContext {
     private VectorDataType vectorDataType;
     private Integer dimension;
     private Version versionCreated;
+    @Builder.Default
+    private boolean isIndexKNN = true;
 
     @Override
     public boolean equals(Object obj) {
@@ -38,13 +40,14 @@ public final class KNNMethodConfigContext {
         equalsBuilder.append(vectorDataType, other.vectorDataType);
         equalsBuilder.append(dimension, other.dimension);
         equalsBuilder.append(versionCreated, other.versionCreated);
+        equalsBuilder.append(isIndexKNN, other.isIndexKNN);
 
         return equalsBuilder.isEquals();
     }
 
     @Override
     public int hashCode() {
-        return new HashCodeBuilder().append(vectorDataType).append(dimension).append(versionCreated).toHashCode();
+        return new HashCodeBuilder().append(vectorDataType).append(dimension).append(versionCreated).append(isIndexKNN).toHashCode();
     }
 
     public static final KNNMethodConfigContext EMPTY = KNNMethodConfigContext.builder().build();

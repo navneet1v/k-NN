@@ -5,7 +5,10 @@
 
 package org.opensearch.knn.index.query;
 
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReaderContext;
@@ -13,6 +16,7 @@ import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.HitQueue;
 import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.join.BitSetProducer;
 import org.apache.lucene.util.BitSet;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
@@ -34,17 +38,28 @@ import java.util.HashMap;
 import java.util.Map;
 
 @Log4j2
-@AllArgsConstructor
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class ExactSearcher {
 
     private final ModelDao modelDao;
+    private static ExactSearcher INSTANCE;
+
+    public static void intialize(final ModelDao modelDao) {
+        if(INSTANCE == null) {
+            INSTANCE = new ExactSearcher(modelDao);
+        }
+    }
+
+    public static ExactSearcher getInstance() {
+        return INSTANCE;
+    }
 
     /**
      * Execute an exact search on a subset of documents of a leaf
      *
      * @param leafReaderContext LeafReaderContext to be searched over
      * @param matchedDocs matched documents
-     * @param knnQuery KNN Query
+     * @param exactSearcherContext {@link ExactSearcherContext}
      * @param k number of results to return
      * @param isParentHits whether the matchedDocs contains parent ids or child ids. This is relevant in the case of
      *                     filtered nested search where the matchedDocs contain the parent ids and {@link NestedFilteredIdsKNNIterator}
@@ -54,11 +69,11 @@ public class ExactSearcher {
     public Map<Integer, Float> searchLeaf(
         final LeafReaderContext leafReaderContext,
         final BitSet matchedDocs,
-        final KNNQuery knnQuery,
+        final ExactSearcherContext exactSearcherContext,
         int k,
         boolean isParentHits
     ) throws IOException {
-        KNNIterator iterator = getMatchedKNNIterator(leafReaderContext, matchedDocs, knnQuery, isParentHits);
+        KNNIterator iterator = getMatchedKNNIterator(leafReaderContext, matchedDocs, exactSearcherContext, isParentHits);
         if (matchedDocs.cardinality() <= k) {
             return scoreAllDocs(iterator);
         }
@@ -108,31 +123,31 @@ public class ExactSearcher {
     private KNNIterator getMatchedKNNIterator(
         final LeafReaderContext leafReaderContext,
         final BitSet matchedDocs,
-        KNNQuery knnQuery,
+        final ExactSearcherContext exactSearcherContext,
         boolean isParentHits
     ) throws IOException {
         final SegmentReader reader = Lucene.segmentReader(leafReaderContext.reader());
-        final FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(knnQuery.getField());
+        final FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(exactSearcherContext.getField());
         final SpaceType spaceType = FieldInfoExtractor.getSpaceType(modelDao, fieldInfo);
 
-        boolean isNestedRequired = isParentHits && knnQuery.getParentsFilter() != null;
+        boolean isNestedRequired = isParentHits && exactSearcherContext.getParentsFilter() != null;
 
-        if (VectorDataType.BINARY == knnQuery.getVectorDataType() && isNestedRequired) {
+        if (VectorDataType.BINARY == exactSearcherContext.getVectorDataType() && isNestedRequired) {
             final KNNVectorValues<byte[]> vectorValues = KNNVectorValuesFactory.getVectorValues(fieldInfo, reader);
             return new NestedFilteredIdsKNNByteIterator(
                 matchedDocs,
-                knnQuery.getByteQueryVector(),
+                exactSearcherContext.getByteQueryVector(),
                 (KNNBinaryVectorValues) vectorValues,
                 spaceType,
-                knnQuery.getParentsFilter().getBitSet(leafReaderContext)
+                exactSearcherContext.getParentsFilter().getBitSet(leafReaderContext)
             );
         }
 
-        if (VectorDataType.BINARY == knnQuery.getVectorDataType()) {
+        if (VectorDataType.BINARY == exactSearcherContext.getVectorDataType()) {
             final KNNVectorValues<byte[]> vectorValues = KNNVectorValuesFactory.getVectorValues(fieldInfo, reader);
             return new FilteredIdsKNNByteIterator(
                 matchedDocs,
-                knnQuery.getByteQueryVector(),
+                exactSearcherContext.getByteQueryVector(),
                 (KNNBinaryVectorValues) vectorValues,
                 spaceType
             );
@@ -142,13 +157,49 @@ public class ExactSearcher {
         if (isNestedRequired) {
             return new NestedFilteredIdsKNNIterator(
                 matchedDocs,
-                knnQuery.getQueryVector(),
+                exactSearcherContext.getQueryVector(),
                 (KNNFloatVectorValues) vectorValues,
                 spaceType,
-                knnQuery.getParentsFilter().getBitSet(leafReaderContext)
+                exactSearcherContext.getParentsFilter().getBitSet(leafReaderContext)
             );
         }
 
-        return new FilteredIdsKNNIterator(matchedDocs, knnQuery.getQueryVector(), (KNNFloatVectorValues) vectorValues, spaceType);
+        return new FilteredIdsKNNIterator(
+            matchedDocs,
+            exactSearcherContext.getQueryVector(),
+            (KNNFloatVectorValues) vectorValues,
+            spaceType
+        );
+    }
+
+    @Value
+    @Builder(access = AccessLevel.PRIVATE)
+    public static class ExactSearcherContext {
+        String field;
+        BitSetProducer parentsFilter;
+        float[] queryVector;
+        byte[] byteQueryVector;
+        VectorDataType vectorDataType;
+
+        public static ExactSearcherContext buildExactSearcherContextFromKNNQuery(final KNNQuery knnQuery) {
+            return ExactSearcherContext.builder()
+                .byteQueryVector(knnQuery.getByteQueryVector())
+                .field(knnQuery.getField())
+                .vectorDataType(knnQuery.getVectorDataType())
+                .parentsFilter(knnQuery.getParentsFilter())
+                .queryVector(knnQuery.getQueryVector())
+                .build();
+        }
+
+        public static ExactSearcherContext buildExactSearcherContextFromExactSearchQuery(final ExactSearchQuery knnQuery) {
+            return ExactSearcherContext.builder()
+                .byteQueryVector(knnQuery.getByteQueryVector())
+                .field(knnQuery.getField())
+                .vectorDataType(knnQuery.getVectorDataType())
+                .parentsFilter(knnQuery.getParentsFilter())
+                .queryVector(knnQuery.getQueryVector())
+                .build();
+        }
+
     }
 }

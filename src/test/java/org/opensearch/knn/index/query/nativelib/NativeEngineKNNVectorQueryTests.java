@@ -20,7 +20,9 @@ import org.apache.lucene.util.Bits;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
+import org.opensearch.knn.index.query.ExactSearcher;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.knn.index.query.ResultUtil;
@@ -164,6 +166,10 @@ public class NativeEngineKNNVectorQueryTests extends OpenSearchTestCase {
 
     @SneakyThrows
     public void testRescore() {
+        MockedStatic<ExactSearcher> exactSearcherMockedStatic = Mockito.mockStatic(ExactSearcher.class);
+        ExactSearcher exactSearcher = mock(ExactSearcher.class);
+        exactSearcherMockedStatic.when(ExactSearcher::getInstance).thenReturn(exactSearcher);
+
         // Given
         List<LeafReaderContext> leaves = List.of(leaf1, leaf2);
         when(reader.leaves()).thenReturn(leaves);
@@ -184,8 +190,8 @@ public class NativeEngineKNNVectorQueryTests extends OpenSearchTestCase {
         when(knnWeight.getQuery()).thenReturn(knnQuery);
         when(knnWeight.searchLeaf(leaf1, firstPassK)).thenReturn(initialLeaf1Results);
         when(knnWeight.searchLeaf(leaf2, firstPassK)).thenReturn(initialLeaf2Results);
-        when(knnWeight.exactSearch(eq(leaf1), any(), anyBoolean(), anyInt())).thenReturn(rescoredLeaf1Results);
-        when(knnWeight.exactSearch(eq(leaf2), any(), anyBoolean(), anyInt())).thenReturn(rescoredLeaf2Results);
+        when(exactSearcher.searchLeaf(eq(leaf1), any(), any(), anyInt(), anyBoolean())).thenReturn(rescoredLeaf1Results);
+        when(exactSearcher.searchLeaf(eq(leaf2), any(), any(), anyInt(), anyBoolean())).thenReturn(rescoredLeaf2Results);
         try (MockedStatic<ResultUtil> mockedResultUtil = mockStatic(ResultUtil.class)) {
             mockedResultUtil.when(() -> ResultUtil.reduceToTopK(any(), anyInt())).thenAnswer(InvocationOnMock::callRealMethod);
             mockedResultUtil.when(() -> ResultUtil.resultMapToTopDocs(eq(rescoredLeaf1Results), anyInt())).thenAnswer(t -> topDocs1);
@@ -197,5 +203,7 @@ public class NativeEngineKNNVectorQueryTests extends OpenSearchTestCase {
                 assertEquals(expected, actual);
             }
         }
+
+        exactSearcherMockedStatic.close();
     }
 }

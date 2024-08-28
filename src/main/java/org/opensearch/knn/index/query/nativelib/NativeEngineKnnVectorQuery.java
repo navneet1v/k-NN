@@ -17,6 +17,7 @@ import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.Bits;
+import org.opensearch.knn.index.query.ExactSearcher;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.knn.index.query.ResultUtil;
@@ -100,7 +101,8 @@ public class NativeEngineKnnVectorQuery extends Query {
             int finalI = i;
             rescoreTasks.add(() -> {
                 BitSet convertedBitSet = ResultUtil.resultMapToMatchBitSet(perLeafResults.get(finalI));
-                return knnWeight.exactSearch(leafReaderContext, convertedBitSet, false, k);
+                return ExactSearcher.getInstance().searchLeaf(leafReaderContext, convertedBitSet,
+                        ExactSearcher.ExactSearcherContext.buildExactSearcherContextFromKNNQuery(knnQuery), k, false);
             });
         }
         return indexSearcher.getTaskExecutor().invokeAll(rescoreTasks);

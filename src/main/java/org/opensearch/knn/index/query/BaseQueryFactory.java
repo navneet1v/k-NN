@@ -13,6 +13,7 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.join.BitSetProducer;
 import org.apache.lucene.search.join.ToChildBlockJoinQuery;
+import org.opensearch.common.Nullable;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.index.search.NestedHelper;
@@ -71,7 +72,7 @@ public abstract class BaseQueryFactory {
      * @return Lucene Query
      */
     protected static Query getFilterQuery(BaseQueryFactory.CreateQueryRequest createQueryRequest) {
-        if (!createQueryRequest.getFilter().isPresent()) {
+        if (createQueryRequest.getFilter().isEmpty()) {
             return null;
         }
 
@@ -90,7 +91,7 @@ public abstract class BaseQueryFactory {
         } catch (IOException e) {
             throw new RuntimeException("Cannot create query with filter", e);
         }
-        BitSetProducer parentFilter = queryShardContext.getParentFilter();
+        final BitSetProducer parentFilter = getParentFilter(createQueryRequest);
         if (parentFilter != null) {
             boolean mightMatch = new NestedHelper(queryShardContext.getMapperService()).mightMatchNestedDocs(filterQuery);
             if (mightMatch) {
@@ -99,5 +100,13 @@ public abstract class BaseQueryFactory {
             return new ToChildBlockJoinQuery(filterQuery, parentFilter);
         }
         return filterQuery;
+    }
+
+    protected static BitSetProducer getParentFilter(BaseQueryFactory.CreateQueryRequest createQueryRequest) {
+        if (createQueryRequest.getContext().isPresent()) {
+            return createQueryRequest.getContext().get().getParentFilter();
+        } else {
+            return null;
+        }
     }
 }

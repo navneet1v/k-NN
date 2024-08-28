@@ -13,6 +13,7 @@ import org.opensearch.index.codec.CodecServiceFactory;
 import org.opensearch.index.engine.EngineFactory;
 import org.opensearch.indices.SystemIndexDescriptor;
 import org.opensearch.knn.index.KNNCircuitBreaker;
+import org.opensearch.knn.index.query.ExactSearcher;
 import org.opensearch.knn.index.util.KNNClusterUtil;
 import org.opensearch.knn.index.query.KNNQueryBuilder;
 import org.opensearch.knn.index.KNNSettings;
@@ -203,6 +204,7 @@ public class KNNPlugin extends Plugin
         KNNCircuitBreaker.getInstance().initialize(threadPool, clusterService, client);
         KNNQueryBuilder.initialize(ModelDao.OpenSearchKNNModelDao.getInstance());
         KNNWeight.initialize(ModelDao.OpenSearchKNNModelDao.getInstance());
+        ExactSearcher.intialize(ModelDao.OpenSearchKNNModelDao.getInstance());
         TrainingModelRequest.initialize(ModelDao.OpenSearchKNNModelDao.getInstance(), clusterService);
 
         clusterService.addListener(TrainingJobClusterStateListener.getInstance());

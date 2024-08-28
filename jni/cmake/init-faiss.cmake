@@ -73,7 +73,7 @@ find_package(ZLIB REQUIRED)
 # Statically link BLAS - ensure this is before we find the blas package so we dont dynamically link
 set(BLA_STATIC ON)
 find_package(BLAS REQUIRED)
-enable_language(Fortran)
+#enable_language(Fortran)
 find_package(LAPACK REQUIRED)
 
 # Set relevant properties

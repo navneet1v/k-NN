@@ -45,6 +45,7 @@ import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.VectorField;
 import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.engine.Parameter;
 import org.opensearch.knn.indices.ModelDao;
 
 import static org.opensearch.knn.common.KNNConstants.DEFAULT_VECTOR_DATA_TYPE_FIELD;
@@ -112,6 +113,8 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 return knnMappingConfig.getDimension();
             }
         );
+
+        protected final Parameter<Boolean> index = Parameter.indexParam(fieldMapper -> toType(fieldMapper).index, true);
 
         /**
          * data_type which defines the datatype of the vector values. This is an optional parameter and
@@ -203,7 +206,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
 
         @Override
         protected List<Parameter<?>> getParameters() {
-            return Arrays.asList(stored, hasDocValues, dimension, vectorDataType, meta, knnMethodContext, modelId);
+            return Arrays.asList(stored, hasDocValues, dimension, vectorDataType, meta, knnMethodContext, modelId, index);
         }
 
         protected Explicit<Boolean> ignoreMalformed(BuilderContext context) {
@@ -247,11 +250,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                     buildFullName(context),
                     name,
                     metaValue,
-                    KNNMethodConfigContext.builder()
-                        .vectorDataType(vectorDataType.getValue())
-                        .versionCreated(indexCreatedVersion)
-                        .dimension(dimension.getValue())
-                        .build(),
+                    knnMethodConfigContext,
                     multiFieldsBuilder,
                     copyToBuilder,
                     ignoreMalformed,
@@ -355,8 +354,18 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             }
 
             // Check for flat configuration
-            if (isKNNDisabled(parserContext.getSettings())) {
+            // This check see if the KNN Plugin is disabled or user has set index: false for the field.
+            if (isKNNDisabled(parserContext.getSettings()) || builder.index.get() == false) {
                 validateFromFlat(builder);
+                builder.setKnnMethodConfigContext(
+                    KNNMethodConfigContext.builder()
+                        .vectorDataType(builder.vectorDataType.getValue())
+                        .versionCreated(parserContext.indexVersionCreated())
+                        .dimension(builder.dimension.getValue())
+                        // if KNN is not disabled then index.knn is true
+                        .isIndexKNN(isKNNDisabled(parserContext.getSettings()) == false)
+                        .build()
+                );
             } else if (builder.modelId.get() != null) {
                 validateFromModel(builder);
             } else {
@@ -369,6 +378,14 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
 
         private void validateFromFlat(KNNVectorFieldMapper.Builder builder) {
             if (builder.modelId.get() != null || builder.knnMethodContext.get() != null) {
+                if (builder.index.get()) {
+                    throw new IllegalArgumentException(
+                        "Cannot set modelId or method parameters when index attribute "
+                            + "in the vector field "
+                            + builder.name
+                            + " is marked as true"
+                    );
+                }
                 throw new IllegalArgumentException("Cannot set modelId or method parameters when index.knn setting is false");
             }
             validateDimensionSet(builder);
@@ -441,6 +458,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
     protected Version indexCreatedVersion;
     protected Explicit<Boolean> ignoreMalformed;
     protected boolean stored;
+    protected boolean index;
     protected boolean hasDocValues;
     protected VectorDataType vectorDataType;
     protected ModelDao modelDao;
@@ -470,6 +488,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
         updateEngineStats();
         this.indexCreatedVersion = indexCreatedVersion;
         this.originalKNNMethodContext = originalKNNMethodContext;
+        this.index = true;
     }
 
     public KNNVectorFieldMapper clone() {

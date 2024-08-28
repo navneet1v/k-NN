@@ -111,9 +111,10 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
         ModelDao modelDao = mock(ModelDao.class);
         KNNVectorFieldMapper.Builder builder = new KNNVectorFieldMapper.Builder(fieldName, modelDao, CURRENT, null, null);
 
-        assertEquals(7, builder.getParameters().size());
+        assertEquals(8, builder.getParameters().size());
         List<String> actualParams = builder.getParameters().stream().map(a -> a.name).collect(Collectors.toList());
-        List<String> expectedParams = Arrays.asList("store", "doc_values", DIMENSION, VECTOR_DATA_TYPE_FIELD, "meta", KNN_METHOD, MODEL_ID);
+        List<String> expectedParams = Arrays.asList("store", "doc_values", DIMENSION, VECTOR_DATA_TYPE_FIELD, "meta",
+                KNN_METHOD, MODEL_ID, "index");
         assertEquals(expectedParams, actualParams);
     }
 
@@ -902,6 +903,7 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
                     false,
                     modelDao,
                     CURRENT
+
                 );
 
                 modelFieldMapper.parseCreateField(parseContext);
@@ -1229,6 +1231,12 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
         KNNVectorFieldMapper.Builder builder = new KNNVectorFieldMapper.Builder("test-field-name-1", modelDao, CURRENT, null, null);
         builder.vectorDataType.setValue(VectorDataType.BINARY);
         builder.dimension.setValue(8);
+        builder.setKnnMethodConfigContext(KNNMethodConfigContext.builder()
+            .vectorDataType(builder.vectorDataType.getValue())
+            .versionCreated(CURRENT)
+            .dimension(builder.dimension.getValue())
+            .isIndexKNN(true)
+            .build());
 
         // Setup settings
         Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, false).build();

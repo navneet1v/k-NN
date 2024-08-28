@@ -66,7 +66,8 @@ public class MethodFieldMapper extends KNNVectorFieldMapper {
                 public int getDimension() {
                     return knnMethodConfigContext.getDimension();
                 }
-            }
+            },
+            true
         );
         return new MethodFieldMapper(
             simpleName,
@@ -105,8 +106,8 @@ public class MethodFieldMapper extends KNNVectorFieldMapper {
             originalKNNMethodContext
         );
         this.useLuceneBasedVectorField = KNNVectorFieldMapperUtil.useLuceneKNNVectorsFormat(indexCreatedVersion);
-        KNNMappingConfig annConfig = mappedFieldType.getKnnMappingConfig();
-        KNNMethodContext knnMethodContext = annConfig.getKnnMethodContext()
+        KNNMappingConfig knnMappingConfig = mappedFieldType.getKnnMappingConfig();
+        KNNMethodContext knnMethodContext = knnMappingConfig.getKnnMethodContext()
             .orElseThrow(() -> new IllegalArgumentException("KNN method context cannot be empty"));
         KNNEngine knnEngine = knnMethodContext.getKnnEngine();
         KNNLibraryIndexingContext knnLibraryIndexingContext = knnEngine.getKNNLibraryIndexingContext(
@@ -116,7 +117,7 @@ public class MethodFieldMapper extends KNNVectorFieldMapper {
         QuantizationConfig quantizationConfig = knnLibraryIndexingContext.getQuantizationConfig();
 
         this.fieldType = new FieldType(KNNVectorFieldMapper.Defaults.FIELD_TYPE);
-        this.fieldType.putAttribute(DIMENSION, String.valueOf(annConfig.getDimension()));
+        this.fieldType.putAttribute(DIMENSION, String.valueOf(knnMappingConfig.getDimension()));
         this.fieldType.putAttribute(SPACE_TYPE, knnMethodContext.getSpaceType().getValue());
         // Conditionally add quantization config
         if (quantizationConfig != null && quantizationConfig != QuantizationConfig.EMPTY) {
@@ -137,8 +138,8 @@ public class MethodFieldMapper extends KNNVectorFieldMapper {
 
         if (useLuceneBasedVectorField) {
             int adjustedDimension = mappedFieldType.vectorDataType == VectorDataType.BINARY
-                ? annConfig.getDimension() / 8
-                : annConfig.getDimension();
+                ? knnMappingConfig.getDimension() / 8
+                : knnMappingConfig.getDimension();
             final VectorEncoding encoding = mappedFieldType.vectorDataType == VectorDataType.FLOAT
                 ? VectorEncoding.FLOAT32
                 : VectorEncoding.BYTE;

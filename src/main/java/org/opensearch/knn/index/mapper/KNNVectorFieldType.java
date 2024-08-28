@@ -43,9 +43,28 @@ public class KNNVectorFieldType extends MappedFieldType {
      * @param annConfig configuration context for the ANN index
      */
     public KNNVectorFieldType(String name, Map<String, String> metadata, VectorDataType vectorDataType, KNNMappingConfig annConfig) {
-        super(name, false, false, true, TextSearchInfo.NONE, metadata);
+        // TODO: How BWC will work in this case, because earlier we were setting isIndexed value to be false.
+        this(name, metadata, vectorDataType, annConfig, true);
+    }
+
+    public KNNVectorFieldType(
+        String name,
+        Map<String, String> metadata,
+        VectorDataType vectorDataType,
+        KNNMappingConfig annConfig,
+        boolean isIndexed
+    ) {
+        super(name, isIndexed, false, true, TextSearchInfo.NONE, metadata);
         this.vectorDataType = vectorDataType;
         this.knnMappingConfig = annConfig;
+    }
+
+    /**
+     * If the field is not indexed then ANNSearch is not possible we will do Exact Search here
+     * @return boolean
+     */
+    public boolean isANNSearch() {
+        return this.isSearchable();
     }
 
     @Override
