@@ -76,6 +76,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         StopWatch stopWatch = new StopWatch();
         stopWatch.start();
         flatVectorsWriter.flush(maxDoc, sortMap);
+        flatVectorsWriter.finish();
         for (final NativeEngineFieldVectorsWriter<?> field : fields) {
             trainAndIndex(
                 field.getFieldInfo(),

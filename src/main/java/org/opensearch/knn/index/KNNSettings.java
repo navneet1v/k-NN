@@ -277,7 +277,8 @@ public class KNNSettings {
     public static final Setting<Boolean> KNN_USE_LUCENE_VECTOR_FORMAT_ENABLED_SETTING = Setting.boolSetting(
         KNN_USE_LUCENE_VECTOR_FORMAT_ENABLED,
         false,
-        NodeScope
+        NodeScope,
+        Dynamic
     );
 
     /*
