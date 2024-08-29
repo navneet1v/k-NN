@@ -24,6 +24,7 @@ import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Sorter;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.opensearch.common.StopWatch;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
@@ -72,6 +73,8 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
      */
     @Override
     public void flush(int maxDoc, final Sorter.DocMap sortMap) throws IOException {
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
         flatVectorsWriter.flush(maxDoc, sortMap);
         for (final NativeEngineFieldVectorsWriter<?> field : fields) {
             trainAndIndex(
@@ -81,15 +84,23 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field
             );
         }
+        stopWatch.stop();
+        long time_in_millis = stopWatch.totalTime().millis();
+        log.warn("Refresh operation complete in {} ms", time_in_millis);
     }
 
     @Override
     public void mergeOneField(final FieldInfo fieldInfo, final MergeState mergeState) throws IOException {
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
         // This will ensure that we are merging the FlatIndex during force merge.
         flatVectorsWriter.mergeOneField(fieldInfo, mergeState);
+        flatVectorsWriter.finish();
         // For merge, pick values from flat vector and reindex again. This will use the flush operation to create graphs
         trainAndIndex(fieldInfo, this::getKNNVectorValuesForMerge, NativeIndexWriter::mergeIndex, mergeState);
-
+        stopWatch.stop();
+        long time_in_millis = stopWatch.totalTime().millis();
+        log.warn("Merge operation complete in {} ms", time_in_millis);
     }
 
     /**
@@ -101,7 +112,6 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             throw new IllegalStateException("NativeEnginesKNNVectorsWriter is already finished");
         }
         finished = true;
-        flatVectorsWriter.finish();
     }
 
     /**
@@ -217,17 +227,15 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final C VectorProcessingContext
     ) throws IOException {
         final VectorDataType vectorDataType = extractVectorDataType(fieldInfo);
-        KNNVectorValues<T> knnVectorValues = vectorValuesRetriever.apply(vectorDataType, fieldInfo, VectorProcessingContext);
         QuantizationParams quantizationParams = quantizationService.getQuantizationParams(fieldInfo);
         QuantizationState quantizationState = null;
         if (quantizationParams != null) {
+            KNNVectorValues<T> knnVectorValues = vectorValuesRetriever.apply(vectorDataType, fieldInfo, VectorProcessingContext);
             quantizationState = quantizationService.train(quantizationParams, knnVectorValues);
         }
         NativeIndexWriter writer = (quantizationParams != null)
             ? NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState)
             : NativeIndexWriter.getWriter(fieldInfo, segmentWriteState);
-
-        knnVectorValues = vectorValuesRetriever.apply(vectorDataType, fieldInfo, VectorProcessingContext);
-        indexOperation.buildAndWrite(writer, knnVectorValues);
+        indexOperation.buildAndWrite(writer, vectorValuesRetriever.apply(vectorDataType, fieldInfo, VectorProcessingContext));
     }
 }
