@@ -116,9 +116,7 @@ public final class ModeBasedResolver {
                     METHOD_PARAMETER_M,
                     KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_M,
                     METHOD_PARAMETER_EF_CONSTRUCTION,
-                    KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_CONSTRUCTION,
-                    METHOD_PARAMETER_EF_SEARCH,
-                    KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH
+                    KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_CONSTRUCTION
                 )
             )
         );
