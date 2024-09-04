@@ -113,7 +113,7 @@ public class KNNScriptScoringIT extends KNNRestTestCase {
         final int dims = randomIntBetween(2, 10) * 8;
         final float[] queryVector = randomVector(dims, VectorDataType.BINARY);
         final BiFunction<float[], float[], Float> scoreFunction = getScoreFunction(SpaceType.HAMMING, queryVector);
-        Set<SpaceType> spaceTypeToExclude = Set.of(SpaceType.UNDEFINED, SpaceType.HAMMING);
+        Set<SpaceType> spaceTypeToExclude = Set.of(SpaceType.HAMMING);
         Arrays.stream(SpaceType.values()).filter(s -> spaceTypeToExclude.contains(s) == false).forEach(s -> {
             Exception e = expectThrows(
                 Exception.class,
@@ -656,7 +656,7 @@ public class KNNScriptScoringIT extends KNNRestTestCase {
             .toString();
 
         for (SpaceType spaceType : SpaceType.values()) {
-            if (SpaceType.UNDEFINED == spaceType || SpaceType.HAMMING == spaceType) {
+            if (SpaceType.HAMMING == spaceType) {
                 continue;
             }
             final float[] queryVector = randomVector(dimensions);

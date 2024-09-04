@@ -186,9 +186,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         int dimension = 10;
         String trainingIndex = "test-training-index";
         String trainingField = "test-training-field";
@@ -247,9 +249,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         int dimension = 10;
         String trainingIndex = "test-training-index";
         String trainingField = "test-training-field";
@@ -292,13 +296,14 @@ public class TrainingModelRequestTests extends KNNTestCase {
         String modelId = "test-model-id";
 
         // Mock throwing an exception on validation
-        KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
         String validationExceptionMessage = "knn method invalid";
         ValidationException validationException = new ValidationException();
         validationException.addValidationError(validationExceptionMessage);
-        when(knnMethodContext.validate(any())).thenReturn(validationException);
-
-        when(knnMethodContext.isTrainingRequired()).thenReturn(false);
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(validationException);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(false);
+        KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";
@@ -342,10 +347,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
         // Setup the training request
         String modelId = "test-model-id";
 
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         int dimension = 10;
         String trainingIndex = "test-training-index";
         String trainingField = "test-training-field";
@@ -391,10 +397,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
         // Setup the training request
         String modelId = "test-model-id";
 
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         int dimension = 10;
         String trainingIndex = "test-training-index";
         String trainingField = "test-training-field";
@@ -445,10 +452,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
         // Setup the training request
         String modelId = "test-model-id";
 
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         int dimension = 10;
         String trainingIndex = "test-training-index";
         String trainingField = "test-training-field";
@@ -503,10 +511,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
         // Setup the training request
         String modelId = "test-model-id";
 
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";
@@ -564,9 +573,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";
@@ -629,9 +640,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";
@@ -682,9 +695,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";
@@ -722,9 +737,11 @@ public class TrainingModelRequestTests extends KNNTestCase {
 
         // Setup the training request
         String modelId = "test-model-id";
+        KNNEngine knnEngine = mock(KNNEngine.class);
+        when(knnEngine.validateMethod(any(), any())).thenReturn(null);
+        when(knnEngine.isTrainingRequired(any())).thenReturn(true);
         KNNMethodContext knnMethodContext = mock(KNNMethodContext.class);
-        when(knnMethodContext.validate(any())).thenReturn(null);
-        when(knnMethodContext.isTrainingRequired()).thenReturn(true);
+        when(knnMethodContext.getKnnEngine()).thenReturn(knnEngine);
         when(knnMethodContext.getMethodComponentContext()).thenReturn(MethodComponentContext.EMPTY);
         int dimension = 10;
         String trainingIndex = "test-training-index";

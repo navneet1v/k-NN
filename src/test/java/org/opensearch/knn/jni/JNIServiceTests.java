@@ -261,9 +261,6 @@ public class JNIServiceTests extends KNNTestCase {
     public void testCreateIndex_nmslib_valid() throws IOException {
 
         for (SpaceType spaceType : NmslibHNSWMethod.SUPPORTED_SPACES) {
-            if (SpaceType.UNDEFINED == spaceType) {
-                continue;
-            }
 
             Path tmpFile = createTempFile();
 
@@ -816,10 +813,6 @@ public class JNIServiceTests extends KNNTestCase {
 
         int k = 50;
         for (SpaceType spaceType : NmslibHNSWMethod.SUPPORTED_SPACES) {
-            if (SpaceType.UNDEFINED == spaceType) {
-                continue;
-            }
-
             Path tmpFile = createTempFile();
 
             TestUtils.createIndex(

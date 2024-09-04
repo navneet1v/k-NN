@@ -1278,12 +1278,12 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
     }
 
     public void testTypeParser_whenBinaryWithInvalidDimension_thenException() throws IOException {
-        testTypeParserWithBinaryDataType(KNNEngine.FAISS, SpaceType.UNDEFINED, METHOD_HNSW, 4, "should be multiply of 8");
+        testTypeParserWithBinaryDataType(KNNEngine.FAISS, SpaceType.HAMMING, METHOD_HNSW, 4, "should be multiply of 8");
     }
 
     public void testTypeParser_whenBinaryFaissHNSWWithInvalidSpaceType_thenException() throws IOException {
         for (SpaceType spaceType : SpaceType.values()) {
-            if (SpaceType.UNDEFINED == spaceType || SpaceType.HAMMING == spaceType) {
+            if (SpaceType.HAMMING == spaceType) {
                 continue;
             }
             testTypeParserWithBinaryDataType(KNNEngine.FAISS, spaceType, METHOD_HNSW, 8, "is not supported with");
@@ -1291,8 +1291,8 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
     }
 
     public void testTypeParser_whenBinaryNonFaiss_thenException() throws IOException {
-        testTypeParserWithBinaryDataType(KNNEngine.LUCENE, SpaceType.UNDEFINED, METHOD_HNSW, 8, "is not supported for vector data type");
-        testTypeParserWithBinaryDataType(KNNEngine.NMSLIB, SpaceType.UNDEFINED, METHOD_HNSW, 8, "is not supported for vector data type");
+        testTypeParserWithBinaryDataType(KNNEngine.LUCENE, SpaceType.HAMMING, METHOD_HNSW, 8, "is not supported for vector data type");
+        testTypeParserWithBinaryDataType(KNNEngine.NMSLIB, SpaceType.HAMMING, METHOD_HNSW, 8, "is not supported for vector data type");
     }
 
     private void testTypeParserWithBinaryDataType(
