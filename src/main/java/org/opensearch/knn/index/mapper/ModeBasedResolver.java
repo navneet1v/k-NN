@@ -19,9 +19,14 @@ import java.util.Set;
 
 import static org.opensearch.knn.common.KNNConstants.METHOD_ENCODER_PARAMETER;
 import static org.opensearch.knn.common.KNNConstants.METHOD_HNSW;
+import static org.opensearch.knn.common.KNNConstants.METHOD_IVF;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_EF_CONSTRUCTION;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_EF_SEARCH;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_M;
+import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_NLIST;
+import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_NLIST_DEFAULT;
+import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_NPROBES;
+import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_NPROBES_DEFAULT;
 
 /**
  * Class contains the logic to make parameter resolutions based on the {@link Mode} and {@link CompressionLevel}.
@@ -47,9 +52,18 @@ public final class ModeBasedResolver {
      *
      * @param mode {@link Mode}
      * @param compressionLevel {@link CompressionLevel}
+     * @param requiresTraining whether config requires trianing
      * @return {@link KNNMethodContext}
      */
-    public KNNMethodContext resolveKNNMethodContext(Mode mode, CompressionLevel compressionLevel) {
+    public KNNMethodContext resolveKNNMethodContext(Mode mode, CompressionLevel compressionLevel, boolean requiresTraining) {
+        if (requiresTraining) {
+            return resolveWithTraining(mode, compressionLevel);
+        }
+
+        return resolveWithoutTraining(mode, compressionLevel);
+    }
+
+    private KNNMethodContext resolveWithoutTraining(Mode mode, CompressionLevel compressionLevel) {
         CompressionLevel resolvedCompressionLevel = resolveCompressionLevel(mode, compressionLevel);
         MethodComponentContext encoderContext = resolveEncoder(resolvedCompressionLevel);
 
@@ -106,6 +120,37 @@ public final class ModeBasedResolver {
                     METHOD_PARAMETER_EF_SEARCH,
                     KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH
                 )
+            )
+        );
+    }
+
+    private KNNMethodContext resolveWithTraining(Mode mode, CompressionLevel compressionLevel) {
+        CompressionLevel resolvedCompressionLevel = resolveCompressionLevel(mode, compressionLevel);
+        MethodComponentContext encoderContext = resolveEncoder(resolvedCompressionLevel);
+        if (encoderContext != null) {
+            return new KNNMethodContext(
+                KNNEngine.FAISS,
+                SpaceType.DEFAULT,
+                new MethodComponentContext(
+                    METHOD_IVF,
+                    Map.of(
+                        METHOD_PARAMETER_NLIST,
+                        METHOD_PARAMETER_NLIST_DEFAULT,
+                        METHOD_PARAMETER_NPROBES,
+                        METHOD_PARAMETER_NPROBES_DEFAULT,
+                        METHOD_ENCODER_PARAMETER,
+                        encoderContext
+                    )
+                )
+            );
+        }
+
+        return new KNNMethodContext(
+            KNNEngine.FAISS,
+            SpaceType.DEFAULT,
+            new MethodComponentContext(
+                METHOD_IVF,
+                Map.of(METHOD_PARAMETER_NLIST, METHOD_PARAMETER_NLIST_DEFAULT, METHOD_PARAMETER_NPROBES, METHOD_PARAMETER_NPROBES_DEFAULT)
             )
         );
     }

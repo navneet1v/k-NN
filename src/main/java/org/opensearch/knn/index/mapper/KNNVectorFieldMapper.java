@@ -445,7 +445,8 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 builder.originalParameters.setResolvedKnnMethodContext(
                     ModeBasedResolver.INSTANCE.resolveKNNMethodContext(
                         builder.knnMethodConfigContext.getMode(),
-                        builder.knnMethodConfigContext.getCompressionLevel()
+                        builder.knnMethodConfigContext.getCompressionLevel(),
+                        false
                     )
                 );
             }

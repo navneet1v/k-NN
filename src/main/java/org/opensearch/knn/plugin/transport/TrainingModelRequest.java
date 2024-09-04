@@ -107,7 +107,7 @@ public class TrainingModelRequest extends ActionRequest {
             .build();
 
         if (knnMethodContext == null && (Mode.isConfigured(mode) || CompressionLevel.isConfigured(compressionLevel))) {
-            this.knnMethodContext = ModeBasedResolver.INSTANCE.resolveKNNMethodContext(mode, compressionLevel);
+            this.knnMethodContext = ModeBasedResolver.INSTANCE.resolveKNNMethodContext(mode, compressionLevel, true);
         } else {
             this.knnMethodContext = knnMethodContext;
         }
