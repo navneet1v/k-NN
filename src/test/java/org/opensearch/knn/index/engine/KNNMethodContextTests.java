@@ -158,7 +158,7 @@ public class KNNMethodContextTests extends KNNTestCase {
         KNNMethodContext knnMethodContext = KNNMethodContext.parse(in);
 
         assertEquals(KNNEngine.DEFAULT, knnMethodContext.getKnnEngine());
-        assertEquals(SpaceType.DEFAULT, knnMethodContext.getSpaceType());
+        assertEquals(SpaceType.UNDEFINED, knnMethodContext.getSpaceType());
         assertEquals(methodName, knnMethodContext.getMethodComponentContext().getName());
         assertTrue(knnMethodContext.getMethodComponentContext().getParameters().isEmpty());
 

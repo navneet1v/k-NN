@@ -1283,7 +1283,7 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
 
     public void testTypeParser_whenBinaryFaissHNSWWithInvalidSpaceType_thenException() throws IOException {
         for (SpaceType spaceType : SpaceType.values()) {
-            if (SpaceType.HAMMING == spaceType) {
+            if (SpaceType.UNDEFINED == spaceType || SpaceType.HAMMING == spaceType) {
                 continue;
             }
             testTypeParserWithBinaryDataType(KNNEngine.FAISS, spaceType, METHOD_HNSW, 8, "is not supported with");
