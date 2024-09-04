@@ -235,6 +235,8 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 );
             }
 
+            // we always resolve the KNNMethodContext and only in cases when FlatMapper Needs to be used we don't resolve
+            // the KNNMethodContext
             if (originalParameters.getResolvedKnnMethodContext() == null) {
                 return FlatVectorFieldMapper.createFieldMapper(
                     buildFullName(context),
@@ -420,6 +422,18 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             if (builder.originalParameters.isLegacyMapping()) {
                 builder.originalParameters.setResolvedKnnMethodContext(
                     createKNNMethodContextFromLegacy(parserContext.getSettings(), parserContext.indexVersionCreated())
+                );
+            }
+            // resolve KNNMethodContext When Mode and compression is set.
+            // This might not be the right place to do this. I believe we should do this resolution in ModelFieldMapper
+            // If we remove this check, add a similar check when we try to use FlatFieldMapper. because for
+            // FlatFieldMapper we are checking if ResolvedMethodContext is null or not.
+            if (builder.mode.isConfigured() || builder.compressionLevel.isConfigured()) {
+                builder.originalParameters.setResolvedKnnMethodContext(
+                    KNNVectorFieldMapperUtil.createKNNMethodContextForModeAndCompression(
+                        Mode.fromName(builder.originalParameters.getMode()),
+                        CompressionLevel.fromName(builder.originalParameters.getCompressionLevel())
+                    )
                 );
             }
             setDefaultSpaceType(builder.originalParameters.getResolvedKnnMethodContext(), builder.vectorDataType.getValue());

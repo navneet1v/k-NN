@@ -38,6 +38,7 @@ import static org.opensearch.knn.common.KNNConstants.HNSW_ALGO_M;
 import static org.opensearch.knn.common.KNNConstants.KNN_ENGINE;
 import static org.opensearch.knn.common.KNNConstants.METHOD_HNSW;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_EF_CONSTRUCTION;
+import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_EF_SEARCH;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_M;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_SPACE_TYPE;
 
@@ -207,5 +208,50 @@ public class KNNVectorFieldMapperUtil {
                 )
             )
         );
+    }
+
+    static KNNMethodContext createKNNMethodContextForModeAndCompression(final Mode mode, final CompressionLevel compressionLevel) {
+        switch (mode) {
+            case ON_DISK:
+                // if the mode is disk we use Faiss Engine.
+                // TODO: add a way to support encoder here for different compression level
+                // TODO: also handle the case when on-disk is present and few attributes of the MethodContext is set.
+                return new KNNMethodContext(
+                    KNNEngine.FAISS,
+                    SpaceType.DEFAULT,
+                    new MethodComponentContext(
+                        METHOD_HNSW,
+                        Map.of(
+                            METHOD_PARAMETER_M,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_M,
+                            METHOD_PARAMETER_EF_CONSTRUCTION,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_CONSTRUCTION,
+                            METHOD_PARAMETER_EF_SEARCH,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH
+
+                        )
+                    )
+                );
+            case IN_MEMORY:
+            case NOT_CONFIGURED:
+                return new KNNMethodContext(
+                    KNNEngine.DEFAULT,
+                    SpaceType.DEFAULT,
+                    new MethodComponentContext(
+                        METHOD_HNSW,
+                        Map.of(
+                            METHOD_PARAMETER_M,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_M,
+                            METHOD_PARAMETER_EF_CONSTRUCTION,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_CONSTRUCTION,
+                            METHOD_PARAMETER_EF_SEARCH,
+                            KNNSettings.INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH
+                        )
+                    )
+                );
+        }
+
+        throw new IllegalArgumentException("Undefined value of mode : " + mode.getName() + " is provided");
+
     }
 }
