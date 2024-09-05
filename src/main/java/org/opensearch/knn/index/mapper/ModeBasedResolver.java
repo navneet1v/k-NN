@@ -55,15 +55,19 @@ public final class ModeBasedResolver {
      * @param requiresTraining whether config requires trianing
      * @return {@link KNNMethodContext}
      */
-    public KNNMethodContext resolveKNNMethodContext(Mode mode, CompressionLevel compressionLevel, boolean requiresTraining) {
+    public KNNMethodContext resolveKNNMethodContext(
+        Mode mode,
+        CompressionLevel compressionLevel,
+        boolean requiresTraining,
+        SpaceType spaceType
+    ) {
         if (requiresTraining) {
-            return resolveWithTraining(mode, compressionLevel);
+            return resolveWithTraining(mode, compressionLevel, spaceType);
         }
-
-        return resolveWithoutTraining(mode, compressionLevel);
+        return resolveWithoutTraining(mode, compressionLevel, spaceType);
     }
 
-    private KNNMethodContext resolveWithoutTraining(Mode mode, CompressionLevel compressionLevel) {
+    private KNNMethodContext resolveWithoutTraining(Mode mode, CompressionLevel compressionLevel, final SpaceType spaceType) {
         CompressionLevel resolvedCompressionLevel = resolveCompressionLevel(mode, compressionLevel);
         MethodComponentContext encoderContext = resolveEncoder(resolvedCompressionLevel);
 
@@ -72,7 +76,7 @@ public final class ModeBasedResolver {
         if (encoderContext != null) {
             return new KNNMethodContext(
                 knnEngine,
-                SpaceType.DEFAULT,
+                spaceType,
                 new MethodComponentContext(
                     METHOD_HNSW,
                     Map.of(
@@ -92,7 +96,7 @@ public final class ModeBasedResolver {
         if (knnEngine == KNNEngine.FAISS) {
             return new KNNMethodContext(
                 knnEngine,
-                SpaceType.DEFAULT,
+                spaceType,
                 new MethodComponentContext(
                     METHOD_HNSW,
                     Map.of(
@@ -109,7 +113,7 @@ public final class ModeBasedResolver {
 
         return new KNNMethodContext(
             knnEngine,
-            SpaceType.DEFAULT,
+            spaceType,
             new MethodComponentContext(
                 METHOD_HNSW,
                 Map.of(
@@ -122,13 +126,13 @@ public final class ModeBasedResolver {
         );
     }
 
-    private KNNMethodContext resolveWithTraining(Mode mode, CompressionLevel compressionLevel) {
+    private KNNMethodContext resolveWithTraining(Mode mode, CompressionLevel compressionLevel, SpaceType spaceType) {
         CompressionLevel resolvedCompressionLevel = resolveCompressionLevel(mode, compressionLevel);
         MethodComponentContext encoderContext = resolveEncoder(resolvedCompressionLevel);
         if (encoderContext != null) {
             return new KNNMethodContext(
                 KNNEngine.FAISS,
-                SpaceType.DEFAULT,
+                spaceType,
                 new MethodComponentContext(
                     METHOD_IVF,
                     Map.of(
@@ -145,7 +149,7 @@ public final class ModeBasedResolver {
 
         return new KNNMethodContext(
             KNNEngine.FAISS,
-            SpaceType.DEFAULT,
+            spaceType,
             new MethodComponentContext(
                 METHOD_IVF,
                 Map.of(METHOD_PARAMETER_NLIST, METHOD_PARAMETER_NLIST_DEFAULT, METHOD_PARAMETER_NPROBES, METHOD_PARAMETER_NPROBES_DEFAULT)

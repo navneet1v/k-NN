@@ -72,6 +72,7 @@ public class KNNConstants {
     public static final String MODEL_VECTOR_DATA_TYPE_KEY = VECTOR_DATA_TYPE_FIELD;
     public static final VectorDataType DEFAULT_VECTOR_DATA_TYPE_FIELD = VectorDataType.FLOAT;
     public static final String MINIMAL_MODE_AND_COMPRESSION_FEATURE = "mode_and_compression_feature";
+    public static final String TOP_LEVEL_SPACE_TYPE_FEATURE = "top_level_space_type_feature";
 
     public static final String RADIAL_SEARCH_KEY = "radial_search";
 

@@ -9,6 +9,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import org.opensearch.core.common.Strings;
+import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNMethodContext;
 
@@ -42,6 +43,7 @@ public final class OriginalMappingParameters {
     private final String mode;
     private final String compressionLevel;
     private final String modelId;
+    private final SpaceType topLevelSpaceType;
 
     /**
      * Initialize the parameters from the builder
@@ -56,6 +58,7 @@ public final class OriginalMappingParameters {
         this.mode = builder.mode.get();
         this.compressionLevel = builder.compressionLevel.get();
         this.modelId = builder.modelId.get();
+        this.topLevelSpaceType = builder.topLevelSpaceType.get();
     }
 
     /**
