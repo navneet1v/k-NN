@@ -122,5 +122,4 @@ interface VectorValueExtractorStrategy {
             );
         }
     }
-
 }

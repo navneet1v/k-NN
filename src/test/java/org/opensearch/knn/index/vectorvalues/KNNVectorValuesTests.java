@@ -151,5 +151,4 @@ public class KNNVectorValuesTests extends KNNTestCase {
             assertEquals(bytesPerVector, vectorValues.bytesPerVector);
         }
     }
-
 }

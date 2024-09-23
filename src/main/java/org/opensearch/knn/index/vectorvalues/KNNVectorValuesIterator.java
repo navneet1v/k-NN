@@ -184,5 +184,4 @@ public interface KNNVectorValuesIterator {
             return new VectorValueExtractorStrategy.FieldWriterIteratorVectorExtractor();
         }
     }
-
 }

@@ -5,10 +5,12 @@
 
 package org.opensearch.knn.index.vectorvalues;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.opensearch.knn.common.FieldInfoExtractor;
@@ -17,9 +19,13 @@ import org.opensearch.knn.index.VectorDataType;
 import java.io.IOException;
 import java.util.Map;
 
+import static org.opensearch.knn.index.vectorvalues.KNNMergeVectorValuesUtil.mergeByteVectorValues;
+import static org.opensearch.knn.index.vectorvalues.KNNMergeVectorValuesUtil.mergeFloatVectorValues;
+
 /**
  * A factory class that provides various methods to create the {@link KNNVectorValues}.
  */
+@Log4j2
 public final class KNNVectorValuesFactory {
 
     /**
@@ -45,7 +51,37 @@ public final class KNNVectorValuesFactory {
         final DocsWithFieldSet docIdWithFieldSet,
         final Map<Integer, T> vectors
     ) {
-        return getVectorValues(vectorDataType, new KNNVectorValuesIterator.FieldWriterIteratorValues<T>(docIdWithFieldSet, vectors));
+        return getVectorValues(vectorDataType, new KNNVectorValuesIterator.FieldWriterIteratorValues<>(docIdWithFieldSet, vectors));
+    }
+
+    /**
+     * Returns a {@link KNNVectorValues} for the given {@link FieldInfo}, {@link VectorDataType} and {@link MergeState}
+     * Used for getting a common {@link KNNVectorValues} for all {@link org.apache.lucene.codecs.KnnVectorsReader} (segments)
+     * for a {@link MergeState}
+     *
+     * @param vectorDataType {@link VectorDataType}
+     * @param fieldInfo {@link FieldInfo}
+     * @param mergeState {@link MergeState}
+     * @return {@link KNNVectorValues}
+     */
+    public static <T> KNNVectorValues<T> getVectorValues(
+        final VectorDataType vectorDataType,
+        final FieldInfo fieldInfo,
+        final MergeState mergeState
+    ) {
+        try {
+            switch (fieldInfo.getVectorEncoding()) {
+                case FLOAT32:
+                    return getVectorValues(vectorDataType, mergeFloatVectorValues(fieldInfo, mergeState));
+                case BYTE:
+                    return getVectorValues(vectorDataType, mergeByteVectorValues(fieldInfo, mergeState));
+                default:
+                    throw new IllegalStateException("Unsupported vector encoding [" + fieldInfo.getVectorEncoding() + "]");
+            }
+        } catch (final IOException e) {
+            log.error("Unable to merge vectors for field [{}]", fieldInfo.getName(), e);
+            throw new IllegalStateException("Unable to merge vectors for field [" + fieldInfo.getName() + "]", e);
+        }
     }
 
     /**

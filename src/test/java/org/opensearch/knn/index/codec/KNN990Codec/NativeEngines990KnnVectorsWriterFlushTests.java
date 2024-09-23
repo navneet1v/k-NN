@@ -177,7 +177,6 @@ public class NativeEngines990KnnVectorsWriterFlushTests extends OpenSearchTestCa
                     throw new RuntimeException(e);
                 }
             });
-
             knnVectorValuesFactoryMockedStatic.verify(
                 () -> KNNVectorValuesFactory.getVectorValues(any(VectorDataType.class), any(DocsWithFieldSet.class), any()),
                 times(expectedVectorValues.size())
@@ -236,8 +235,7 @@ public class NativeEngines990KnnVectorsWriterFlushTests extends OpenSearchTestCa
 
                 when(quantizationService.getQuantizationParams(fieldInfo)).thenReturn(quantizationParams);
                 try {
-                    when(quantizationService.train(quantizationParams, expectedVectorValues.get(i), vectorsPerField.get(i).size()))
-                        .thenReturn(quantizationState);
+                    when(quantizationService.train(quantizationParams, expectedVectorValues.get(i))).thenReturn(quantizationState);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
