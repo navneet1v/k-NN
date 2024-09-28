@@ -20,6 +20,7 @@ import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.Bits;
 import org.opensearch.common.StopWatch;
+import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.query.ExactSearcher;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
@@ -63,12 +64,16 @@ public class NativeEngineKnnVectorQuery extends Query {
         } else {
             int firstPassK = rescoreContext.getFirstPassK(finalK);
             perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, firstPassK);
-            ResultUtil.reduceToTopK(perLeafResults, firstPassK);
-
+            if (KNNSettings.isShardLevelRescoringDisabled(knnQuery.getIndexName()) == false) {
+                log.info("Shard Level Rescoring is enabled. Reducing docs to {}", firstPassK);
+                ResultUtil.reduceToTopK(perLeafResults, firstPassK);
+            } else {
+                log.info("Shard Level Rescoring is not enabled.");
+            }
             StopWatch stopWatch = new StopWatch().start();
             perLeafResults = doRescore(indexSearcher, leafReaderContexts, knnWeight, perLeafResults, finalK);
             long rescoreTime = stopWatch.stop().totalTime().millis();
-            log.debug("Rescoring results took {} ms. oversampled k:{}, segments:{}", rescoreTime, firstPassK, leafReaderContexts.size());
+            log.info("Rescoring results took {} ms. oversampled k:{}, segments:{}", rescoreTime, firstPassK, leafReaderContexts.size());
         }
         ResultUtil.reduceToTopK(perLeafResults, finalK);
         TopDocs[] topDocs = new TopDocs[perLeafResults.size()];
