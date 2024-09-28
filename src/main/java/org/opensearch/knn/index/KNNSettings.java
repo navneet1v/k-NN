@@ -86,6 +86,7 @@ public class KNNSettings {
     public static final String KNN_FAISS_AVX2_DISABLED = "knn.faiss.avx2.disabled";
     public static final String QUANTIZATION_STATE_CACHE_SIZE_LIMIT = "knn.quantization.cache.size.limit";
     public static final String QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES = "knn.quantization.cache.expiry.minutes";
+    public static final String KNN_SHARD_LEVEL_RESCORING_DISABLED = "index.knn.shard_level_rescoring_disabled";
 
     /**
      * Default setting values
@@ -109,6 +110,7 @@ public class KNNSettings {
     public static final Integer KNN_MAX_QUANTIZATION_STATE_CACHE_SIZE_LIMIT_PERCENTAGE = 10; // Quantization state cache limit cannot exceed
                                                                                              // 10% of the JVM heap
     public static final Integer KNN_DEFAULT_QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES = 60;
+    public static final boolean KNN_SHARD_LEVEL_RESCORING_DISABLED_DEFAULT_VALUE = true;
 
     /**
      * Settings Definition
@@ -121,6 +123,13 @@ public class KNNSettings {
         KNN_DEFAULT_VECTOR_STREAMING_MEMORY_LIMIT_PCT,
         Setting.Property.Dynamic,
         Setting.Property.NodeScope
+    );
+
+    public static final Setting<Boolean> KNN_SHARD_LEVEL_RESCORING_DISABLED_SETTING = Setting.boolSetting(
+        KNN_SHARD_LEVEL_RESCORING_DISABLED,
+        KNN_SHARD_LEVEL_RESCORING_DISABLED_DEFAULT_VALUE,
+        Setting.Property.Dynamic,
+        IndexScope
     );
 
     public static final Setting<String> INDEX_KNN_SPACE_TYPE = Setting.simpleString(
@@ -441,6 +450,10 @@ public class KNNSettings {
             return QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING;
         }
 
+        if (KNN_SHARD_LEVEL_RESCORING_DISABLED.equals(key)) {
+            return KNN_SHARD_LEVEL_RESCORING_DISABLED_SETTING;
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -461,7 +474,8 @@ public class KNNSettings {
             KNN_FAISS_AVX2_DISABLED_SETTING,
             KNN_VECTOR_STREAMING_MEMORY_LIMIT_PCT_SETTING,
             QUANTIZATION_STATE_CACHE_SIZE_LIMIT_SETTING,
-            QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING
+            QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING,
+            KNN_SHARD_LEVEL_RESCORING_DISABLED_SETTING
         );
         return Stream.concat(settings.stream(), Stream.concat(getFeatureFlags().stream(), dynamicCacheSettings.values().stream()))
             .collect(Collectors.toList());
@@ -481,6 +495,10 @@ public class KNNSettings {
 
     public static double getCircuitBreakerUnsetPercentage() {
         return KNNSettings.state().getSettingValue(KNNSettings.KNN_CIRCUIT_BREAKER_UNSET_PERCENTAGE);
+    }
+
+    public static boolean isShardLevelRescoringDisabled() {
+        return KNNSettings.state().getSettingValue(KNNSettings.KNN_SHARD_LEVEL_RESCORING_DISABLED);
     }
 
     public static boolean isFaissAVX2Disabled() {
