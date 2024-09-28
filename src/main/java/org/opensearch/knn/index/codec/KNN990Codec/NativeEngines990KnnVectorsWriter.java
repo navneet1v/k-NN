@@ -105,13 +105,20 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     @Override
     public void mergeOneField(final FieldInfo fieldInfo, final MergeState mergeState) throws IOException {
         // This will ensure that we are merging the FlatIndex during force merge.
+        StopWatch stopwatch = new StopWatch().start();
         flatVectorsWriter.mergeOneField(fieldInfo, mergeState);
-
+        log.info("[Merge]: Reading and writing merged FlatVector Took : {} ms", stopwatch.stop().totalTime().millis());
         final VectorDataType vectorDataType = extractVectorDataType(fieldInfo);
         final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier = () -> getVectorValues(vectorDataType, fieldInfo, mergeState);
+        stopwatch = new StopWatch().start();
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier);
         final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
         final int totalLiveDocs = Math.toIntExact(knnVectorValues.totalLiveDocs());
+        log.info(
+            "[Merge] Reading live docs {} took with merging vector values : {} ms",
+            totalLiveDocs,
+            stopwatch.stop().totalTime().millis()
+        );
         if (totalLiveDocs <= 0) {
             log.debug("[Merge] No live docs for field {}", fieldInfo.getName());
             return;
@@ -124,7 +131,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
-        log.debug("Merge took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
+        log.info("[Merge] Graph Build took {} ms for vector field [{}] for docs: {}", time_in_millis, fieldInfo.getName(), totalLiveDocs);
     }
 
     /**
