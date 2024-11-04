@@ -10,6 +10,7 @@ import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.FieldExistsQuery;
@@ -22,9 +23,13 @@ import org.apache.lucene.search.join.BitSetProducer;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.query.rescore.RescoreContext;
+import org.opensearch.knn.service.OSLuceneDocId;
+import org.opensearch.knn.service.VectorEngineService;
+import org.opensearch.knn.service.VectorEngineServiceWrapper;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -166,6 +171,12 @@ public class KNNQuery extends Query {
     public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
         if (!KNNSettings.isKNNPluginEnabled()) {
             throw new IllegalStateException("KNN plugin is disabled. To enable update knn.plugin.enabled to true");
+        }
+        if (KNNSettings.isUseNewQuery(indexName)) {
+            FieldInfo fieldInfo =
+                    searcher.getIndexReader().leaves().get(0).reader().getFieldInfos().fieldInfo(this.getField());
+            List<OSLuceneDocId> docIdList = VectorEngineServiceWrapper.search(this, fieldInfo);
+            return new KNNWeightV2(this, docIdList);
         }
         final Weight filterWeight = getFilterWeight(searcher);
         if (filterWeight != null) {

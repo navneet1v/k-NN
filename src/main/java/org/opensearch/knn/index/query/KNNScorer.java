@@ -63,7 +63,7 @@ public class KNNScorer extends Scorer {
      * @param knnWeight {@link KNNWeight}
      * @return {@link KNNScorer}
      */
-    public static Scorer emptyScorer(KNNWeight knnWeight) {
+    public static Scorer emptyScorer(Weight knnWeight) {
         return new Scorer(knnWeight) {
             private final DocIdSetIterator docIdsIter = DocIdSetIterator.empty();
 

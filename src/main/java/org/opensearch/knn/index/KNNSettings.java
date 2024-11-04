@@ -90,6 +90,7 @@ public class KNNSettings {
     public static final String QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES = "knn.quantization.cache.expiry.minutes";
     public static final String KNN_FAISS_AVX512_DISABLED = "knn.faiss.avx512.disabled";
     public static final String KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED = "index.knn.disk.vector.shard_level_rescoring_disabled";
+    public static final String USE_NEW_QUERY = "index.knn.use_new_query";
 
     /**
      * Default setting values
@@ -142,6 +143,8 @@ public class KNNSettings {
         IndexScope,
         Dynamic
     );
+
+    public static final Setting<Boolean> USE_NEW_QUERY_SETTING = Setting.boolSetting(USE_NEW_QUERY, false, IndexScope, Dynamic);
 
     // This setting controls how much memory should be used to transfer vectors from Java to JNI Layer. The default
     // 1% of the JVM heap
@@ -499,6 +502,10 @@ public class KNNSettings {
             return KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING;
         }
 
+        if (USE_NEW_QUERY.equals(key)) {
+            return USE_NEW_QUERY_SETTING;
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -522,7 +529,8 @@ public class KNNSettings {
             KNN_FAISS_AVX512_DISABLED_SETTING,
             QUANTIZATION_STATE_CACHE_SIZE_LIMIT_SETTING,
             QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING,
-            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING
+            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING,
+            USE_NEW_QUERY_SETTING
         );
         return Stream.concat(settings.stream(), Stream.concat(getFeatureFlags().stream(), dynamicCacheSettings.values().stream()))
             .collect(Collectors.toList());
@@ -575,6 +583,10 @@ public class KNNSettings {
             .index(indexName)
             .getSettings()
             .getAsInt(ADVANCED_FILTERED_EXACT_SEARCH_THRESHOLD, ADVANCED_FILTERED_EXACT_SEARCH_THRESHOLD_DEFAULT_VALUE);
+    }
+
+    public static boolean isUseNewQuery(final String indexName) {
+        return KNNSettings.state().clusterService.state().getMetadata().index(indexName).getSettings().getAsBoolean(USE_NEW_QUERY, false);
     }
 
     public static boolean isShardLevelRescoringEnabledForDiskBasedVector(String indexName) {

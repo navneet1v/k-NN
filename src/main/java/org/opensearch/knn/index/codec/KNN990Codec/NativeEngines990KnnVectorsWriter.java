@@ -32,6 +32,7 @@ import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
+import org.opensearch.knn.service.VectorEngineServiceWrapper;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -104,6 +105,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
+            VectorEngineServiceWrapper.ingestData(knnVectorValuesSupplier.get(), segmentWriteState, fieldInfo);
             // Check only after quantization state writer finish writing its state, since it is required
             // even if there are no graph files in segment, which will be later used by exact search
             if (shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
@@ -165,6 +167,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
         log.debug("Merge took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
+
     }
 
     /**
@@ -201,6 +204,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             quantizationStateWriter.closeOutput();
         }
         IOUtils.close(flatVectorsWriter);
+        VectorEngineServiceWrapper.close(segmentWriteState);
     }
 
     /**
