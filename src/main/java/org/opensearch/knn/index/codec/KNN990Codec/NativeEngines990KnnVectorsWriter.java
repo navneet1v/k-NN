@@ -28,12 +28,16 @@ import org.opensearch.common.StopWatch;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
+import org.opensearch.knn.index.vectorvalues.KNNFloatVectorValues;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.index.vectorvalues.VectorValuesInputStream;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
+import org.opensearch.knn.remote.index.s3.S3Client;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -42,7 +46,7 @@ import static org.opensearch.knn.common.FieldInfoExtractor.extractVectorDataType
 import static org.opensearch.knn.index.vectorvalues.KNNVectorValuesFactory.getVectorValues;
 
 /**
- * A KNNVectorsWriter class for writing the vector data strcutures and flat vectors for Native Engines.
+ * A KNNVectorsWriter class for writing the vector data structures and flat vectors for Native Engines.
  */
 @Log4j2
 public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
@@ -54,6 +58,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private final List<NativeEngineFieldVectorsWriter<?>> fields = new ArrayList<>();
     private boolean finished;
     private final Integer approximateThreshold;
+    private final S3Client s3Client;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
@@ -63,6 +68,11 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         this.segmentWriteState = segmentWriteState;
         this.flatVectorsWriter = flatVectorsWriter;
         this.approximateThreshold = approximateThreshold;
+        try {
+            s3Client = S3Client.getInstance();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -115,6 +125,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 );
                 continue;
             }
+            uploadToS3(fieldInfo, knnVectorValuesSupplier);
             final NativeIndexWriter writer = NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState);
             final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
 
@@ -165,6 +176,30 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
         log.debug("Merge took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
+    }
+
+    private void uploadToS3(final FieldInfo fieldInfo, final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier) {
+        // s3 uploader
+        String segmentName = segmentWriteState.segmentInfo.name;
+        String fieldName = fieldInfo.getName();
+        String s3Key = segmentName + "_" + fieldName + ".s3vec";
+        try (InputStream vectorInputStream = new VectorValuesInputStream((KNNFloatVectorValues) knnVectorValuesSupplier.get())) {
+            StopWatch stopWatch = new StopWatch().start();
+            // Lets upload data to s3.
+            long totalBytesUploaded = s3Client.uploadWithProgress(vectorInputStream, s3Key);
+            long time_in_millis = stopWatch.stop().totalTime().millis();
+            log.info(
+                "Time taken to upload vector for segment : {}, field: {}, totalBytes: {}, dimension: {} is : {}ms",
+                segmentName,
+                fieldInfo.getName(),
+                totalBytesUploaded,
+                fieldInfo.getVectorDimension(),
+                time_in_millis
+            );
+        } catch (Exception e) {
+            // logging here as this is in internal error
+            log.error("Error while uploading data to s3.", e);
+        }
     }
 
     /**
