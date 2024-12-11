@@ -34,6 +34,10 @@ public class KNN990CodecTests extends KNNCodecTestCase {
         assertTrue(codec.knnVectorsFormat() instanceof KNN990PerFieldKnnVectorsFormat);
     }
 
+    public void testMixedFieldsKnnIndex() {
+        testBuildMixedFieldsKnnIndex((KNN990Codec.builder().delegate(V_9_9_0.getDefaultCodecDelegate()).build()));
+    }
+
     // IMPORTANT: When this Codec is moved to a backwards Codec, this test needs to be removed, because it attempts to
     // write with a read only codec, which will fail
     @SneakyThrows

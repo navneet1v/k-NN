@@ -8,10 +8,13 @@ package org.opensearch.knn.index.codec;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.KnnVectorField;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.NoMergePolicy;
+import org.apache.lucene.index.TieredMergePolicy;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TopDocs;
@@ -21,6 +24,7 @@ import org.opensearch.Version;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.xcontent.XContentFactory;
+import org.opensearch.index.mapper.IdFieldMapper;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.knn.KNNTestCase;
 import org.opensearch.knn.common.KNNConstants;
@@ -73,6 +77,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
@@ -216,6 +222,54 @@ public class KNNCodecTestCase extends KNNTestCase {
             NativeMemoryLoadStrategy.IndexLoadStrategy.getInstance().close();
         }
     }
+
+    public void testBuildMixedFieldsKnnIndex(final Codec codec) throws IOException {
+        setUpMockClusterService();
+        try (Directory dir = newFSDirectory(createTempDir())) {
+            IndexWriterConfig iwc = newIndexWriterConfig();
+            iwc.setMergeScheduler(new SerialMergeScheduler());
+            iwc.setCodec(codec);
+            iwc.setMergePolicy(new TieredMergePolicy());
+
+            final RandomIndexWriter writer = new RandomIndexWriter(random(), dir, iwc);
+            for(int i = 0; i < 10; i++) {
+                Document doc = getVectorField(i);
+                writer.addDocument(doc);
+            }
+            Document nonVectorDoc = getNonVectorField(11);
+            writer.addDocument(nonVectorDoc);
+            writer.flush();
+
+            IndexReader reader = writer.getReader();
+
+
+
+            IndexSearcher searcher = new IndexSearcher(reader);
+
+            writer.close();
+        }
+    }
+
+    private Document getVectorField(int docId) {
+        float[] array = { 1.0f, 3.0f, 4.0f };
+        VectorField vectorField = new VectorField("test_vector", array, sampleFieldType);
+        Field idField = new Field("_id", String.valueOf(docId), IdFieldMapper.Defaults.FIELD_TYPE);
+        Document doc = new Document();
+        doc.add(vectorField);
+        doc.add(idField);
+        return doc;
+    }
+
+    private Document getNonVectorField(int docId) {
+        String text = "myText";
+        StringField stringField = new StringField("myText", text, Field.Store.NO);
+        Field idField = new Field("_id", String.valueOf(docId), IdFieldMapper.Defaults.FIELD_TYPE);
+        Document doc = new Document();
+        doc.add(stringField);
+        doc.add(idField);
+        return doc;
+    }
+
 
     public void testBuildFromModelTemplate(Codec codec) throws IOException, ExecutionException, InterruptedException {
         // Setup model params
