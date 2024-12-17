@@ -34,6 +34,9 @@ import org.opensearch.knn.index.vectorvalues.VectorValuesInputStream;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
+import org.opensearch.knn.remote.index.client.IndexBuildServiceClient;
+import org.opensearch.knn.remote.index.model.CreateIndexRequest;
+import org.opensearch.knn.remote.index.model.CreateIndexResponse;
 import org.opensearch.knn.remote.index.s3.S3Client;
 
 import java.io.IOException;
@@ -59,6 +62,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private boolean finished;
     private final Integer approximateThreshold;
     private final S3Client s3Client;
+    private final IndexBuildServiceClient indexBuildServiceClient;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
@@ -73,6 +77,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        indexBuildServiceClient = IndexBuildServiceClient.getInstance();
     }
 
     /**
@@ -125,7 +130,17 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 );
                 continue;
             }
+
             uploadToS3(fieldInfo, knnVectorValuesSupplier);
+            log.info("Creating the IndexRequest...");
+            CreateIndexRequest createIndexRequest = buildCreateIndexRequest(fieldInfo);
+            log.info("Submitting request to remote indexbuildService");
+            try {
+                CreateIndexResponse response = indexBuildServiceClient.createIndex(createIndexRequest);
+                log.info("Request completed with response : {}", response);
+            } catch (Exception e) {
+                log.error("Failed to call indexBuildServiceClient.createIndex for input: {}", createIndexRequest, e);
+            }
             final NativeIndexWriter writer = NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState);
             final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
 
@@ -200,6 +215,14 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             // logging here as this is in internal error
             log.error("Error while uploading data to s3.", e);
         }
+    }
+
+    private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo) {
+        String segmentName = segmentWriteState.segmentInfo.name;
+        String fieldName = fieldInfo.getName();
+        String s3Key = segmentName + "_" + fieldName + ".s3vec";
+        int dimension = fieldInfo.getVectorDimension();
+        return CreateIndexRequest.builder().bucketName(S3Client.BUCKET_NAME).objectLocation(s3Key).dimensions(dimension).build();
     }
 
     /**

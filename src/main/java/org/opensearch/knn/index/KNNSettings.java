@@ -90,6 +90,11 @@ public class KNNSettings {
     public static final String QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES = "knn.quantization.cache.expiry.minutes";
     public static final String KNN_FAISS_AVX512_DISABLED = "knn.faiss.avx512.disabled";
     public static final String KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED = "index.knn.disk.vector.shard_level_rescoring_disabled";
+    public static final String KNN_S3_ACCESS_KEY = "knn.s3.access.key";
+    public static final String KNN_S3_SECRET_KEY = "knn.s3.secret.key";
+    public static final String KNN_S3_TOKEN_KEY = "knn.s3.token.key";
+    public static final String REMOTE_SERVICE_ENDPOINT = "knn.remote.index.build.service.endpoint";
+    public static final String REMOTE_SERVICE_PORT = "knn.remote.index.build.service.port";
 
     /**
      * Default setting values
@@ -158,6 +163,37 @@ public class KNNSettings {
         new SpaceTypeValidator(),
         IndexScope,
         Setting.Property.Deprecated
+    );
+
+    public static final Setting<String> KNN_S3_ACCESS_KEY_SETTING = Setting.simpleString(
+        KNN_S3_ACCESS_KEY,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> KNN_S3_SECRET_KEY_SETTING = Setting.simpleString(
+        KNN_S3_SECRET_KEY,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> KNN_S3_TOKEN_KEY_SETTING = Setting.simpleString(
+        KNN_S3_TOKEN_KEY,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> REMOTE_SERVICE_ENDPOINT_SETTING = Setting.simpleString(
+        REMOTE_SERVICE_ENDPOINT,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<Integer> REMOTE_SERVICE_PORT_SETTING = Setting.intSetting(
+        REMOTE_SERVICE_PORT,
+        8200,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
     );
 
     /**
@@ -353,6 +389,19 @@ public class KNNSettings {
     );
 
     /**
+     * All other Settings
+     */
+    private static final Map<String, Setting<?>> REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP = new HashMap<>() {
+        {
+            put(KNN_S3_ACCESS_KEY, KNN_S3_ACCESS_KEY_SETTING);
+            put(KNN_S3_SECRET_KEY, KNN_S3_SECRET_KEY_SETTING);
+            put(KNN_S3_TOKEN_KEY, KNN_S3_TOKEN_KEY_SETTING);
+            put(REMOTE_SERVICE_ENDPOINT, REMOTE_SERVICE_ENDPOINT_SETTING);
+            put(REMOTE_SERVICE_PORT, REMOTE_SERVICE_PORT_SETTING);
+        }
+    };
+
+    /**
      * Dynamic settings
      */
     public static Map<String, Setting<?>> dynamicCacheSettings = new HashMap<String, Setting<?>>() {
@@ -499,6 +548,10 @@ public class KNNSettings {
             return KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING;
         }
 
+        if (REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.containsKey(key)) {
+            return REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.get(key);
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -522,10 +575,18 @@ public class KNNSettings {
             KNN_FAISS_AVX512_DISABLED_SETTING,
             QUANTIZATION_STATE_CACHE_SIZE_LIMIT_SETTING,
             QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING,
-            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING
+            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING,
+            KNN_S3_ACCESS_KEY_SETTING,
+            KNN_S3_SECRET_KEY_SETTING,
+            KNN_S3_TOKEN_KEY_SETTING
         );
-        return Stream.concat(settings.stream(), Stream.concat(getFeatureFlags().stream(), dynamicCacheSettings.values().stream()))
-            .collect(Collectors.toList());
+        final List<Stream<Setting<?>>> streamList = Arrays.asList(
+            settings.stream(),
+            getFeatureFlags().stream(),
+            dynamicCacheSettings.values().stream(),
+            REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.values().stream()
+        );
+        return streamList.stream().flatMap(stream -> stream).collect(Collectors.toList());
     }
 
     public static boolean isKNNPluginEnabled() {
@@ -583,6 +644,26 @@ public class KNNSettings {
             .index(indexName)
             .getSettings()
             .getAsBoolean(KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED, false);
+    }
+
+    public static String getKnnS3AccessKey() {
+        return KNNSettings.state().getSettingValue(KNN_S3_ACCESS_KEY);
+    }
+
+    public static String getKnnS3SecretKey() {
+        return KNNSettings.state().getSettingValue(KNN_S3_SECRET_KEY);
+    }
+
+    public static String getKnnS3Token() {
+        return KNNSettings.state().getSettingValue(KNN_S3_TOKEN_KEY);
+    }
+
+    public static String getRemoteServiceEndpoint() {
+        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_PORT);
+    }
+
+    public static Integer getRemoteServicePort() {
+        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_PORT);
     }
 
     public void initialize(Client client, ClusterService clusterService) {

@@ -6,7 +6,11 @@
 package org.opensearch.knn.remote.index.s3;
 
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.lang.StringUtils;
 import org.opensearch.common.SuppressForbidden;
+import org.opensearch.knn.index.KNNSettings;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
@@ -42,7 +46,7 @@ import java.util.concurrent.ExecutionException;
 public class S3Client {
     private static volatile S3Client INSTANCE;
     private static final int CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunk size
-    private static final String BUCKET_NAME = "remote-knn-index-build-navneet";
+    public static final String BUCKET_NAME = "remote-knn-index-build-navneet";
 
     private static final Region REGION = Region.US_WEST_2;
     private static software.amazon.awssdk.services.s3.S3AsyncClient s3AsyncClient;
@@ -72,15 +76,19 @@ public class S3Client {
             if (ProfileFileSystemSetting.AWS_CONFIG_FILE.getStringValue().isEmpty()) {
                 System.setProperty(ProfileFileSystemSetting.AWS_CONFIG_FILE.property(), System.getProperty("opensearch.path.conf"));
             }
-            // String accessKey = System.getenv("AWS_ACCESS_KEY_ID");
-            String accessKey = "";
-            // String secretKey = System.getenv("AWS_SECRET_ACCESS_KEY");
-            String secretKey = "";
-
-            // String sessionToken = System.getenv("AWS_SESSION_TOKEN");
-            String sessionToken = "";
-            AwsSessionCredentials credentials = AwsSessionCredentials.create(accessKey, secretKey, sessionToken);
-            log.info("**********Credentials are: {}", credentials.toString());
+            final String accessKey = KNNSettings.getKnnS3AccessKey();
+            final String secretKey = KNNSettings.getKnnS3SecretKey();
+            final String sessionToken = KNNSettings.getKnnS3Token();
+            final AwsCredentials credentials;
+            if (StringUtils.isEmpty(sessionToken)) {
+                // create basic credentials
+                credentials = AwsBasicCredentials.create(accessKey, secretKey);
+            } else {
+                // create a session credentials
+                // these credentials should be updated.
+                credentials = AwsSessionCredentials.create(accessKey, secretKey, sessionToken);
+            }
+            log.debug("**********Credentials are: {}", credentials.toString());
 
             software.amazon.awssdk.services.s3.S3AsyncClientBuilder builder = software.amazon.awssdk.services.s3.S3AsyncClient.builder()
                 .region(REGION)
@@ -93,7 +101,7 @@ public class S3Client {
             if (doesBucketExist(BUCKET_NAME) == false) {
                 CreateBucketRequest createBucketRequest = CreateBucketRequest.builder().bucket(BUCKET_NAME).build();
                 CreateBucketResponse response = s3AsyncClient.createBucket(createBucketRequest).get();
-                log.info("**********Response is: {}", response.toString());
+                log.debug("**********Response is: {}", response.toString());
             }
             return null;
         });
