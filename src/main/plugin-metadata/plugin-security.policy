@@ -38,5 +38,9 @@ grant {
     permission java.util.PropertyPermission "opensearch.path.conf", "read,write";
     permission java.io.FilePermission "config", "read";
 
+    // For accessing the local remote build service
+    //permission java.net.SocketPermission "127.0.0.1:5005", "connect,resolve";
+    //permission java.net.SocketPermission "localhost:5005", "connect,resolve";
+
     permission java.lang.RuntimePermission "accessDeclaredMembers";
 };

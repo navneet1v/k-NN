@@ -134,9 +134,11 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
         // mapperService is already checked for null or valid instance type at caller, hence we don't need
         // addition isPresent check here.
         int approximateThreshold = getApproximateThresholdValue();
+        final String indexUUID = mapperService.get().getIndexSettings().getIndex().getUUID();
         return new NativeEngines990KnnVectorsFormat(
             new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()),
-            approximateThreshold
+            approximateThreshold,
+            indexUUID
         );
     }
 

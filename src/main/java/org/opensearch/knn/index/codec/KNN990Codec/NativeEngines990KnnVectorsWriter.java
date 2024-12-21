@@ -63,21 +63,32 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private final Integer approximateThreshold;
     private final S3Client s3Client;
     private final IndexBuildServiceClient indexBuildServiceClient;
+    private final String indexUUID;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
         FlatVectorsWriter flatVectorsWriter,
         Integer approximateThreshold
     ) {
+        this(segmentWriteState, flatVectorsWriter, approximateThreshold, null);
+    }
+
+    public NativeEngines990KnnVectorsWriter(
+        SegmentWriteState segmentWriteState,
+        FlatVectorsWriter flatVectorsWriter,
+        Integer approximateThreshold,
+        String indexUUID
+    ) {
         this.segmentWriteState = segmentWriteState;
         this.flatVectorsWriter = flatVectorsWriter;
         this.approximateThreshold = approximateThreshold;
+        this.indexUUID = indexUUID;
         try {
             s3Client = S3Client.getInstance();
+            indexBuildServiceClient = IndexBuildServiceClient.getInstance();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        indexBuildServiceClient = IndexBuildServiceClient.getInstance();
     }
 
     /**
@@ -133,7 +144,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
             uploadToS3(fieldInfo, knnVectorValuesSupplier);
             log.info("Creating the IndexRequest...");
-            CreateIndexRequest createIndexRequest = buildCreateIndexRequest(fieldInfo);
+            CreateIndexRequest createIndexRequest = buildCreateIndexRequest(fieldInfo, totalLiveDocs);
             log.info("Submitting request to remote indexbuildService");
             try {
                 CreateIndexResponse response = indexBuildServiceClient.createIndex(createIndexRequest);
@@ -195,9 +206,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
     private void uploadToS3(final FieldInfo fieldInfo, final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier) {
         // s3 uploader
-        String segmentName = segmentWriteState.segmentInfo.name;
-        String fieldName = fieldInfo.getName();
-        String s3Key = segmentName + "_" + fieldName + ".s3vec";
+        String s3Key = createObjectKey(fieldInfo);
         try (InputStream vectorInputStream = new VectorValuesInputStream((KNNFloatVectorValues) knnVectorValuesSupplier.get())) {
             StopWatch stopWatch = new StopWatch().start();
             // Lets upload data to s3.
@@ -205,7 +214,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             long time_in_millis = stopWatch.stop().totalTime().millis();
             log.info(
                 "Time taken to upload vector for segment : {}, field: {}, totalBytes: {}, dimension: {} is : {}ms",
-                segmentName,
+                segmentWriteState.segmentInfo.name,
                 fieldInfo.getName(),
                 totalBytesUploaded,
                 fieldInfo.getVectorDimension(),
@@ -217,12 +226,22 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         }
     }
 
-    private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo) {
+    private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo, int totalLiveDocs) {
+        String s3Key = createObjectKey(fieldInfo);
+        int dimension = fieldInfo.getVectorDimension();
+        return CreateIndexRequest.builder()
+            .bucketName(S3Client.BUCKET_NAME)
+            .objectLocation(s3Key)
+            .dimensions(dimension)
+            .numberOfVectors(totalLiveDocs)
+            .build();
+    }
+
+    private String createObjectKey(FieldInfo fieldInfo) {
         String segmentName = segmentWriteState.segmentInfo.name;
         String fieldName = fieldInfo.getName();
-        String s3Key = segmentName + "_" + fieldName + ".s3vec";
-        int dimension = fieldInfo.getVectorDimension();
-        return CreateIndexRequest.builder().bucketName(S3Client.BUCKET_NAME).objectLocation(s3Key).dimensions(dimension).build();
+        // shard information will also be needed to ensure that we can correct paths
+        return indexUUID + "_" + segmentName + "_" + fieldName + ".s3vec";
     }
 
     /**

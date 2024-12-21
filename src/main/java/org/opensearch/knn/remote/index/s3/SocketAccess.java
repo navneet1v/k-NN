@@ -7,10 +7,8 @@ package org.opensearch.knn.remote.index.s3;
 
 import org.opensearch.SpecialPermission;
 
-import java.io.IOException;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
-import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
 
 public final class SocketAccess {
@@ -22,12 +20,12 @@ public final class SocketAccess {
         return AccessController.doPrivileged(operation);
     }
 
-    public static <T> T doPrivilegedIOException(PrivilegedExceptionAction<T> operation) throws IOException {
+    public static <T> T doPrivilegedException(PrivilegedExceptionAction<T> operation) {
         SpecialPermission.check();
         try {
             return AccessController.doPrivileged(operation);
-        } catch (PrivilegedActionException e) {
-            throw (IOException) e.getCause();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 

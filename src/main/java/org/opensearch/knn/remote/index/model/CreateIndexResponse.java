@@ -15,7 +15,7 @@ import java.io.IOException;
 @Value
 @Builder
 public class CreateIndexResponse {
-    private static final ParseField INDEX_CREATION_REQUEST_ID = new ParseField("indexCreationRequestId");
+    private static final ParseField INDEX_CREATION_REQUEST_ID = new ParseField("job_id");
     private static final ParseField STATUS = new ParseField("status");
     String indexCreationRequestId;
     String status;

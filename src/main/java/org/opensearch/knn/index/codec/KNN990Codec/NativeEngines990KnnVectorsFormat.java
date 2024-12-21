@@ -32,6 +32,7 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
     private static FlatVectorsFormat flatVectorsFormat;
     private static final String FORMAT_NAME = "NativeEngines990KnnVectorsFormat";
     private static int approximateThreshold;
+    private String indexUUID;
 
     public NativeEngines990KnnVectorsFormat() {
         this(new Lucene99FlatVectorsFormat(new DefaultFlatVectorScorer()));
@@ -51,6 +52,13 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
         NativeEngines990KnnVectorsFormat.approximateThreshold = approximateThreshold;
     }
 
+    public NativeEngines990KnnVectorsFormat(final FlatVectorsFormat flatVectorsFormat, int approximateThreshold, final String indexUUID) {
+        super(FORMAT_NAME);
+        NativeEngines990KnnVectorsFormat.flatVectorsFormat = flatVectorsFormat;
+        NativeEngines990KnnVectorsFormat.approximateThreshold = approximateThreshold;
+        this.indexUUID = indexUUID;
+    }
+
     /**
      * Returns a {@link KnnVectorsWriter} to write the vectors to the index.
      *
@@ -58,7 +66,7 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
      */
     @Override
     public KnnVectorsWriter fieldsWriter(final SegmentWriteState state) throws IOException {
-        return new NativeEngines990KnnVectorsWriter(state, flatVectorsFormat.fieldsWriter(state), approximateThreshold);
+        return new NativeEngines990KnnVectorsWriter(state, flatVectorsFormat.fieldsWriter(state), approximateThreshold, indexUUID);
     }
 
     /**

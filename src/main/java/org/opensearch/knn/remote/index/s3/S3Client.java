@@ -15,6 +15,7 @@ import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.profiles.ProfileFileSystemSetting;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
@@ -65,8 +66,8 @@ public class S3Client {
     }
 
     @SuppressForbidden(reason = "Need to provide this override to v2 SDK so that path does not default to home path")
-    private S3Client() throws IOException {
-        SocketAccess.doPrivilegedIOException(() -> {
+    private S3Client() {
+        SocketAccess.doPrivilegedException(() -> {
             if (ProfileFileSystemSetting.AWS_SHARED_CREDENTIALS_FILE.getStringValue().isEmpty()) {
                 System.setProperty(
                     ProfileFileSystemSetting.AWS_SHARED_CREDENTIALS_FILE.property(),
@@ -92,6 +93,7 @@ public class S3Client {
 
             software.amazon.awssdk.services.s3.S3AsyncClientBuilder builder = software.amazon.awssdk.services.s3.S3AsyncClient.builder()
                 .region(REGION)
+                .httpClientBuilder(NettyNioAsyncHttpClient.builder())
                 .credentialsProvider(StaticCredentialsProvider.create(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.builder().defaultProfileFile(null).defaultProfileName(null).build());
 
@@ -122,7 +124,7 @@ public class S3Client {
                 .key(key)
                 .build();
 
-            CreateMultipartUploadResponse multipartUpload = SocketAccess.doPrivilegedIOException(
+            CreateMultipartUploadResponse multipartUpload = SocketAccess.doPrivilegedException(
                 () -> s3AsyncClient.createMultipartUpload(createMultipartUploadRequest).get()
             );
 
@@ -150,7 +152,7 @@ public class S3Client {
                         .partNumber(partNumber)
                         .build();
 
-                    CompletableFuture<UploadPartResponse> uploadPartResponse = SocketAccess.doPrivilegedIOException(
+                    CompletableFuture<UploadPartResponse> uploadPartResponse = SocketAccess.doPrivilegedException(
                         () -> s3AsyncClient.uploadPart(uploadPartRequest, AsyncRequestBody.fromBytes(partData))
                     );
                     completableFutureList.add(uploadPartResponse);
@@ -205,7 +207,7 @@ public class S3Client {
                 .multipartUpload(completedMultipartUpload)
                 .build();
 
-            CompleteMultipartUploadResponse response = SocketAccess.doPrivilegedIOException(
+            CompleteMultipartUploadResponse response = SocketAccess.doPrivilegedException(
                 () -> s3AsyncClient.completeMultipartUpload(completeRequest).get()
             );
             log.debug("********** CompleteMultipartUploadResponse : {} **************", response);

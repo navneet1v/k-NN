@@ -575,10 +575,7 @@ public class KNNSettings {
             KNN_FAISS_AVX512_DISABLED_SETTING,
             QUANTIZATION_STATE_CACHE_SIZE_LIMIT_SETTING,
             QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING,
-            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING,
-            KNN_S3_ACCESS_KEY_SETTING,
-            KNN_S3_SECRET_KEY_SETTING,
-            KNN_S3_TOKEN_KEY_SETTING
+            KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING
         );
         final List<Stream<Setting<?>>> streamList = Arrays.asList(
             settings.stream(),
@@ -659,7 +656,7 @@ public class KNNSettings {
     }
 
     public static String getRemoteServiceEndpoint() {
-        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_PORT);
+        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_ENDPOINT);
     }
 
     public static Integer getRemoteServicePort() {

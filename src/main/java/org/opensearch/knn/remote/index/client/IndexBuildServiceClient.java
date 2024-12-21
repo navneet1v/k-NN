@@ -7,10 +7,11 @@ package org.opensearch.knn.remote.index.client;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
-import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.util.EntityUtils;
@@ -25,8 +26,11 @@ import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.remote.index.model.CreateIndexRequest;
 import org.opensearch.knn.remote.index.model.CreateIndexResponse;
 import org.opensearch.knn.remote.index.s3.S3Client;
+import org.opensearch.knn.remote.index.s3.SocketAccess;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 
 /**
  * Main class to class the IndexBuildServiceAPIs
@@ -62,8 +66,13 @@ public class IndexBuildServiceClient {
      * @param createIndexRequest {@link CreateIndexRequest}
      * @throws IOException Exception called if createIndex request is not successful
      */
-    public CreateIndexResponse createIndex(final CreateIndexRequest createIndexRequest) throws IOException {
-        HttpPost request = new HttpPost();
+    public CreateIndexResponse createIndex(final CreateIndexRequest createIndexRequest) throws IOException, URISyntaxException {
+        String host = KNNSettings.getRemoteServiceEndpoint();
+        int port = KNNSettings.getRemoteServicePort();
+
+        URI uri = new URIBuilder().setScheme("http").setHost(host).setPort(port).setPath("/create_index").build();
+
+        HttpPost request = new HttpPost(uri);
         request.setHeader(CONTENT_TYPE, APPLICATION_JSON);
         request.setHeader(ACCEPT, APPLICATION_JSON);
         XContentBuilder builder = XContentFactory.jsonBuilder();
@@ -81,8 +90,8 @@ public class IndexBuildServiceClient {
 
     }
 
-    private HttpResponse makeHTTPRequest(final HttpRequest request) throws IOException {
-        HttpResponse response = httpClient.execute(httpHost, request);
+    private HttpResponse makeHTTPRequest(final HttpUriRequest request) throws IOException {
+        HttpResponse response = SocketAccess.doPrivilegedException(() -> httpClient.execute(request));
         HttpEntity entity = response.getEntity();
         int statusCode = response.getStatusLine().getStatusCode();
 
