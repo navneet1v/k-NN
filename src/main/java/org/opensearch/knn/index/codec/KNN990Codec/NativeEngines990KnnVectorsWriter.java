@@ -25,22 +25,17 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.common.StopWatch;
+import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
+import org.opensearch.knn.index.codec.nativeindex.RemoteIndexBuild;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
-import org.opensearch.knn.index.vectorvalues.KNNFloatVectorValues;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
-import org.opensearch.knn.index.vectorvalues.VectorValuesInputStream;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
-import org.opensearch.knn.remote.index.client.IndexBuildServiceClient;
-import org.opensearch.knn.remote.index.model.CreateIndexRequest;
-import org.opensearch.knn.remote.index.model.CreateIndexResponse;
-import org.opensearch.knn.remote.index.s3.S3Client;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -61,9 +56,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private final List<NativeEngineFieldVectorsWriter<?>> fields = new ArrayList<>();
     private boolean finished;
     private final Integer approximateThreshold;
-    private final S3Client s3Client;
-    private final IndexBuildServiceClient indexBuildServiceClient;
-    private final String indexUUID;
+    private final RemoteIndexBuild remoteIndexBuild;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
@@ -82,13 +75,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         this.segmentWriteState = segmentWriteState;
         this.flatVectorsWriter = flatVectorsWriter;
         this.approximateThreshold = approximateThreshold;
-        this.indexUUID = indexUUID;
-        try {
-            s3Client = S3Client.getInstance();
-            indexBuildServiceClient = IndexBuildServiceClient.getInstance();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        this.remoteIndexBuild = new RemoteIndexBuild(indexUUID, segmentWriteState);
     }
 
     /**
@@ -141,21 +128,11 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 );
                 continue;
             }
+            // this.remoteIndexBuild.buildIndexRemotely(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
 
-            uploadToS3(fieldInfo, knnVectorValuesSupplier);
-            log.info("Creating the IndexRequest...");
-            CreateIndexRequest createIndexRequest = buildCreateIndexRequest(fieldInfo, totalLiveDocs);
-            log.info("Submitting request to remote indexbuildService");
-            try {
-                CreateIndexResponse response = indexBuildServiceClient.createIndex(createIndexRequest);
-                log.info("Request completed with response : {}", response);
-            } catch (Exception e) {
-                log.error("Failed to call indexBuildServiceClient.createIndex for input: {}", createIndexRequest, e);
-            }
             final NativeIndexWriter writer = NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState);
-            final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
-
             StopWatch stopWatch = new StopWatch().start();
+            final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
             writer.flushIndex(knnVectorValues, totalLiveDocs);
             long time_in_millis = stopWatch.stop().totalTime().millis();
             KNNGraphValue.REFRESH_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
@@ -192,56 +169,24 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             );
             return;
         }
-        final NativeIndexWriter writer = NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState);
-        final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
-
         StopWatch stopWatch = new StopWatch().start();
-
-        writer.mergeIndex(knnVectorValues, totalLiveDocs);
+        if (KNNSettings.isRemoteIndexBuildEnabled() && totalLiveDocs >= KNNSettings.getRemoteIndexBuildMaxDocs()) {
+            log.info(
+                "Remote index build is enabled and total live docs {} are greater than equal to the threshold {}",
+                totalLiveDocs,
+                KNNSettings.getRemoteIndexBuildMaxDocs()
+            );
+            this.remoteIndexBuild.buildIndexRemotely(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
+        } else {
+            log.info("Building index locally, live docs {}, setting value: {}", totalLiveDocs, KNNSettings.getRemoteIndexBuildMaxDocs());
+            final NativeIndexWriter writer = NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState);
+            final KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
+            writer.mergeIndex(knnVectorValues, totalLiveDocs);
+        }
 
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
         log.debug("Merge took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
-    }
-
-    private void uploadToS3(final FieldInfo fieldInfo, final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier) {
-        // s3 uploader
-        String s3Key = createObjectKey(fieldInfo);
-        try (InputStream vectorInputStream = new VectorValuesInputStream((KNNFloatVectorValues) knnVectorValuesSupplier.get())) {
-            StopWatch stopWatch = new StopWatch().start();
-            // Lets upload data to s3.
-            long totalBytesUploaded = s3Client.uploadWithProgress(vectorInputStream, s3Key);
-            long time_in_millis = stopWatch.stop().totalTime().millis();
-            log.info(
-                "Time taken to upload vector for segment : {}, field: {}, totalBytes: {}, dimension: {} is : {}ms",
-                segmentWriteState.segmentInfo.name,
-                fieldInfo.getName(),
-                totalBytesUploaded,
-                fieldInfo.getVectorDimension(),
-                time_in_millis
-            );
-        } catch (Exception e) {
-            // logging here as this is in internal error
-            log.error("Error while uploading data to s3.", e);
-        }
-    }
-
-    private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo, int totalLiveDocs) {
-        String s3Key = createObjectKey(fieldInfo);
-        int dimension = fieldInfo.getVectorDimension();
-        return CreateIndexRequest.builder()
-            .bucketName(S3Client.BUCKET_NAME)
-            .objectLocation(s3Key)
-            .dimensions(dimension)
-            .numberOfVectors(totalLiveDocs)
-            .build();
-    }
-
-    private String createObjectKey(FieldInfo fieldInfo) {
-        String segmentName = segmentWriteState.segmentInfo.name;
-        String fieldName = fieldInfo.getName();
-        // shard information will also be needed to ensure that we can correct paths
-        return indexUUID + "_" + segmentName + "_" + fieldName + ".s3vec";
     }
 
     /**

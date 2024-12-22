@@ -95,6 +95,9 @@ public class KNNSettings {
     public static final String KNN_S3_TOKEN_KEY = "knn.s3.token.key";
     public static final String REMOTE_SERVICE_ENDPOINT = "knn.remote.index.build.service.endpoint";
     public static final String REMOTE_SERVICE_PORT = "knn.remote.index.build.service.port";
+    public static final String REMOTE_INDEX_BUILD_ENABLED = "knn.remote.index.build.enabled";
+    public static final String REMOTE_INDEX_BUILD_STATUS_WAIT_TIME = "knn.remote.index.build.status.wait_time";
+    public static final String REMOTE_INDEX_BUILD_MAX_DOCS = "knn.remote.index.build.max_docs";
 
     /**
      * Default setting values
@@ -192,6 +195,28 @@ public class KNNSettings {
     public static final Setting<Integer> REMOTE_SERVICE_PORT_SETTING = Setting.intSetting(
         REMOTE_SERVICE_PORT,
         8200,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<Boolean> REMOTE_INDEX_BUILD_ENABLED_SETTING = Setting.boolSetting(
+        REMOTE_INDEX_BUILD_ENABLED,
+        false,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<TimeValue> REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING = Setting.timeSetting(
+        REMOTE_INDEX_BUILD_STATUS_WAIT_TIME,
+        TimeValue.timeValueSeconds(1),
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<Integer> REMOTE_INDEX_BUILD_MAX_DOCS_SETTING = Setting.intSetting(
+        REMOTE_INDEX_BUILD_MAX_DOCS,
+        100000,
+        0,
         Setting.Property.Dynamic,
         Setting.Property.NodeScope
     );
@@ -398,6 +423,9 @@ public class KNNSettings {
             put(KNN_S3_TOKEN_KEY, KNN_S3_TOKEN_KEY_SETTING);
             put(REMOTE_SERVICE_ENDPOINT, REMOTE_SERVICE_ENDPOINT_SETTING);
             put(REMOTE_SERVICE_PORT, REMOTE_SERVICE_PORT_SETTING);
+            put(REMOTE_INDEX_BUILD_ENABLED, REMOTE_INDEX_BUILD_ENABLED_SETTING);
+            put(REMOTE_INDEX_BUILD_STATUS_WAIT_TIME, REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING);
+            put(REMOTE_INDEX_BUILD_MAX_DOCS, REMOTE_INDEX_BUILD_MAX_DOCS_SETTING);
         }
     };
 
@@ -661,6 +689,18 @@ public class KNNSettings {
 
     public static Integer getRemoteServicePort() {
         return KNNSettings.state().getSettingValue(REMOTE_SERVICE_PORT);
+    }
+
+    public static boolean isRemoteIndexBuildEnabled() {
+        return KNNSettings.state().getSettingValue(REMOTE_INDEX_BUILD_ENABLED);
+    }
+
+    public static long getIndexBuildStatusWaitTime() {
+        return ((TimeValue) KNNSettings.state().getSettingValue(REMOTE_INDEX_BUILD_STATUS_WAIT_TIME)).getMillis();
+    }
+
+    public static Integer getRemoteIndexBuildMaxDocs() {
+        return KNNSettings.state().getSettingValue(REMOTE_INDEX_BUILD_MAX_DOCS);
     }
 
     public void initialize(Client client, ClusterService clusterService) {

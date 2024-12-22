@@ -5,10 +5,12 @@
 
 package org.opensearch.knn.remote.index.client;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
@@ -25,6 +27,8 @@ import org.opensearch.core.xcontent.XContentParser;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.remote.index.model.CreateIndexRequest;
 import org.opensearch.knn.remote.index.model.CreateIndexResponse;
+import org.opensearch.knn.remote.index.model.GetJobRequest;
+import org.opensearch.knn.remote.index.model.GetJobResponse;
 import org.opensearch.knn.remote.index.s3.S3Client;
 import org.opensearch.knn.remote.index.s3.SocketAccess;
 
@@ -35,6 +39,7 @@ import java.net.URISyntaxException;
 /**
  * Main class to class the IndexBuildServiceAPIs
  */
+@Log4j2
 public class IndexBuildServiceClient {
     private static volatile IndexBuildServiceClient INSTANCE;
     private static final String CONTENT_TYPE = "Content-Type";
@@ -64,6 +69,7 @@ public class IndexBuildServiceClient {
     /**
      * API to be called to create the Vector Index using remote endpoint
      * @param createIndexRequest {@link CreateIndexRequest}
+     * @return {@link CreateIndexResponse}
      * @throws IOException Exception called if createIndex request is not successful
      */
     public CreateIndexResponse createIndex(final CreateIndexRequest createIndexRequest) throws IOException, URISyntaxException {
@@ -85,9 +91,24 @@ public class IndexBuildServiceClient {
         return parseCreateIndexResponse(responseString);
     }
 
-    // TODO: To be implemented
-    public void checkIndexBuildStatus() {
+    /**
+     * API to be called to get the job status using remote endpoint
+     * @param getJobRequest {@link GetJobRequest}
+     * @throws IOException Exception called if getJob request is not successful
+     */
+    public GetJobResponse getJob(final GetJobRequest getJobRequest) throws URISyntaxException, IOException {
+        String host = KNNSettings.getRemoteServiceEndpoint();
+        int port = KNNSettings.getRemoteServicePort();
 
+        URI uri = new URIBuilder().setScheme("http").setHost(host).setPort(port).setPath("/job/" + getJobRequest.getJobId()).build();
+        HttpGet request = new HttpGet(uri);
+        request.setHeader(CONTENT_TYPE, APPLICATION_JSON);
+        request.setHeader(ACCEPT, APPLICATION_JSON);
+        HttpResponse response = makeHTTPRequest(request);
+        HttpEntity httpEntity = response.getEntity();
+        String responseString = EntityUtils.toString(httpEntity);
+        log.debug("Response from getJob: {}", responseString);
+        return parseGetJobResponse(responseString);
     }
 
     private HttpResponse makeHTTPRequest(final HttpUriRequest request) throws IOException {
@@ -112,6 +133,16 @@ public class IndexBuildServiceClient {
             responseString
         );
         return CreateIndexResponse.fromXContent(parser);
+    }
+
+    static GetJobResponse parseGetJobResponse(final String responseString) throws IOException {
+        final XContent xContent = MediaTypeRegistry.getDefaultMediaType().xContent();
+        final XContentParser parser = xContent.createParser(
+            NamedXContentRegistry.EMPTY,
+            DeprecationHandler.THROW_UNSUPPORTED_OPERATION,
+            responseString
+        );
+        return GetJobResponse.fromXContent(parser);
     }
 
 }
