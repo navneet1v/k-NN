@@ -122,7 +122,7 @@ fi
 # Build k-NN lib and plugin through gradle tasks
 cd $work_dir
 ./gradlew build --no-daemon --refresh-dependencies -x integTest -x test -Dopensearch.version=$VERSION -Dbuild.snapshot=$SNAPSHOT -Dbuild.version_qualifier=$QUALIFIER -Dbuild.lib.commit_patches=false
-./gradlew :buildJniLib -Davx512.enabled=false -Davx2.enabled=false -Dbuild.lib.commit_patches=false -Dnproc.count=${NPROC_COUNT:-1}
+./gradlew :buildJniLib -Davx512.enabled=false -Davx2.enabled=false -Dbuild.lib.commit_patches=false -Dnproc.count=4
 
 if [ "$PLATFORM" != "windows" ] && [ "$ARCHITECTURE" = "x64" ]; then
   echo "Building k-NN library after enabling AVX2"
