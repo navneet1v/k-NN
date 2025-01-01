@@ -136,7 +136,7 @@ public class RemoteIndexBuild {
     private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo, int totalLiveDocs, String objectKey) {
         int dimension = fieldInfo.getVectorDimension();
         return CreateIndexRequest.builder()
-            .bucketName(S3Client.BUCKET_NAME)
+            .bucketName(KNNSettings.getKnnS3BucketName())
             .objectLocation(objectKey)
             .dimensions(dimension)
             .numberOfVectors(totalLiveDocs)

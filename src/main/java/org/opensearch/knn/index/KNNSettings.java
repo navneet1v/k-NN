@@ -93,6 +93,7 @@ public class KNNSettings {
     public static final String KNN_S3_ACCESS_KEY = "knn.s3.access.key";
     public static final String KNN_S3_SECRET_KEY = "knn.s3.secret.key";
     public static final String KNN_S3_TOKEN_KEY = "knn.s3.token.key";
+    public static final String KNN_S3_BUCKET_NAME = "knn.s3.bucket";
     public static final String REMOTE_SERVICE_ENDPOINT = "knn.remote.index.build.service.endpoint";
     public static final String REMOTE_SERVICE_PORT = "knn.remote.index.build.service.port";
     public static final String REMOTE_INDEX_BUILD_ENABLED = "knn.remote.index.build.enabled";
@@ -170,6 +171,13 @@ public class KNNSettings {
 
     public static final Setting<String> KNN_S3_ACCESS_KEY_SETTING = Setting.simpleString(
         KNN_S3_ACCESS_KEY,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> KNN_S3_BUCKET_NAME_SETTING = Setting.simpleString(
+        KNN_S3_BUCKET_NAME,
+        "remote-knn-index-build-navneet-2",
         Setting.Property.Dynamic,
         Setting.Property.NodeScope
     );
@@ -426,6 +434,7 @@ public class KNNSettings {
             put(REMOTE_INDEX_BUILD_ENABLED, REMOTE_INDEX_BUILD_ENABLED_SETTING);
             put(REMOTE_INDEX_BUILD_STATUS_WAIT_TIME, REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING);
             put(REMOTE_INDEX_BUILD_MAX_DOCS, REMOTE_INDEX_BUILD_MAX_DOCS_SETTING);
+            put(KNN_S3_BUCKET_NAME, KNN_S3_BUCKET_NAME_SETTING);
         }
     };
 
@@ -681,6 +690,10 @@ public class KNNSettings {
 
     public static String getKnnS3Token() {
         return KNNSettings.state().getSettingValue(KNN_S3_TOKEN_KEY);
+    }
+
+    public static String getKnnS3BucketName() {
+        return KNNSettings.state().getSettingValue(KNN_S3_BUCKET_NAME);
     }
 
     public static String getRemoteServiceEndpoint() {

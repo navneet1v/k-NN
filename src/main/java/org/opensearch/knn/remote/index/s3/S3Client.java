@@ -32,7 +32,6 @@ import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
@@ -57,7 +56,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 public class S3Client {
     private static volatile S3Client INSTANCE;
     private static final int CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunk size
-    public static final String BUCKET_NAME = "remote-knn-index-build-navneet";
+    public static String BUCKET_NAME;
 
     private static final Region REGION = Region.US_WEST_2;
     private static software.amazon.awssdk.services.s3.S3AsyncClient s3AsyncClient;
@@ -90,6 +89,7 @@ public class S3Client {
             final String accessKey = KNNSettings.getKnnS3AccessKey();
             final String secretKey = KNNSettings.getKnnS3SecretKey();
             final String sessionToken = KNNSettings.getKnnS3Token();
+            BUCKET_NAME = KNNSettings.getKnnS3BucketName();
             final AwsCredentials credentials;
             if (StringUtils.isEmpty(sessionToken)) {
                 // create basic credentials
@@ -296,13 +296,12 @@ public class S3Client {
         try {
             s3AsyncClient.headBucket(HeadBucketRequest.builder().bucket(bucketName).build()).get();
             return true;
-        } catch (NoSuchBucketException e) {
-            return false;
-        } catch (S3Exception e) {
-            if (e.statusCode() == 404) {
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof NoSuchBucketException) {
                 return false;
+            } else {
+                throw e;
             }
-            throw e;
         }
     }
 
