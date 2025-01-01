@@ -39,7 +39,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -103,7 +105,17 @@ public class S3Client {
 
             software.amazon.awssdk.services.s3.S3AsyncClientBuilder builder = software.amazon.awssdk.services.s3.S3AsyncClient.builder()
                 .region(REGION)
-                .httpClientBuilder(NettyNioAsyncHttpClient.builder())
+                .httpClientBuilder(
+                    NettyNioAsyncHttpClient.builder()
+                        .writeTimeout(Duration.ofMinutes(10))
+                        .maxConcurrency(100)
+                        .readTimeout(Duration.ofMinutes(10))
+                        .connectionMaxIdleTime(Duration.ofMinutes(5))        // Max idle connection time
+                        .connectionTimeToLive(Duration.ofMinutes(10))        // Max connection lifetime
+                        .maxPendingConnectionAcquires(10000)                 // Max queued requests
+                        .connectionTimeout(Duration.ofSeconds(300)) // Connection establishment timeout
+                        .maxConcurrency(100)
+                )
                 .credentialsProvider(StaticCredentialsProvider.create(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.builder().defaultProfileFile(null).defaultProfileName(null).build());
 
@@ -236,9 +248,8 @@ public class S3Client {
 
                     // completedParts.add(part);
                     partNumber++;
+                    progressCallback.onUploadStarted(baos.size());
                     baos.reset();
-                    totalBytesStarted += bytesRead;
-                    progressCallback.onUploadStarted(totalBytesStarted);
                     totalBytesUploaded += bytesRead;
                 }
             }
@@ -258,18 +269,23 @@ public class S3Client {
                     () -> s3AsyncClient.uploadPart(uploadPartRequest, AsyncRequestBody.fromBytes(partData))
                 );
                 completableFutureList.add(uploadPartResponse);
-                totalBytesUploaded += partData.length;
+                log.info("Last chunk upload started to s3.");
+                progressCallback.onUploadStarted(baos.size());
             }
 
+            int responsePartNumbers = 1;
             for (CompletableFuture<UploadPartResponse> future : completableFutureList) {
                 UploadPartResponse response = future.get();
-                CompletedPart part = CompletedPart.builder().partNumber(partNumber).eTag((response).eTag()).build();
+                CompletedPart part = CompletedPart.builder().partNumber(responsePartNumbers).eTag((response).eTag()).build();
                 completedParts.add(part);
                 // TODO: Fix this, add the way to find how many bytes are uploaded
-                // totalBytesUploaded += partData.length;
-                // progressCallback.onProgress(totalBytesUploaded);
+                totalBytesUploaded += CHUNK_SIZE;
+                progressCallback.onProgress(totalBytesUploaded);
+                responsePartNumbers++;
             }
-
+            completedParts.sort(Comparator.comparingInt(CompletedPart::partNumber));
+            // List<Integer> myList = completedParts.stream().map(CompletedPart::partNumber).collect(Collectors.toList());
+            // log.info("********** CompletedParts : {} **************", myList);
             // Complete the multipart upload
             CompletedMultipartUpload completedMultipartUpload = CompletedMultipartUpload.builder().parts(completedParts).build();
 
