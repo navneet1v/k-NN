@@ -33,7 +33,7 @@ import static org.opensearch.knn.index.codec.util.KNNCodecUtil.buildEngineFileNa
 public class RemoteIndexBuild {
     private static final String COMPLETED_STATUS = "completed";
     private static final String FAILED_STATUS = "failed";
-    private final S3Client s3Client;
+    private S3Client s3Client;
     private final IndexBuildServiceClient indexBuildServiceClient;
     private final String indexUUID;
     private final SegmentWriteState segmentWriteState;
@@ -41,7 +41,6 @@ public class RemoteIndexBuild {
     public RemoteIndexBuild(final String indexUUID, final SegmentWriteState segmentWriteState) {
         this.indexUUID = indexUUID;
         try {
-            this.s3Client = S3Client.getInstance();
             this.indexBuildServiceClient = IndexBuildServiceClient.getInstance();
             this.segmentWriteState = segmentWriteState;
         } catch (Exception e) {
@@ -50,6 +49,8 @@ public class RemoteIndexBuild {
     }
 
     public void buildIndexRemotely(FieldInfo fieldInfo, Supplier<KNNVectorValues<?>> knnVectorValuesSupplier, int totalLiveDocs) {
+        // TODO: creating a new instance of S3 here, as because of some reason the requests were getting timed out. Need to fix that.
+        s3Client = new S3Client();
         try {
             // First upload all the vectors to S3
             String objectKey = uploadToS3(fieldInfo, knnVectorValuesSupplier);
