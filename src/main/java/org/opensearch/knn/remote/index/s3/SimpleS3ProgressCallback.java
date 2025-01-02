@@ -16,19 +16,20 @@ public class SimpleS3ProgressCallback implements ProgressCallback {
 
     String key;
     String bucket;
+    String operationName;
 
     @Override
-    public void onProgress(long bytesUploaded) {
-        log.info("Uploaded {} bytes for key {}, bucket: {}", bytesUploaded, key, bucket);
+    public void onProgress(long bytes) {
+        log.info("{}ed {} bytes for key {}, bucket: {}", operationName, bytes, key, bucket);
     }
 
     @Override
-    public void onUploadStarted(long bytesUploaded) {
-        log.info("Upload started for {} bytes for key {}, bucket: {}", bytesUploaded, key, bucket);
+    public void onStarted(long bytes) {
+        log.info("{} started for {} bytes for key {}, bucket: {}", operationName, bytes, key, bucket);
     }
 
     @Override
-    public void onComplete(long totalBytesUploaded) {
-        log.info("Uploaded {} bytes in total for key {}, bucket: {}", totalBytesUploaded, key, bucket);
+    public void onComplete(long bytes) {
+        log.info("{}ed {} bytes in total for key {}, bucket: {}", operationName, bytes, key, bucket);
     }
 }

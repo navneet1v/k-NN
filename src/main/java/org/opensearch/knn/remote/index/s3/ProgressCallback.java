@@ -6,9 +6,9 @@
 package org.opensearch.knn.remote.index.s3;
 
 public interface ProgressCallback {
-    void onProgress(long bytesUploaded);
+    void onProgress(long bytes);
 
-    void onComplete(long totalBytesUploaded);
+    void onComplete(long bytes);
 
-    void onUploadStarted(long bytesUploaded);
+    void onStarted(long bytes);
 }
