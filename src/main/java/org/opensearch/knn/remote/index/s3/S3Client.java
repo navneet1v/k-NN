@@ -112,13 +112,13 @@ public class S3Client {
                 .region(REGION)
                 .httpClientBuilder(
                     NettyNioAsyncHttpClient.builder()
-                        .writeTimeout(Duration.ofSeconds(300))
+                        .writeTimeout(Duration.ofMinutes(5))
                         .maxConcurrency(100)
-                        .readTimeout(Duration.ofSeconds(300))
+                        .readTimeout(Duration.ofMinutes(5))
                         .connectionMaxIdleTime(Duration.ofMinutes(5))        // Max idle connection time
-                        .connectionTimeToLive(Duration.ofMinutes(10))        // Max connection lifetime
+                        .connectionTimeToLive(Duration.ofMinutes(5))        // Max connection lifetime
                         .maxPendingConnectionAcquires(10000)                 // Max queued requests
-                        .connectionTimeout(Duration.ofSeconds(300)) // Connection establishment timeout
+                        .connectionTimeout(Duration.ofMinutes(5)) // Connection establishment timeout
                         .tcpKeepAlive(true)
                 )
                 .credentialsProvider(StaticCredentialsProvider.create(credentials))
