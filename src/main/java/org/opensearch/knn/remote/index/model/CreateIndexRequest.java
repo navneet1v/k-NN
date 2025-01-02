@@ -19,6 +19,7 @@ public class CreateIndexRequest implements ToXContentObject {
     String objectLocation;
     long numberOfVectors;
     int dimensions;
+    String spaceType;
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
@@ -27,6 +28,7 @@ public class CreateIndexRequest implements ToXContentObject {
             .field("object_location", objectLocation)
             .field("number_of_vectors", numberOfVectors)
             .field("dimensions", dimensions)
+            .field("space_type", spaceType)
             .endObject();
     }
 }

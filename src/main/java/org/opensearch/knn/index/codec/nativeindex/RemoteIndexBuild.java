@@ -11,7 +11,9 @@ import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.StopWatch;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.vectorvalues.KNNFloatVectorValues;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
@@ -33,7 +35,7 @@ import static org.opensearch.knn.index.codec.util.KNNCodecUtil.buildEngineFileNa
 public class RemoteIndexBuild {
     private static final String COMPLETED_STATUS = "completed";
     private static final String FAILED_STATUS = "failed";
-    private final S3Client s3Client;
+    private S3Client s3Client;
     private final IndexBuildServiceClient indexBuildServiceClient;
     private final String indexUUID;
     private final SegmentWriteState segmentWriteState;
@@ -41,7 +43,6 @@ public class RemoteIndexBuild {
     public RemoteIndexBuild(final String indexUUID, final SegmentWriteState segmentWriteState) {
         this.indexUUID = indexUUID;
         try {
-            this.s3Client = S3Client.getInstance();
             this.indexBuildServiceClient = IndexBuildServiceClient.getInstance();
             this.segmentWriteState = segmentWriteState;
         } catch (Exception e) {
@@ -50,6 +51,8 @@ public class RemoteIndexBuild {
     }
 
     public void buildIndexRemotely(FieldInfo fieldInfo, Supplier<KNNVectorValues<?>> knnVectorValuesSupplier, int totalLiveDocs) {
+        // TODO: creating a new instance of S3 here, as because of some reason the requests were getting timed out. Need to fix that.
+        s3Client = new S3Client();
         try {
             // First upload all the vectors to S3
             String objectKey = uploadToS3(fieldInfo, knnVectorValuesSupplier);
@@ -69,21 +72,23 @@ public class RemoteIndexBuild {
     }
 
     private GetJobResponse isIndexBuildCompletedWithoutErrors(final CreateIndexResponse response) {
-        try {
-            GetJobRequest getJobRequest = GetJobRequest.builder().jobId(response.getIndexCreationRequestId()).build();
-            log.info("Waiting for index build to be completed: {}", response.getIndexCreationRequestId());
-            GetJobResponse getJobResponse = indexBuildServiceClient.getJob(getJobRequest);
-            if (COMPLETED_STATUS.equals(getJobResponse.getStatus()) || FAILED_STATUS.equals(getJobResponse.getStatus())) {
-                log.info("Remote Index build completed with status: {}", getJobResponse.getStatus());
-                return getJobResponse;
-            } else {
-                log.info("Index build is still in progress. Current status: {}", getJobResponse.getStatus());
-                // I am using the same merge thread to ensure that we are not completing merge early.
-                Thread.sleep(KNNSettings.getIndexBuildStatusWaitTime());
-                return isIndexBuildCompletedWithoutErrors(response);
+        while (true) {
+            try {
+                GetJobRequest getJobRequest = GetJobRequest.builder().jobId(response.getIndexCreationRequestId()).build();
+                log.info("Waiting for index build to be completed: {}", response.getIndexCreationRequestId());
+                GetJobResponse getJobResponse = indexBuildServiceClient.getJob(getJobRequest);
+                if (COMPLETED_STATUS.equals(getJobResponse.getStatus()) || FAILED_STATUS.equals(getJobResponse.getStatus())) {
+                    log.info("Remote Index build completed with status: {}", getJobResponse.getStatus());
+                    return getJobResponse;
+                } else {
+                    log.info("Index build is still in progress. Current status: {}", getJobResponse.getStatus());
+                    // I am using the same merge thread to ensure that we are not completing merge early.
+                    Thread.sleep(KNNSettings.getIndexBuildStatusWaitTime());
+                }
+            } catch (Exception e) {
+                log.error("Failed to wait for remote index build to be completed: {}", response.getIndexCreationRequestId(), e);
+                break;
             }
-        } catch (Exception e) {
-            log.error("Failed to wait for remote index build to be completed: {}", response.getIndexCreationRequestId(), e);
         }
         return GetJobResponse.builder().status("errored").build();
     }
@@ -135,10 +140,12 @@ public class RemoteIndexBuild {
 
     private CreateIndexRequest buildCreateIndexRequest(final FieldInfo fieldInfo, int totalLiveDocs, String objectKey) {
         int dimension = fieldInfo.getVectorDimension();
+        String spaceType = fieldInfo.attributes().getOrDefault(KNNConstants.SPACE_TYPE, SpaceType.DEFAULT.getValue());
         return CreateIndexRequest.builder()
             .bucketName(KNNSettings.getKnnS3BucketName())
             .objectLocation(objectKey)
             .dimensions(dimension)
+            .spaceType(spaceType)
             .numberOfVectors(totalLiveDocs)
             .build();
     }

@@ -82,7 +82,7 @@ public class S3Client {
     }
 
     @SuppressForbidden(reason = "Need to provide this override to v2 SDK so that path does not default to home path")
-    private S3Client() {
+    public S3Client() {
         SocketAccess.doPrivilegedException(() -> {
             if (ProfileFileSystemSetting.AWS_SHARED_CREDENTIALS_FILE.getStringValue().isEmpty()) {
                 System.setProperty(

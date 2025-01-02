@@ -170,12 +170,14 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             return;
         }
         StopWatch stopWatch = new StopWatch().start();
+        String context = "local";
         if (KNNSettings.isRemoteIndexBuildEnabled() && totalLiveDocs >= KNNSettings.getRemoteIndexBuildMaxDocs()) {
             log.info(
                 "Remote index build is enabled and total live docs {} are greater than equal to the threshold {}",
                 totalLiveDocs,
                 KNNSettings.getRemoteIndexBuildMaxDocs()
             );
+            context = "remote";
             this.remoteIndexBuild.buildIndexRemotely(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
         } else {
             log.info("Building index locally, live docs {}, setting value: {}", totalLiveDocs, KNNSettings.getRemoteIndexBuildMaxDocs());
@@ -186,7 +188,13 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
-        log.debug("Merge took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
+        log.info(
+            "Merge {} took {} ms for vector field [{}] with live docs: {}",
+            context,
+            time_in_millis,
+            fieldInfo.getName(),
+            totalLiveDocs
+        );
     }
 
     /**

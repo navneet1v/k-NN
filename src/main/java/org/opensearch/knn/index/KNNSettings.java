@@ -216,7 +216,7 @@ public class KNNSettings {
 
     public static final Setting<TimeValue> REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING = Setting.timeSetting(
         REMOTE_INDEX_BUILD_STATUS_WAIT_TIME,
-        TimeValue.timeValueSeconds(1),
+        TimeValue.timeValueSeconds(5),
         Setting.Property.Dynamic,
         Setting.Property.NodeScope
     );
