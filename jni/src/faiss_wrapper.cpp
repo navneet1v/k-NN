@@ -169,6 +169,33 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
     indexService->insertToIndex(dim, numIds, threadCount, vectorsAddress, ids, index_ptr);
 }
 
+
+void knn_jni::faiss_wrapper::InsertSingleVectorToIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env, jintArray idsJ, jfloatArray vector, jint dimJ,
+                                         jlong index_ptr, jint threadCount, IndexService* indexService) {
+    if (idsJ == nullptr) {
+        throw std::runtime_error("IDs cannot be null");
+    }
+
+    if(dimJ <= 0) {
+        throw std::runtime_error("Vectors dimensions cannot be less than or equal to 0");
+    }
+
+    // Dimension
+    int dim = (int)dimJ;
+
+    // Number of vectors
+    int numIds = jniUtil->GetJavaIntArrayLength(env, idsJ);
+
+    // Vectors address
+    int64_t vectorsAddress = (int64_t)vectorsAddressJ;
+
+    // Ids
+    auto ids = jniUtil->ConvertJavaIntArrayToCppIntVector(env, idsJ);
+
+    // Create index
+    indexService->insertToIndex(dim, numIds, threadCount, vectorsAddress, ids, index_ptr);
+}
+
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                          jstring indexPathJ, jlong index_ptr, IndexService* indexService) {
 

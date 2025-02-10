@@ -33,7 +33,7 @@ import static org.opensearch.knn.jni.PlatformUtils.isAVX512SupportedBySystem;;
  *      src/main/java/org/opensearch/knn/index/query/KNNQueryResult.java
  *      src/main/java/org/opensearch/knn/common/KNNConstants.java
  */
-class FaissService {
+public class FaissService {
 
     static {
         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {

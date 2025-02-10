@@ -5,9 +5,7 @@
 
 package org.opensearch.knn.service;
 
-import lombok.AccessLevel;
 import lombok.Builder;
-import lombok.NoArgsConstructor;
 import lombok.Value;
 import lombok.extern.log4j.Log4j2;
 import org.opensearch.knn.index.SpaceType;
@@ -22,7 +20,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-@NoArgsConstructor(access = AccessLevel.PRIVATE)
 @Log4j2
 public class VectorEngineService {
     private final Map<OSLuceneDocId, Integer> luceneDocIdToVectorEngineDocId = new ConcurrentHashMap<>();
@@ -30,6 +27,7 @@ public class VectorEngineService {
     private final Map<Integer, List<OSLuceneDocId>> vectorEngineDocIdToLuceneDocId = new ConcurrentHashMap<>();
     private final Map<Integer, float[]> vectorEngineDocIdToVector = new ConcurrentHashMap<>();
     private final AtomicInteger currentVectorDocId = new AtomicInteger(0);
+    private final FaissIndex faissIndex;
 
     private static VectorEngineService INSTANCE = null;
 
@@ -40,12 +38,20 @@ public class VectorEngineService {
         return INSTANCE;
     }
 
+    private VectorEngineService() {
+        faissIndex = new FaissIndex();
+    }
+
+
     public void ingestData(final OSLuceneDocId luceneDocId, float[] vector, final SpaceType spaceType) {
         log.debug("SpaceType during ingestion is : {}", spaceType);
         luceneDocIdToVectorEngineDocId.put(luceneDocId, currentVectorDocId.intValue());
         int currentDocId = currentVectorDocId.intValue();
         vectorEngineDocIdToLuceneDocId.getOrDefault(currentDocId, Collections.synchronizedList(new LinkedList<>())).add(luceneDocId);
+        // we should remove this
         vectorEngineDocIdToVector.put(currentDocId, vector);
+        // Here we should have a Faiss Index, before we increment the currentVectorDocId.
+        faissIndex.indexData(currentDocId, vector);
         currentVectorDocId.incrementAndGet();
     }
 
