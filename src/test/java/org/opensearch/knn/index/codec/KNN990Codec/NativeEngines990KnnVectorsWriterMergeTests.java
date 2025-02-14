@@ -24,6 +24,7 @@ import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.codec.nativeindex.LocalNativeIndexWriter;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
@@ -44,6 +45,7 @@ import static com.carrotsearch.randomizedtesting.RandomizedTest.$;
 import static com.carrotsearch.randomizedtesting.RandomizedTest.$$;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
@@ -67,7 +69,7 @@ public class NativeEngines990KnnVectorsWriterMergeTests extends OpenSearchTestCa
     @Mock
     private QuantizationService quantizationService;
     @Mock
-    private NativeIndexWriter nativeIndexWriter;
+    private LocalNativeIndexWriter nativeIndexWriter;
     @Mock
     private FloatVectorValues floatVectorValues;
     @Mock
@@ -139,8 +141,9 @@ public class NativeEngines990KnnVectorsWriterMergeTests extends OpenSearchTestCa
                 .thenReturn(knnVectorValues);
 
             when(quantizationService.getQuantizationParams(fieldInfo)).thenReturn(null);
-            nativeIndexWriterMockedStatic.when(() -> NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, null))
-                .thenReturn(nativeIndexWriter);
+            nativeIndexWriterMockedStatic.when(
+                () -> NativeIndexWriter.getWriter(eq(fieldInfo), eq(segmentWriteState), eq(null), any(), any())
+            ).thenReturn(nativeIndexWriter);
             doAnswer(answer -> {
                 Thread.sleep(2); // Need this for KNNGraph value assertion, removing this will fail the assertion
                 return null;
@@ -206,8 +209,9 @@ public class NativeEngines990KnnVectorsWriterMergeTests extends OpenSearchTestCa
                 .thenReturn(knnVectorValues);
 
             when(quantizationService.getQuantizationParams(fieldInfo)).thenReturn(null);
-            nativeIndexWriterMockedStatic.when(() -> NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, null))
-                .thenReturn(nativeIndexWriter);
+            nativeIndexWriterMockedStatic.when(
+                () -> NativeIndexWriter.getWriter(eq(fieldInfo), eq(segmentWriteState), eq(null), any(), any())
+            ).thenReturn(nativeIndexWriter);
             doAnswer(answer -> {
                 Thread.sleep(2); // Need this for KNNGraph value assertion, removing this will fail the assertion
                 return null;
@@ -264,8 +268,9 @@ public class NativeEngines990KnnVectorsWriterMergeTests extends OpenSearchTestCa
                 .thenReturn(knnVectorValues);
 
             when(quantizationService.getQuantizationParams(fieldInfo)).thenReturn(null);
-            nativeIndexWriterMockedStatic.when(() -> NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, null))
-                .thenReturn(nativeIndexWriter);
+            nativeIndexWriterMockedStatic.when(
+                () -> NativeIndexWriter.getWriter(eq(fieldInfo), eq(segmentWriteState), eq(null), any(), any())
+            ).thenReturn(nativeIndexWriter);
             doAnswer(answer -> {
                 Thread.sleep(2); // Need this for KNNGraph value assertion, removing this will fail the assertion
                 return null;
@@ -330,8 +335,9 @@ public class NativeEngines990KnnVectorsWriterMergeTests extends OpenSearchTestCa
                 throw new RuntimeException(e);
             }
 
-            nativeIndexWriterMockedStatic.when(() -> NativeIndexWriter.getWriter(fieldInfo, segmentWriteState, quantizationState))
-                .thenReturn(nativeIndexWriter);
+            nativeIndexWriterMockedStatic.when(
+                () -> NativeIndexWriter.getWriter(eq(fieldInfo), eq(segmentWriteState), eq(quantizationState), any(), any())
+            ).thenReturn(nativeIndexWriter);
             doAnswer(answer -> {
                 Thread.sleep(2); // Need this for KNNGraph value assertion, removing this will fail the assertion
                 return null;

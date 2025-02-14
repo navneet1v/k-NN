@@ -5,10 +5,11 @@
 
 package org.opensearch.knn.index.codec;
 
-import org.opensearch.index.codec.CodecServiceConfig;
 import org.apache.lucene.codecs.Codec;
 import org.opensearch.index.codec.CodecService;
+import org.opensearch.index.codec.CodecServiceConfig;
 import org.opensearch.index.mapper.MapperService;
+import org.opensearch.knn.index.remote.RemoteIndexBuilder;
 
 /**
  * KNNCodecService to inject the right KNNCodec version
@@ -16,10 +17,12 @@ import org.opensearch.index.mapper.MapperService;
 public class KNNCodecService extends CodecService {
 
     private final MapperService mapperService;
+    private final RemoteIndexBuilder remoteIndexBuilder;
 
-    public KNNCodecService(CodecServiceConfig codecServiceConfig) {
+    public KNNCodecService(CodecServiceConfig codecServiceConfig, RemoteIndexBuilder remoteIndexBuilder) {
         super(codecServiceConfig.getMapperService(), codecServiceConfig.getIndexSettings(), codecServiceConfig.getLogger());
         mapperService = codecServiceConfig.getMapperService();
+        this.remoteIndexBuilder = remoteIndexBuilder;
     }
 
     /**
@@ -30,6 +33,6 @@ public class KNNCodecService extends CodecService {
      */
     @Override
     public Codec codec(String name) {
-        return KNNCodecVersion.current().getKnnCodecSupplier().apply(super.codec(name), mapperService);
+        return KNNCodecVersion.current().getKnnCodecSupplier().apply(super.codec(name), mapperService, remoteIndexBuilder);
     }
 }

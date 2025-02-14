@@ -21,6 +21,7 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodContext;
 import org.opensearch.knn.index.mapper.KNNMappingConfig;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
+import org.opensearch.knn.index.remote.RemoteIndexBuilder;
 
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +45,7 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
     private final Supplier<KnnVectorsFormat> defaultFormatSupplier;
     private final Function<KNNVectorsFormatParams, KnnVectorsFormat> vectorsFormatSupplier;
     private Function<KNNScalarQuantizedVectorsFormatParams, KnnVectorsFormat> scalarQuantizedVectorsFormatSupplier;
+    private final RemoteIndexBuilder remoteIndexBuilder;
     private static final String MAX_CONNECTIONS = "max_connections";
     private static final String BEAM_WIDTH = "beam_width";
 
@@ -54,11 +56,26 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
         Supplier<KnnVectorsFormat> defaultFormatSupplier,
         Function<KNNVectorsFormatParams, KnnVectorsFormat> vectorsFormatSupplier
     ) {
-        this.mapperService = mapperService;
-        this.defaultMaxConnections = defaultMaxConnections;
-        this.defaultBeamWidth = defaultBeamWidth;
-        this.defaultFormatSupplier = defaultFormatSupplier;
-        this.vectorsFormatSupplier = vectorsFormatSupplier;
+        this(mapperService, defaultMaxConnections, defaultBeamWidth, defaultFormatSupplier, vectorsFormatSupplier, null, null);
+    }
+
+    public BasePerFieldKnnVectorsFormat(
+        Optional<MapperService> mapperService,
+        int defaultMaxConnections,
+        int defaultBeamWidth,
+        Supplier<KnnVectorsFormat> defaultFormatSupplier,
+        Function<KNNVectorsFormatParams, KnnVectorsFormat> vectorsFormatSupplier,
+        Function<KNNScalarQuantizedVectorsFormatParams, KnnVectorsFormat> scalarQuantizedVectorsFormatSupplier
+    ) {
+        this(
+            mapperService,
+            defaultMaxConnections,
+            defaultBeamWidth,
+            defaultFormatSupplier,
+            vectorsFormatSupplier,
+            scalarQuantizedVectorsFormatSupplier,
+            null
+        );
     }
 
     @Override
@@ -141,7 +158,8 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
         int approximateThreshold = getApproximateThresholdValue();
         return new NativeEngines990KnnVectorsFormat(
             new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()),
-            approximateThreshold
+            approximateThreshold,
+            remoteIndexBuilder
         );
     }
 
