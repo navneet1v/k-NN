@@ -12,8 +12,6 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.remote.RemoteIndexBuilder;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.function.Supplier;
@@ -25,7 +23,6 @@ import static org.opensearch.knn.common.KNNConstants.MODEL_ID;
  * Interface for writing a KNN index field in a segment. This is intended to be used for native engines.
  */
 public interface NativeIndexWriter {
-    Logger log = LoggerFactory.getLogger(NativeIndexWriter.class);
 
     /**
      * flushes the index
@@ -63,7 +60,6 @@ public interface NativeIndexWriter {
         // TODO: We will add threshold settings for using this featuer here as well, see:
         // https://github.com/opensearch-project/k-NN/issues/2391
         if (remoteIndexBuilder != null && remoteIndexBuilder.shouldBuildIndexRemotely()) {
-            log.debug("Using RemoteNativeIndexWriter");
             return new RemoteNativeIndexWriter(
                 fieldInfo,
                 segmentWriteState,

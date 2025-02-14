@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.codec.nativeindex;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.SegmentWriteState;
 import org.opensearch.common.annotation.ExperimentalApi;
@@ -18,6 +19,7 @@ import java.util.function.Supplier;
  * Writes KNN Index for a field in a segment. This is intended to be used for native engines. This class uses a remote index build service for building segments.
  * See {@link LocalNativeIndexWriter} for local vector index build path.
  */
+@Log4j2
 @ExperimentalApi
 public class RemoteNativeIndexWriter implements NativeIndexWriter {
 
@@ -46,7 +48,7 @@ public class RemoteNativeIndexWriter implements NativeIndexWriter {
         try {
             remoteIndexBuilder.buildIndexRemotely(fieldInfo, knnVectorValuesSupplier, totalLiveDocs, segmentWriteState);
         } catch (Exception e) {
-            log.warn("Failed to flush index remotely", e);
+            log.info("Failed to flush index remotely", e);
             fallbackWriter.flushIndex(knnVectorValues, totalLiveDocs);
         }
     }
@@ -56,7 +58,7 @@ public class RemoteNativeIndexWriter implements NativeIndexWriter {
         try {
             remoteIndexBuilder.buildIndexRemotely(fieldInfo, knnVectorValuesSupplier, totalLiveDocs, segmentWriteState);
         } catch (Exception e) {
-            log.warn("Failed to merge index remotely", e);
+            log.info("Failed to merge index remotely", e);
             fallbackWriter.mergeIndex(knnVectorValues, totalLiveDocs);
         }
     }

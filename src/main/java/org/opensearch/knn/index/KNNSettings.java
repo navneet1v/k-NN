@@ -381,12 +381,17 @@ public class KNNSettings {
 
     public static final Setting<Boolean> KNN_INDEX_REMOTE_VECTOR_BUILD_SETTING = Setting.boolSetting(
         KNN_INDEX_REMOTE_VECTOR_BUILD,
-        false,
+        true,
         Dynamic,
         IndexScope
     );
 
-    public static final Setting<String> KNN_REMOTE_VECTOR_REPO_SETTING = Setting.simpleString(KNN_REMOTE_VECTOR_REPO, Dynamic, NodeScope);
+    public static final Setting<String> KNN_REMOTE_VECTOR_REPO_SETTING = Setting.simpleString(
+        KNN_REMOTE_VECTOR_REPO,
+        "vector-repo",
+        Dynamic,
+        NodeScope
+    );
 
     /**
      * Dynamic settings

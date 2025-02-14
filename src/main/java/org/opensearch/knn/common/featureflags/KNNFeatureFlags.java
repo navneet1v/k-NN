@@ -38,7 +38,7 @@ public class KNNFeatureFlags {
 
     public static final Setting<Boolean> KNN_REMOTE_VECTOR_BUILD_SETTING = Setting.boolSetting(
         KNN_REMOTE_VECTOR_BUILD,
-        false,
+        true,
         NodeScope,
         Dynamic
     );

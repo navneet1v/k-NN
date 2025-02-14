@@ -45,6 +45,8 @@ buildscript {
             opensearch_build += "-SNAPSHOT"
         }
         opensearch_no_snapshot = opensearch_build.replace("-SNAPSHOT","")
+        repo_s3_resource_folder = "build/resource/repository-s3"
+        repo_s3_download_url = "https://ci.opensearch.org/ci/dbc/distribution-build-opensearch/2.19.0/latest/linux/arm64/tar/builds/opensearch/core-plugins/repository-s3-2.19.0.zip"
     }
 
     // This isn't applying from repositories.gradle so repeating git diff it here
@@ -93,7 +95,7 @@ ext {
     projectSubstitutions = [:]
 
     configureSecurityPlugin = { OpenSearchCluster cluster ->
-        configurations.zipArchive.asFileTree.each {
+        configurations.secureIntegTestPluginArchive.asFileTree.each {
             cluster.plugin(provider(new Callable<RegularFile>() {
                 @Override
                 RegularFile call() throws Exception {
@@ -205,6 +207,7 @@ allprojects {
 
 configurations {
     zipArchive
+    secureIntegTestPluginArchive
 }
 
 publishing {
@@ -294,6 +297,7 @@ task release(type: Copy, group: 'build') {
 dependencies {
     api "org.opensearch:opensearch:${opensearch_version}"
     compileOnly "org.opensearch.plugin:opensearch-scripting-painless-spi:${versions.opensearch}"
+    compileOnly "org.opensearch.plugin:repository-s3:${versions.opensearch}"
     api group: 'com.google.guava', name: 'failureaccess', version:'1.0.1'
     api group: 'com.google.guava', name: 'guava', version:'32.1.3-jre'
     api group: 'commons-lang', name: 'commons-lang', version: '2.6'
@@ -428,6 +432,26 @@ testClusters.integTest {
     if (System.getProperty("security.enabled") != null) {
         configureSecurityPlugin(testClusters.integTest)
     }
+
+    // Install K-NN/ml-commons plugins on the integTest cluster nodes except security
+    plugin(provider(new Callable<RegularFile>(){
+        @Override
+        RegularFile call() throws Exception {
+            return new RegularFile() {
+                @Override
+                File getAsFile() {
+                    if (new File("$project.rootDir/$repo_s3_resource_folder").exists()) {
+                        project.delete(files("$project.rootDir/$repo_s3_resource_folder"))
+                    }
+                    project.mkdir repo_s3_resource_folder
+                    ant.get(src: repo_s3_download_url,
+                            dest: repo_s3_resource_folder,
+                            httpusecaches: false)
+                    return fileTree(repo_s3_resource_folder).getSingleFile()
+                }
+            }
+        }
+    }))
 
     plugin(project.tasks.bundlePlugin.archiveFile)
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
