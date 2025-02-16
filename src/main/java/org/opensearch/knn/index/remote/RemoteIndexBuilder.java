@@ -6,7 +6,6 @@
 package org.opensearch.knn.index.remote;
 
 import lombok.extern.log4j.Log4j2;
-import org.apache.commons.lang.NotImplementedException;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.SegmentWriteState;
@@ -23,10 +22,17 @@ import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
 import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.remote.client.IndexBuildServiceClient;
+import org.opensearch.knn.index.remote.model.CreateIndexRequest;
+import org.opensearch.knn.index.remote.model.CreateIndexResponse;
+import org.opensearch.knn.index.remote.model.GetJobRequest;
+import org.opensearch.knn.index.remote.model.GetJobResponse;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
@@ -36,6 +42,7 @@ import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Supplier;
 
@@ -54,12 +61,14 @@ import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorV
 @Log4j2
 @ExperimentalApi
 public class RemoteIndexBuilder {
-
+    private static final String COMPLETED_STATUS = "completed";
+    private static final String FAILED_STATUS = "failed";
     private final Supplier<RepositoriesService> repositoriesServiceSupplier;
     private final IndexSettings indexSettings;
     private static final String VECTOR_BLOB_FILE_EXTENSION = ".knnvec";
     private static final String DOC_ID_FILE_EXTENSION = ".knndid";
-    private static final String GRAPH_FILE_EXTENSION = ".knngraph";
+    private static final String GRAPH_FILE_EXTENSION = ".faiss";
+    private IndexBuildServiceClient indexBuildServiceClient;
 
     /**
      * Public constructor
@@ -70,6 +79,11 @@ public class RemoteIndexBuilder {
     public RemoteIndexBuilder(Supplier<RepositoriesService> repositoriesServiceSupplier, IndexSettings indexSettings) {
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
         this.indexSettings = indexSettings;
+        try {
+            this.indexBuildServiceClient = IndexBuildServiceClient.getInstance();
+        } catch (IOException e) {
+            log.error("Error while creating the IndexBuildService client. ", e);
+        }
     }
 
     /**
@@ -80,7 +94,9 @@ public class RemoteIndexBuilder {
         return KNNFeatureFlags.isKNNRemoteVectorBuildEnabled()
             && indexSettings.getValue(KNN_INDEX_REMOTE_VECTOR_BUILD_SETTING)
             && vectorRepo != null
-            && !vectorRepo.isEmpty();
+            && !vectorRepo.isEmpty()
+            // ensure that index build service client is not null.
+            && indexBuildServiceClient != null;
     }
 
     /**
@@ -113,7 +129,7 @@ public class RemoteIndexBuilder {
         Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
         int totalLiveDocs,
         SegmentWriteState segmentWriteState
-    ) throws IOException, InterruptedException {
+    ) throws IOException, InterruptedException, URISyntaxException {
         StopWatch stopWatch;
         long time_in_millis;
 
@@ -123,14 +139,19 @@ public class RemoteIndexBuilder {
         log.info("Repository write took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
 
         stopWatch = new StopWatch().start();
-        submitVectorBuild();
+        // TODO: add the vectors file path and also the bucket name
+        CreateIndexResponse createIndexResponse = submitVectorBuild(fieldInfo, totalLiveDocs, "", "");
         time_in_millis = stopWatch.stop().totalTime().millis();
         log.info("Submit vector build took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
 
         stopWatch = new StopWatch().start();
-        awaitVectorBuild();
+        boolean isIndexBuildCompleted = isVectorIndexBuildCompleted(createIndexResponse);
         time_in_millis = stopWatch.stop().totalTime().millis();
         log.info("Await vector build took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
+        if (isIndexBuildCompleted == false) {
+            log.error("Job status with jobId : {} errored out. Returning.", createIndexResponse.getIndexCreationRequestId());
+            throw new RuntimeException("Index Build job status was not completed.");
+        }
 
         stopWatch = new StopWatch().start();
         readFromRepository(fieldInfo, segmentWriteState);
@@ -197,7 +218,12 @@ public class RemoteIndexBuilder {
             );
             latch.await();
             long time_in_millis = stopWatch.stop().totalTime().millis();
-            log.info("Parallel vector blob upload took {} ms for vector field [{}], uploaded {} bytes", time_in_millis, fieldInfo.getName(), vectorBlobLength);
+            log.info(
+                "Parallel vector blob upload took {} ms for vector field [{}], uploaded {} bytes",
+                time_in_millis,
+                fieldInfo.getName(),
+                vectorBlobLength
+            );
         } else {
             log.info("Repository {} Does Not Support Parallel Blob Upload", getRepository());
             // Write Vectors
@@ -211,7 +237,12 @@ public class RemoteIndexBuilder {
         InputStream docStream = new BufferedInputStream(new DocIdInputStream(knnVectorValuesSupplier.get()));
         blobContainer.writeBlob(blobName + DOC_ID_FILE_EXTENSION, docStream, totalLiveDocs * 4L, false);
         long time_in_millis = stopWatch.stop().totalTime().millis();
-        log.info("Sequential docid blob upload took {} ms for vector field [{}], uploaded {} bytes", time_in_millis, fieldInfo.getName(), vectorBlobLength);
+        log.info(
+            "Sequential docid blob upload took {} ms for vector field [{}], uploaded {} bytes",
+            time_in_millis,
+            fieldInfo.getName(),
+            vectorBlobLength
+        );
     }
 
     private CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException> getTransferPartStreamSupplier(
@@ -256,15 +287,60 @@ public class RemoteIndexBuilder {
      * Submit vector build request to remote vector build service
      *
      */
-    private void submitVectorBuild() {
-        throw new NotImplementedException();
+    private CreateIndexResponse submitVectorBuild(
+        final FieldInfo fieldInfo,
+        int totalLiveDocs,
+        final String vectorsFilePath,
+        final String bucketName
+    ) throws IOException, URISyntaxException {
+        return indexBuildServiceClient.createIndex(buildCreateIndexRequest(fieldInfo, totalLiveDocs, vectorsFilePath, bucketName));
+    }
+
+    private CreateIndexRequest buildCreateIndexRequest(
+        final FieldInfo fieldInfo,
+        int totalLiveDocs,
+        final String vectorsFilePath,
+        final String bucketName
+    ) {
+        int dimension = fieldInfo.getVectorDimension();
+        String spaceType = fieldInfo.attributes().getOrDefault(KNNConstants.SPACE_TYPE, SpaceType.DEFAULT.getValue());
+        return CreateIndexRequest.builder()
+            .bucketName(bucketName)
+            .objectLocation(vectorsFilePath)
+            .dimensions(dimension)
+            .spaceType(spaceType)
+            .numberOfVectors(totalLiveDocs)
+            .build();
     }
 
     /**
      * Wait on remote vector build to complete
      */
-    private void awaitVectorBuild() {
-        throw new NotImplementedException();
+    private boolean isVectorIndexBuildCompleted(CreateIndexResponse createIndexResponse) {
+        final GetJobResponse response = isIndexBuildCompletedWithoutErrors(createIndexResponse);
+        return COMPLETED_STATUS.equals(response.getStatus());
+    }
+
+    private GetJobResponse isIndexBuildCompletedWithoutErrors(final CreateIndexResponse response) {
+        while (true) {
+            try {
+                GetJobRequest getJobRequest = GetJobRequest.builder().jobId(response.getIndexCreationRequestId()).build();
+                log.info("Waiting for index build to be completed: {}", response.getIndexCreationRequestId());
+                GetJobResponse getJobResponse = indexBuildServiceClient.getJob(getJobRequest);
+                if (COMPLETED_STATUS.equals(getJobResponse.getStatus()) || FAILED_STATUS.equals(getJobResponse.getStatus())) {
+                    log.info("Remote Index build completed with status: {}", getJobResponse.getStatus());
+                    return getJobResponse;
+                } else {
+                    log.info("Index build is still in progress. Current status: {}", getJobResponse.getStatus());
+                    // I am using the same merge thread to ensure that we are not completing merge early.
+                    Thread.sleep(KNNSettings.getIndexBuildStatusWaitTime());
+                }
+            } catch (Exception e) {
+                log.error("Failed to wait for remote index build to be completed: {}", response.getIndexCreationRequestId(), e);
+                break;
+            }
+        }
+        return GetJobResponse.builder().status("errored").build();
     }
 
     /**

@@ -96,6 +96,10 @@ public class KNNSettings {
     public static final String KNN_DERIVED_SOURCE_ENABLED = "index.knn.derived_source.enabled";
     public static final String KNN_INDEX_REMOTE_VECTOR_BUILD = "index.knn.remote_index_build.enabled";
     public static final String KNN_REMOTE_VECTOR_REPO = "knn.remote_index_build.vector_repo";
+    public static final String REMOTE_SERVICE_ENDPOINT = "knn.remote.index.build.service.endpoint";
+    public static final String REMOTE_SERVICE_PORT = "knn.remote.index.build.service.port";
+    public static final String REMOTE_INDEX_BUILD_STATUS_WAIT_TIME = "knn.remote.index.build.status.wait_time";
+    public static final String REMOTE_INDEX_BUILD_MAX_DOCS = "knn.remote.index.build.max_docs";
 
     /**
      * Default setting values
@@ -165,6 +169,34 @@ public class KNNSettings {
         new SpaceTypeValidator(),
         IndexScope,
         Setting.Property.Deprecated
+    );
+
+    public static final Setting<String> REMOTE_SERVICE_ENDPOINT_SETTING = Setting.simpleString(
+        REMOTE_SERVICE_ENDPOINT,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<Integer> REMOTE_SERVICE_PORT_SETTING = Setting.intSetting(
+        REMOTE_SERVICE_PORT,
+        8200,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<TimeValue> REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING = Setting.timeSetting(
+        REMOTE_INDEX_BUILD_STATUS_WAIT_TIME,
+        TimeValue.timeValueSeconds(5),
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public static final Setting<Integer> REMOTE_INDEX_BUILD_MAX_DOCS_SETTING = Setting.intSetting(
+        REMOTE_INDEX_BUILD_MAX_DOCS,
+        100000,
+        0,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
     );
 
     /**
@@ -394,6 +426,18 @@ public class KNNSettings {
     );
 
     /**
+     * All other Settings
+     */
+    private static final Map<String, Setting<?>> REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP = new HashMap<>() {
+        {
+            put(REMOTE_SERVICE_ENDPOINT, REMOTE_SERVICE_ENDPOINT_SETTING);
+            put(REMOTE_SERVICE_PORT, REMOTE_SERVICE_PORT_SETTING);
+            put(REMOTE_INDEX_BUILD_STATUS_WAIT_TIME, REMOTE_INDEX_BUILD_STATUS_WAIT_TIME_SETTING);
+            put(REMOTE_INDEX_BUILD_MAX_DOCS, REMOTE_INDEX_BUILD_MAX_DOCS_SETTING);
+        }
+    };
+
+    /**
      * Dynamic settings
      */
     public static Map<String, Setting<?>> dynamicCacheSettings = new HashMap<String, Setting<?>>() {
@@ -555,6 +599,10 @@ public class KNNSettings {
             return KNN_REMOTE_VECTOR_REPO_SETTING;
         }
 
+        if (REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.containsKey(key)) {
+            return REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.get(key);
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -584,8 +632,13 @@ public class KNNSettings {
             KNN_INDEX_REMOTE_VECTOR_BUILD_SETTING,
             KNN_REMOTE_VECTOR_REPO_SETTING
         );
-        return Stream.concat(settings.stream(), Stream.concat(getFeatureFlags().stream(), dynamicCacheSettings.values().stream()))
-            .collect(Collectors.toList());
+        final List<Stream<Setting<?>>> streamList = Arrays.asList(
+            settings.stream(),
+            getFeatureFlags().stream(),
+            dynamicCacheSettings.values().stream(),
+            REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.values().stream()
+        );
+        return streamList.stream().flatMap(stream -> stream).collect(Collectors.toList());
     }
 
     public static boolean isKNNPluginEnabled() {
@@ -737,6 +790,22 @@ public class KNNSettings {
                 KNNSettings.KNN_ALGO_PARAM_EF_SEARCH,
                 IndexHyperParametersUtil.getHNSWEFSearchValue(indexMetadata.getCreationVersion())
             );
+    }
+
+    public static String getRemoteServiceEndpoint() {
+        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_ENDPOINT);
+    }
+
+    public static Integer getRemoteServicePort() {
+        return KNNSettings.state().getSettingValue(REMOTE_SERVICE_PORT);
+    }
+
+    public static long getIndexBuildStatusWaitTime() {
+        return ((TimeValue) KNNSettings.state().getSettingValue(REMOTE_INDEX_BUILD_STATUS_WAIT_TIME)).getMillis();
+    }
+
+    public static Integer getRemoteIndexBuildMaxDocs() {
+        return KNNSettings.state().getSettingValue(REMOTE_INDEX_BUILD_MAX_DOCS);
     }
 
     public void setClusterService(ClusterService clusterService) {
