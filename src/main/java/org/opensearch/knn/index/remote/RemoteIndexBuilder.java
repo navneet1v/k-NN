@@ -139,8 +139,14 @@ public class RemoteIndexBuilder {
         log.info("Repository write took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
 
         stopWatch = new StopWatch().start();
-        // TODO: add the vectors file path and also the bucket name
-        CreateIndexResponse createIndexResponse = submitVectorBuild(fieldInfo, totalLiveDocs, "", "");
+        String blobName = indexSettings.getUUID() + "_" + fieldInfo.getName() + "_" + segmentWriteState.segmentInfo.name;
+        String vectorsFilePath = getRepository().basePath().buildAsString() + blobName;
+        CreateIndexResponse createIndexResponse = submitVectorBuild(
+            fieldInfo,
+            totalLiveDocs,
+            vectorsFilePath,
+            getRepository().getMetadata().settings().get("bucket")
+        );
         time_in_millis = stopWatch.stop().totalTime().millis();
         log.info("Submit vector build took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
 
