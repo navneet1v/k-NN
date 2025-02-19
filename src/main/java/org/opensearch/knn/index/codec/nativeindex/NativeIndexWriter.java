@@ -56,10 +56,10 @@ public interface NativeIndexWriter {
         final QuantizationState quantizationState,
         final RemoteIndexBuilder remoteIndexBuilder,
         final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier
-    ) {
+    ) throws IOException {
         // TODO: We will add threshold settings for using this featuer here as well, see:
         // https://github.com/opensearch-project/k-NN/issues/2391
-        if (remoteIndexBuilder != null && remoteIndexBuilder.shouldBuildIndexRemotely()) {
+        if (remoteIndexBuilder != null && remoteIndexBuilder.shouldBuildIndexRemotely(knnVectorValuesSupplier.get())) {
             return new RemoteNativeIndexWriter(
                 fieldInfo,
                 segmentWriteState,

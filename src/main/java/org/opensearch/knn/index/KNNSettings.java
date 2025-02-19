@@ -163,6 +163,14 @@ public class KNNSettings {
         Setting.Property.NodeScope
     );
 
+    public static final String REMOTE_INDEX_BUILD_THRESHOLD = "knn.remote_index_build.threshold";
+    public static final Setting<Integer> REMOTE_INDEX_BUILD_THRESHOLD_SETTING = Setting.intSetting(
+        REMOTE_INDEX_BUILD_THRESHOLD,
+        10_000,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
     public static final Setting<String> INDEX_KNN_SPACE_TYPE = Setting.simpleString(
         KNN_SPACE_TYPE,
         INDEX_KNN_DEFAULT_SPACE_TYPE,
@@ -571,6 +579,10 @@ public class KNNSettings {
             return KNN_VECTOR_STREAMING_MEMORY_LIMIT_PCT_SETTING;
         }
 
+        if (REMOTE_INDEX_BUILD_THRESHOLD.equals(key)) {
+            return REMOTE_INDEX_BUILD_THRESHOLD_SETTING;
+        }
+
         if (QUANTIZATION_STATE_CACHE_SIZE_LIMIT.equals(key)) {
             return QUANTIZATION_STATE_CACHE_SIZE_LIMIT_SETTING;
         }
@@ -625,7 +637,8 @@ public class KNNSettings {
             KNN_DISK_VECTOR_SHARD_LEVEL_RESCORING_DISABLED_SETTING,
             KNN_DERIVED_SOURCE_ENABLED_SETTING,
             KNN_INDEX_REMOTE_VECTOR_BUILD_SETTING,
-            KNN_REMOTE_VECTOR_REPO_SETTING
+            KNN_REMOTE_VECTOR_REPO_SETTING,
+            REMOTE_INDEX_BUILD_THRESHOLD_SETTING
         );
         final List<Stream<Setting<?>>> streamList = Arrays.asList(
             settings.stream(),
@@ -634,6 +647,10 @@ public class KNNSettings {
             REMOTE_INDEX_BUILD_SERVICE_SETTINGS_MAP.values().stream()
         );
         return streamList.stream().flatMap(stream -> stream).collect(Collectors.toList());
+    }
+
+    public static int getRemoteIndexBuildThreshold() {
+        return KNNSettings.state().getSettingValue(KNNSettings.REMOTE_INDEX_BUILD_THRESHOLD);
     }
 
     public static boolean isKNNPluginEnabled() {

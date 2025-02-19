@@ -9,6 +9,7 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.action.LatchedActionListener;
 import org.opensearch.common.CheckedTriFunction;
@@ -89,8 +90,23 @@ public class RemoteIndexBuilder {
     /**
      * @return whether to use the remote build feature
      */
-    public boolean shouldBuildIndexRemotely() {
+    public boolean shouldBuildIndexRemotely(KNNVectorValues<?> knnVectorValues) throws IOException {
         String vectorRepo = KNNSettings.state().getSettingValue(KNN_REMOTE_VECTOR_REPO_SETTING.getKey());
+        initializeVectorValues(knnVectorValues);
+        int liveDocs = 0;
+        while (knnVectorValues.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+            liveDocs++;
+        }
+
+        if (liveDocs < KNNSettings.getRemoteIndexBuildThreshold()) {
+            log.debug(
+                "Total docs {} is less than threshold {}, skipping remote build",
+                liveDocs,
+                KNNSettings.getRemoteIndexBuildThreshold()
+            );
+            return false;
+        }
+
         return KNNFeatureFlags.isKNNRemoteVectorBuildEnabled()
             && indexSettings.getValue(KNN_INDEX_REMOTE_VECTOR_BUILD_SETTING)
             && vectorRepo != null
@@ -193,7 +209,7 @@ public class RemoteIndexBuilder {
         // First upload vector blob
         if (blobContainer instanceof AsyncMultiStreamBlobContainer) {
             log.info("Repository {} Supports Parallel Blob Upload", getRepository());
-            StopWatch stopWatch = new StopWatch().start();
+            StopWatch stopWatchVector = new StopWatch().start();
 
             WriteContext writeContext = new WriteContext.Builder().fileName(blobName + VECTOR_BLOB_FILE_EXTENSION)
                 .streamContextSupplier((partSize) -> getStreamContext(partSize, vectorBlobLength, knnVectorValuesSupplier, vectorDataType))
@@ -214,6 +230,13 @@ public class RemoteIndexBuilder {
                     @Override
                     public void onResponse(Void unused) {
                         log.info("Parallel Upload Completed");
+                        long time_in_millis = stopWatchVector.stop().totalTime().millis();
+                        log.info(
+                            "Parallel vector blob upload took {} ms for vector field [{}], uploaded {} bytes",
+                            time_in_millis,
+                            fieldInfo.getName(),
+                            vectorBlobLength
+                        );
                     }
 
                     @Override
@@ -222,33 +245,47 @@ public class RemoteIndexBuilder {
                     }
                 }, latch)
             );
-            latch.await();
+            StopWatch stopWatch = new StopWatch().start();
+            // Then upload doc id blob
+            InputStream docStream = new BufferedInputStream(new DocIdInputStream(knnVectorValuesSupplier.get()));
+            long docBlobLength = totalLiveDocs * 4L;
+            blobContainer.writeBlob(blobName + DOC_ID_FILE_EXTENSION, docStream, docBlobLength, false);
             long time_in_millis = stopWatch.stop().totalTime().millis();
             log.info(
-                "Parallel vector blob upload took {} ms for vector field [{}], uploaded {} bytes",
+                "Sequential docid blob upload took {} ms for vector field [{}], uploaded {} bytes",
                 time_in_millis,
                 fieldInfo.getName(),
-                vectorBlobLength
+                docBlobLength
             );
+            latch.await();
         } else {
+            StopWatch stopWatch = new StopWatch().start();
             log.info("Repository {} Does Not Support Parallel Blob Upload", getRepository());
             // Write Vectors
             InputStream vectorStream = new BufferedInputStream(new VectorValuesInputStream(knnVectorValuesSupplier.get(), vectorDataType));
             log.info("Writing {} bytes for {} docs to {}", vectorBlobLength, totalLiveDocs, blobName + VECTOR_BLOB_FILE_EXTENSION);
             blobContainer.writeBlob(blobName + VECTOR_BLOB_FILE_EXTENSION, vectorStream, vectorBlobLength, false);
-        }
+            long time_in_millis = stopWatch.stop().totalTime().millis();
+            log.info(
+                "Sequential vector blob upload took {} ms for vector field [{}], uploaded {} bytes",
+                time_in_millis,
+                fieldInfo.getName(),
+                vectorBlobLength
+            );
 
-        StopWatch stopWatch = new StopWatch().start();
-        // Then upload doc id blob
-        InputStream docStream = new BufferedInputStream(new DocIdInputStream(knnVectorValuesSupplier.get()));
-        blobContainer.writeBlob(blobName + DOC_ID_FILE_EXTENSION, docStream, totalLiveDocs * 4L, false);
-        long time_in_millis = stopWatch.stop().totalTime().millis();
-        log.info(
-            "Sequential docid blob upload took {} ms for vector field [{}], uploaded {} bytes",
-            time_in_millis,
-            fieldInfo.getName(),
-            vectorBlobLength
-        );
+            stopWatch = new StopWatch().start();
+            // Then upload doc id blob
+            InputStream docStream = new BufferedInputStream(new DocIdInputStream(knnVectorValuesSupplier.get()));
+            long docBlobLength = totalLiveDocs * 4L;
+            blobContainer.writeBlob(blobName + DOC_ID_FILE_EXTENSION, docStream, docBlobLength, false);
+            time_in_millis = stopWatch.stop().totalTime().millis();
+            log.info(
+                "Sequential docid blob upload took {} ms for vector field [{}], uploaded {} bytes",
+                time_in_millis,
+                fieldInfo.getName(),
+                docBlobLength
+            );
+        }
     }
 
     private CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException> getTransferPartStreamSupplier(

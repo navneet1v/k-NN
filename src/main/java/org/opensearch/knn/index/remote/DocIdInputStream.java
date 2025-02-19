@@ -64,10 +64,7 @@ public class DocIdInputStream extends InputStream {
     private void loadNextVector() throws IOException {
         int docId = knnVectorValues.nextDoc();
         if (docId != -1 && docId != DocIdSetIterator.NO_MORE_DOCS) {
-            float[] vector = new float[1];
-            vector[0] = (float) docId;
-            currentBuffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-            currentBuffer.asFloatBuffer().put(vector);
+            currentBuffer = ByteBuffer.allocate(Integer.SIZE / Byte.SIZE).order(ByteOrder.LITTLE_ENDIAN).putInt(docId);
             position = 0;
         } else {
             currentBuffer = null;
