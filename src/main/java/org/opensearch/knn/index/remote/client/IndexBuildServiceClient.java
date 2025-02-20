@@ -7,7 +7,6 @@ package org.opensearch.knn.index.remote.client;
 
 import lombok.extern.log4j.Log4j2;
 import org.apache.http.HttpEntity;
-import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
@@ -45,7 +44,6 @@ public class IndexBuildServiceClient {
     private static final String APPLICATION_JSON = "application/json";
     private static final String ACCEPT = "Accept";
     private final HttpClient httpClient;
-    private final HttpHost httpHost;
 
     public static IndexBuildServiceClient getInstance() throws IOException {
         IndexBuildServiceClient result = INSTANCE;
@@ -62,7 +60,6 @@ public class IndexBuildServiceClient {
 
     private IndexBuildServiceClient() {
         this.httpClient = HttpClientBuilder.create().build();
-        this.httpHost = new HttpHost(KNNSettings.getRemoteServiceEndpoint(), KNNSettings.getRemoteServicePort(), "http");
     }
 
     /**
