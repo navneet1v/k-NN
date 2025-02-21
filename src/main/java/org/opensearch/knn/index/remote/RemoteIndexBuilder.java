@@ -156,7 +156,7 @@ public class RemoteIndexBuilder {
 
         stopWatch = new StopWatch().start();
         String blobName = indexSettings.getUUID() + "_" + fieldInfo.getName() + "_" + segmentWriteState.segmentInfo.name;
-        String vectorsFilePath = getRepository().basePath().buildAsString() + blobName;
+        String vectorsFilePath = getRepository().basePath().buildAsString() + blobName + VECTOR_BLOB_FILE_EXTENSION;
         CreateIndexResponse createIndexResponse = submitVectorBuild(
             fieldInfo,
             totalLiveDocs,
