@@ -401,9 +401,22 @@ public class RemoteIndexBuilder {
             KNNEngine.FAISS.getExtension()
         );
         IndexOutput indexOutput = segmentWriteState.directory.createOutput(engineFileName, segmentWriteState.context);
-        int bytes = graphStream.available();
-        // TODO: Write to indexOutput in a buffered manner
-        indexOutput.writeBytes(graphStream.readAllBytes(), bytes);
+
+        // Allocate buffer of 64KB, same as used for CPU builds
+        int CHUNK_SIZE = 64 * 1024;
+        byte[] buffer = new byte[CHUNK_SIZE];
+
+        int bytesRead = 0;
+        // InputStream uses -1 indicates there are no more bytes to be read
+        while (bytesRead != -1) {
+            // Try to read CHUNK_SIZE into the buffer. The actual amount read may be less.
+            bytesRead = graphStream.read(buffer, 0, CHUNK_SIZE);
+            // However many bytes we read, write it to the IndexOutput if != -1
+            if (bytesRead != -1) {
+                indexOutput.writeBytes(buffer, 0, bytesRead);
+            }
+        }
+
         CodecUtil.writeFooter(indexOutput);
     }
 }
