@@ -7,6 +7,7 @@ package org.opensearch.knn.memoryoptsearch;
 
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 
 import java.io.IOException;
 
@@ -24,5 +25,5 @@ public interface VectorSearcherFactory {
      * @return Null instance if it is not supported, otherwise return {@link VectorSearcher}
      * @throws IOException
      */
-    VectorSearcher createVectorSearcher(Directory directory, String fileName, FieldInfo fieldInfo) throws IOException;
+    VectorSearcher createVectorSearcher(Directory directory, String fileName, FieldInfo fieldInfo, IOContext ioContext) throws IOException;
 }

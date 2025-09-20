@@ -74,6 +74,7 @@ buildscript {
             resolutionStrategy {
                 force("org.eclipse.platform:org.eclipse.core.runtime:4.29.0") // CVE for < 4.29
                 force("org.eclipse.platform:org.eclipse.core.resources:4.20.0") // CVE for < 4.20
+                force("com.google.errorprone:error_prone_annotations:2.41.0")
             }
         }
     }
@@ -99,6 +100,13 @@ apply plugin: 'opensearch.rest-test'
 apply plugin: 'opensearch.pluginzip'
 apply plugin: 'opensearch.repositories'
 apply plugin: 'opensearch.java-agent'
+
+configurations.all {
+    resolutionStrategy {
+        force "com.google.errorprone:error_prone_annotations:2.41.0"
+        force "com.google.guava:guava:33.2.1-jre"
+    }
+}
 
 def opensearch_tmp_dir = rootProject.file('build/private/opensearch_tmp').absoluteFile
 opensearch_tmp_dir.mkdirs()
@@ -342,13 +350,23 @@ dependencies {
     compileOnly "org.opensearch.plugin:opensearch-scripting-painless-spi:${versions.opensearch}"
     compileOnly "org.opensearch.plugin:transport-grpc-spi:${opensearch_version}"
     compileOnly "org.opensearch:protobufs:0.13.0"
-    compileOnly group: 'com.google.guava', name: 'failureaccess', version:'1.0.2'
+    // Guava is provided by OpenSearch's transport-grpc module - use compileOnly to avoid jar hell
     compileOnly group: 'com.google.guava', name: 'guava', version:'33.2.1-jre'
+//    // Add failureaccess using implementation to make it available to transport-grpc's Guava
+//    implementation group: 'com.google.guava', name: 'failureaccess', version:'1.0.2'
+    testImplementation('com.google.guava:guava:33.2.1-jre')
+    //{
+    //    exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+    //}
+    testFixturesImplementation('com.google.guava:guava:33.2.1-jre')
+    //{
+    //    exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+    //}
+    // Use the OpenSearch core version of error_prone_annotations for tests
+    testImplementation group: 'com.google.errorprone', name: 'error_prone_annotations', version: '2.41.0'
+    testFixturesImplementation group: 'com.google.errorprone', name: 'error_prone_annotations', version: '2.41.0'
     api "org.apache.commons:commons-lang3:${versions.commonslang}"
     testFixturesImplementation "org.opensearch.test:framework:${opensearch_version}"
-    // Add Guava for test configurations since it's needed for testing but excluded from runtime
-    testImplementation group: 'com.google.guava', name: 'guava', version:'33.2.1-jre'
-    testFixturesImplementation group: 'com.google.guava', name: 'guava', version:'33.2.1-jre'
     testImplementation group: 'net.bytebuddy', name: 'byte-buddy', version: "${versions.bytebuddy}"
     testImplementation group: 'org.objenesis', name: 'objenesis', version: '3.3'
     testImplementation group: 'net.bytebuddy', name: 'byte-buddy-agent', version: "${versions.bytebuddy}"
