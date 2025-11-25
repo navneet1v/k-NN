@@ -39,7 +39,7 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public class FaissMemoryOptimizedSearcher implements VectorSearcher {
     private final IndexInput indexInput;
-    private final FaissIndex faissIndex;
+    public final FaissIndex faissIndex;
     private final FlatVectorsScorer flatVectorsScorer;
     private final FaissHNSW hnsw;
     private final VectorSimilarityFunction vectorSimilarityFunction;

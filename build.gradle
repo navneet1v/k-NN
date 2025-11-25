@@ -449,7 +449,7 @@ tasks.register('buildJniLib', Exec) {
 }
 
 test {
-    dependsOn buildJniLib
+    //dependsOn buildJniLib
     systemProperty 'tests.security.manager', 'false'
     systemProperty "java.library.path", "$rootDir/jni/build/release"
     //this change enables mockito-inline that supports mocking of static classes/calls
@@ -463,7 +463,7 @@ test {
 def _numNodes = findProperty('numNodes') as Integer ?: 1
 def commonIntegTest(RestIntegTestTask task, project, integTestDependOnJniLib, opensearch_tmp_dir, _numNodes){
     if (integTestDependOnJniLib) {
-        task.dependsOn buildJniLib
+        //task.dependsOn buildJniLib
     }
     task.systemProperty 'tests.security.manager', 'false'
     task.systemProperty 'java.io.tmpdir', opensearch_tmp_dir.absolutePath

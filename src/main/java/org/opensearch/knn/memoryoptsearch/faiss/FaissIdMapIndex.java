@@ -35,6 +35,7 @@ public class FaissIdMapIndex extends FaissBinaryIndex implements FaissHNSWProvid
     @Getter
     private FaissIndex nestedIndex;
     private FaissHNSWProvider hnswGetter;
+    @Getter
     private DirectMonotonicReader idMappingReader;
 
     public FaissIdMapIndex(final String indexType) {
