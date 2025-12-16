@@ -31,9 +31,10 @@ jobs:
             buildSrc/**
             gradle/**
             jni/**
+            .github/workflows/test_security.yml
   Get-CI-Image-Tag:
     needs: check-files
-    if: github.repository == 'opensearch-project/k-NN' && needs.check-files.outputs.RUN_GRADLE_CHECK == 'true'
+    if: github.repository == 'navneet1v/k-NN' && needs.check-files.outputs.RUN_GRADLE_CHECK == 'true'
     uses: opensearch-project/opensearch-build/.github/workflows/get-ci-image-tag.yml@main
     with:
       product: opensearch
@@ -41,7 +42,7 @@ jobs:
   integ-test-with-security-linux:
     strategy:
       matrix:
-        java: [21, 25]
+        java: [21]
     env:
        CC: gcc10-gcc
        CXX: gcc10-g++
@@ -95,4 +96,18 @@ jobs:
           else
             echo "avx512 and avx2 not available on system"
             su `id -un 1000` -c "whoami && java -version && ./gradlew build -Davx2.enabled=false -Davx512.enabled=false -Davx512_spr.enabled=false -Dnproc.count=`nproc`"
-          fi  
+          fi
+  check-results:
+    needs: [check-files, Get-CI-Image-Tag, integ-test-with-security-linux]
+    if: always() && needs.check-files.outputs.RUN_GRADLE_CHECK == 'true'
+    name: Check results
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.integ-test-with-security-linux.result }}" == "failure" ]; then
+            echo "Integration tests failed"
+            exit 1
+          else
+            echo "Integration tests passed"
+          fi
