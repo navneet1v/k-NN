@@ -7,6 +7,7 @@ package org.opensearch.knn.memoryoptsearch.faiss;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorEncoding;
@@ -23,6 +24,7 @@ import java.util.function.Supplier;
  * The total storage size is calculated as `4 * dimension * number_of_vectors`, where `4` is the size of a float.
  * Please refer to IndexFlatL2 and IndexFlatIp in <a href="https://github.com/facebookresearch/faiss/blob/main/faiss/IndexFlat.h">...</a>.
  */
+@Log4j2
 public class FaissIndexFloatFlat extends FaissIndex {
     // Flat format for L2 metric
     public static final String IXF2 = "IxF2";
@@ -91,6 +93,18 @@ public class FaissIndexFloatFlat extends FaissIndex {
                 indexInput.seek(floatVectors.getBaseOffset() + internalVectorId * oneVectorByteSize);
                 indexInput.readFloats(buffer, 0, buffer.length);
                 return buffer;
+            }
+
+            public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
+                if (ordsToPrefetch == null || numOrds <= 0) return;
+
+                log.debug("Prefetching [" + numOrds + "] vectors but ords size [" + ordsToPrefetch.length + "]");
+
+                // 1. calculate offset and prefetch immediately
+                for (int i = 0; i < numOrds; i++) {
+                    long offset = (long) ordsToPrefetch[i] * oneVectorByteSize;
+                    indexInput.prefetch(offset, oneVectorByteSize);
+                }
             }
 
             @Override

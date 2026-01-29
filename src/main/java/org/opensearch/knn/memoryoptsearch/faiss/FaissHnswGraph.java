@@ -195,6 +195,8 @@ public class FaissHnswGraph extends HnswGraph {
 
     @Override
     public int maxConn() {
-        return faissHnsw.getMaxNumNeighbors();
+        // We need to divide by 2 since at bottom layer we have M*2 connections but this function is asking for value
+        // of M.
+        return faissHnsw.getMaxNumNeighbors() / 2;
     }
 }
