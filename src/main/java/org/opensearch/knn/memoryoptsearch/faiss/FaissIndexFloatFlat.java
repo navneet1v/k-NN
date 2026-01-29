@@ -93,6 +93,16 @@ public class FaissIndexFloatFlat extends FaissIndex {
                 return buffer;
             }
 
+            public void prefetch(final int[] ordsToPrefetch) throws IOException {
+                if (ordsToPrefetch == null) return;
+
+                // 1. calculate offset and prefetch immediately
+                for (int i = 0; i < ordsToPrefetch.length; i++) {
+                    long offset = (long) ordsToPrefetch[i] * oneVectorByteSize;
+                    indexInput.prefetch(offset, oneVectorByteSize);
+                }
+            }
+
             @Override
             public FloatVectorValues copy() {
                 return new FloatVectorValuesImpl(indexInput.clone());

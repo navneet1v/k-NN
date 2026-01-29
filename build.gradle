@@ -20,7 +20,7 @@ buildscript {
         opensearch_group = "org.opensearch"
         isSnapshot = "true" == System.getProperty("build.snapshot", "true")
         avx2_enabled = System.getProperty("avx2.enabled")
-        nproc_count = System.getProperty("nproc.count", "1")
+        nproc_count = System.getProperty("nproc.count", "4")
         avx512_enabled = System.getProperty("avx512.enabled")
         avx512_spr_enabled = System.getProperty("avx512_spr.enabled")
         // This flag determines whether the CMake build system should apply a custom patch. It prevents build failures
