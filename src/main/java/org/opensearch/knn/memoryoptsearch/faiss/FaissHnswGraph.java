@@ -72,10 +72,11 @@ public class FaissHnswGraph extends HnswGraph {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-
-        // Fill the array with neighbor ids
-        int index = 0;
         try {
+            indexInput.prefetch(begin, end - begin);
+
+            // Fill the array with neighbor ids
+            int index = 0;
             for (long i = begin; i < end; i++) {
                 final int neighborId = indexInput.readInt();
                 // The idea is that a vector does not always have a complete list of neighbor vectors.
