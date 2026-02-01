@@ -5,9 +5,12 @@
 
 package org.opensearch.knn.memoryoptsearch.faiss;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.KnnVectorsReader;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.HnswGraph;
+import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
+import org.opensearch.knn.plugin.stats.KNNCounter;
 
 import java.io.IOException;
 import java.util.NoSuchElementException;
@@ -24,6 +27,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * <a href="https://github.com/apache/lucene/blob/92290a0201458152c9e03d199f38f2e8a479f045/lucene/core/src/java/org/apache/lucene/codecs/lucene99/Lucene99HnswVectorsReader.java#L467">OffHeapHnswGraph</a>
  * in Lucene.
  */
+@Log4j2
 public class FaissHnswGraph extends HnswGraph {
     private final FaissHNSW faissHnsw;
     private final IndexInput indexInput;
@@ -47,16 +51,41 @@ public class FaissHnswGraph extends HnswGraph {
      */
     @Override
     public void seek(int level, int internalVectorId) {
-        // Get a relative starting offset of neighbor list at `level`.
-        final long o = faissHnsw.getOffsetsReader().get(internalVectorId);
+        if (KNNFeatureFlags.isGraphCacheEnabled() && faissHnsw.neighborsCache.contains(internalVectorId, level)) {
+            KNNCounter.GRAPH_CACHE_HIT.increment();
+            KNNCounter.GRAPH_CACHE_TOTAL.increment();
+            int[] arr = faissHnsw.neighborsCache.load(internalVectorId, level);
+            if (arr != null) {
+                if (this.neighborIdList == null) {
+                    neighborIdList = new int[arr.length];
+                }
+                if (neighborIdList.length < arr.length) {
+                    neighborIdList = new int[arr.length];
+                }
+                System.arraycopy(arr, 0, neighborIdList, 0, arr.length);
+            }
+            numNeighbors = neighborIdList.length;
+            nextNeighborIndex = 0;
+            log.debug("Graph Cache Enabled and hit occurred");
+        } else {
+            // Get a relative starting offset of neighbor list at `level`.
+            final long o = faissHnsw.getOffsetsReader().get(internalVectorId);
 
-        // `begin` and `end` represent for a pair of staring offset and end offset.
-        // But, what `end` represents is the maximum offset a neighbor list at a level can have.
-        // Therefore, it is required to traverse a list until getting a terminal `-1`.
-        // Ex: [1, 5, 20, 100, -1, -1, ..., -1]
-        final long begin = o + faissHnsw.getCumNumberNeighborPerLevel()[level];
-        final long end = o + faissHnsw.getCumNumberNeighborPerLevel()[level + 1];
-        loadNeighborIdList(begin, end);
+            // `begin` and `end` represent for a pair of staring offset and end offset.
+            // But, what `end` represents is the maximum offset a neighbor list at a level can have.
+            // Therefore, it is required to traverse a list until getting a terminal `-1`.
+            // Ex: [1, 5, 20, 100, -1, -1, ..., -1]
+            final long begin = o + faissHnsw.getCumNumberNeighborPerLevel()[level];
+            final long end = o + faissHnsw.getCumNumberNeighborPerLevel()[level + 1];
+            loadNeighborIdList(begin, end);
+            if (KNNFeatureFlags.isGraphCacheEnabled()) {
+                KNNCounter.GRAPH_CACHE_MISS.increment();
+                KNNCounter.GRAPH_CACHE_TOTAL.increment();
+                faissHnsw.neighborsCache.put(internalVectorId, level, neighborIdList, this.numNeighbors);
+            } else {
+                log.debug("Graph Cache not enabled hence not putting vectors back.");
+            }
+        }
     }
 
     private void loadNeighborIdList(final long begin, final long end) {
@@ -73,7 +102,11 @@ public class FaissHnswGraph extends HnswGraph {
             throw new RuntimeException(e);
         }
         try {
-            indexInput.prefetch(begin, end - begin);
+            if (KNNFeatureFlags.isPrefetchEnabled()) {
+                indexInput.prefetch(begin, end - begin);
+            } else {
+                log.debug("Prefetch is disabled for neighbors");
+            }
 
             // Fill the array with neighbor ids
             int index = 0;

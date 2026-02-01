@@ -8,6 +8,7 @@ package org.opensearch.knn.memoryoptsearch.faiss;
 import lombok.Getter;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
+import org.opensearch.knn.memoryoptsearch.NeighborsCache;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -41,6 +42,7 @@ public class FaissHNSW {
     private int efSearch = 16;
     // Total number of vectors stored in graph.
     private long totalNumberOfVectors;
+    protected NeighborsCache neighborsCache;
 
     /**
      * Partially loads the FAISS HNSW graph from the provided index input stream.
@@ -57,6 +59,7 @@ public class FaissHNSW {
     public void load(IndexInput input, long totalNumberOfVectors) throws IOException {
         // Total number of vectors
         this.totalNumberOfVectors = totalNumberOfVectors;
+        this.neighborsCache = new NeighborsCache(Math.min(Math.toIntExact(totalNumberOfVectors), 50_000));
 
         // We don't use `double[] assignProbas` for search. It is for index construction.
         long size = input.readLong();

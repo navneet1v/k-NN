@@ -83,6 +83,7 @@ public class KNNStats {
         addModelStats(builder);
         addGraphStats(builder);
         addRemoteIndexBuildStats(builder);
+        addGraphCacheStats(builder);
         return builder.build();
     }
 
@@ -214,6 +215,18 @@ public class KNNStats {
 
     private void addRemoteIndexBuildStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {
         builder.put(StatNames.REMOTE_VECTOR_INDEX_BUILD_STATS.getName(), new KNNStat<>(false, this::createRemoteIndexStatsMap));
+    }
+
+    private void addGraphCacheStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {
+        builder.put(StatNames.GRAPH_CACHE_STATS.getName(), new KNNStat<>(false, this::createGraphCacheStats));
+    }
+
+    private Map<String, Long> createGraphCacheStats() {
+        Map<String, Long> stats = new HashMap<>();
+        stats.put(KNNCounter.GRAPH_CACHE_HIT.getName(), KNNCounter.GRAPH_CACHE_HIT.getCount());
+        stats.put(KNNCounter.GRAPH_CACHE_MISS.getName(), KNNCounter.GRAPH_CACHE_MISS.getCount());
+        stats.put(KNNCounter.GRAPH_CACHE_TOTAL.getName(), KNNCounter.GRAPH_CACHE_TOTAL.getCount());
+        return stats;
     }
 
     private Map<String, Map<String, Object>> createRemoteIndexStatsMap() {
