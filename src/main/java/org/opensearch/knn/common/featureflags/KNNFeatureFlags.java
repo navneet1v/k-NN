@@ -29,6 +29,7 @@ public class KNNFeatureFlags {
     // Feature flags
     private static final String KNN_FORCE_EVICT_CACHE_ENABLED = "knn.feature.cache.force_evict.enabled";
     public static final String KNN_PREFETCH_ENABLED = "knn.feature.prefetch.enabled";
+    public static final String KNN_GRAPH_PREFETCH_ENABLED = "knn.feature.prefetch.graph.enabled";
     public static final String KNN_GRAPH_CACHE_AVAILABLE = "knn.feature.graph_cache.enabled";
 
     @VisibleForTesting
@@ -46,15 +47,27 @@ public class KNNFeatureFlags {
         Dynamic
     );
 
+    public static final Setting<Boolean> KNN_GRAPH_PREFETCH_ENABLED_SETTING = Setting.boolSetting(
+        KNN_GRAPH_PREFETCH_ENABLED,
+        false,
+        NodeScope,
+        Dynamic
+    );
+
     public static final Setting<Boolean> KNN_GRAPH_CACHE_AVAILABLE_SETTING = Setting.boolSetting(
         KNN_GRAPH_CACHE_AVAILABLE,
-        true,
+        false,
         NodeScope,
         Dynamic
     );
 
     public static List<Setting<?>> getFeatureFlags() {
-        return ImmutableList.of(KNN_FORCE_EVICT_CACHE_ENABLED_SETTING, KNN_PREFETCH_ENABLED_SETTING, KNN_GRAPH_CACHE_AVAILABLE_SETTING);
+        return ImmutableList.of(
+            KNN_FORCE_EVICT_CACHE_ENABLED_SETTING,
+            KNN_PREFETCH_ENABLED_SETTING,
+            KNN_GRAPH_CACHE_AVAILABLE_SETTING,
+            KNN_GRAPH_PREFETCH_ENABLED_SETTING
+        );
     }
 
     /**
@@ -72,5 +85,9 @@ public class KNNFeatureFlags {
 
     public static boolean isGraphCacheEnabled() {
         return KNNSettings.state().getSettingValue(KNN_GRAPH_CACHE_AVAILABLE);
+    }
+
+    public static boolean isGraphPrefetchEnabled() {
+        return KNNSettings.state().getSettingValue(KNN_GRAPH_PREFETCH_ENABLED);
     }
 }

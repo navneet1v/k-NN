@@ -59,7 +59,9 @@ public class FaissHNSW {
     public void load(IndexInput input, long totalNumberOfVectors) throws IOException {
         // Total number of vectors
         this.totalNumberOfVectors = totalNumberOfVectors;
-        this.neighborsCache = new NeighborsCache(Math.min(Math.toIntExact(totalNumberOfVectors), 50_000));
+        // Cache all vectors in the segment for better hit rate
+        // Memory: ~100K vectors * 32 neighbors * 4 bytes = ~12.5MB per segment
+        this.neighborsCache = new NeighborsCache(Math.toIntExact(totalNumberOfVectors));
 
         // We don't use `double[] assignProbas` for search. It is for index construction.
         long size = input.readLong();

@@ -7,6 +7,7 @@ package org.opensearch.knn.memoryoptsearch.faiss;
 
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.KnnVectorsReader;
+import org.apache.lucene.internal.hppc.IntArrayList;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.HnswGraph;
 import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
@@ -32,7 +33,7 @@ public class FaissHnswGraph extends HnswGraph {
     private final FaissHNSW faissHnsw;
     private final IndexInput indexInput;
     private final int numVectors;
-    private int[] neighborIdList;
+    private IntArrayList neighborIdList;
     private int numNeighbors;
     private int nextNeighborIndex;
 
@@ -51,49 +52,55 @@ public class FaissHnswGraph extends HnswGraph {
      */
     @Override
     public void seek(int level, int internalVectorId) {
-        if (KNNFeatureFlags.isGraphCacheEnabled() && faissHnsw.neighborsCache.contains(internalVectorId, level)) {
-            KNNCounter.GRAPH_CACHE_HIT.increment();
-            KNNCounter.GRAPH_CACHE_TOTAL.increment();
-            int[] arr = faissHnsw.neighborsCache.load(internalVectorId, level);
-            if (arr != null) {
-                if (this.neighborIdList == null) {
-                    neighborIdList = new int[arr.length];
-                }
-                if (neighborIdList.length < arr.length) {
-                    neighborIdList = new int[arr.length];
-                }
-                System.arraycopy(arr, 0, neighborIdList, 0, arr.length);
-            }
-            numNeighbors = neighborIdList.length;
-            nextNeighborIndex = 0;
-            log.debug("Graph Cache Enabled and hit occurred");
-        } else {
-            // Get a relative starting offset of neighbor list at `level`.
-            final long o = faissHnsw.getOffsetsReader().get(internalVectorId);
-
-            // `begin` and `end` represent for a pair of staring offset and end offset.
-            // But, what `end` represents is the maximum offset a neighbor list at a level can have.
-            // Therefore, it is required to traverse a list until getting a terminal `-1`.
-            // Ex: [1, 5, 20, 100, -1, -1, ..., -1]
-            final long begin = o + faissHnsw.getCumNumberNeighborPerLevel()[level];
-            final long end = o + faissHnsw.getCumNumberNeighborPerLevel()[level + 1];
-            loadNeighborIdList(begin, end);
-            if (KNNFeatureFlags.isGraphCacheEnabled()) {
-                KNNCounter.GRAPH_CACHE_MISS.increment();
+        if (KNNFeatureFlags.isGraphCacheEnabled()) {
+            IntArrayList arr = faissHnsw.neighborsCache.load(internalVectorId, level);
+            if (arr != null && !arr.isEmpty()) {
+                KNNCounter.GRAPH_CACHE_HIT.increment();
                 KNNCounter.GRAPH_CACHE_TOTAL.increment();
-                faissHnsw.neighborsCache.put(internalVectorId, level, neighborIdList, this.numNeighbors);
+                // this copy might be needed later on.
+                // if (this.neighborIdList == null) {
+                // neighborIdList = new int[arr.length];
+                // }
+                // if (neighborIdList.length < arr.length) {
+                // neighborIdList = new int[arr.length];
+                // }
+                // System.arraycopy(arr, 0, neighborIdList, 0, arr.length);
+                neighborIdList = arr;
+                numNeighbors = neighborIdList.size();
+                nextNeighborIndex = 0;
+                log.debug("Graph Cache Enabled and hit occurred");
+                return;
             } else {
-                log.debug("Graph Cache not enabled hence not putting vectors back.");
+                log.debug("Graph Cache Enabled and hit didn't occur");
             }
+        }
+        // Get a relative starting offset of neighbor list at `level`.
+        final long o = faissHnsw.getOffsetsReader().get(internalVectorId);
+
+        // `begin` and `end` represent for a pair of staring offset and end offset.
+        // But, what `end` represents is the maximum offset a neighbor list at a level can have.
+        // Therefore, it is required to traverse a list until getting a terminal `-1`.
+        // Ex: [1, 5, 20, 100, -1, -1, ..., -1]
+        final long begin = o + faissHnsw.getCumNumberNeighborPerLevel()[level];
+        final long end = o + faissHnsw.getCumNumberNeighborPerLevel()[level + 1];
+        loadNeighborIdList(begin, end);
+        if (KNNFeatureFlags.isGraphCacheEnabled()) {
+            KNNCounter.GRAPH_CACHE_MISS.increment();
+            KNNCounter.GRAPH_CACHE_TOTAL.increment();
+            faissHnsw.neighborsCache.put(internalVectorId, level, neighborIdList);
+        } else {
+            log.debug("Graph Cache not enabled hence not putting vectors back.");
         }
     }
 
     private void loadNeighborIdList(final long begin, final long end) {
         // Make sure we have sufficient space for neighbor list
+        // create a new array since we are caching it.
         final long maxLength = end - begin;
-        if (neighborIdList == null || neighborIdList.length < maxLength) {
-            neighborIdList = new int[(int) (maxLength)];
-        }
+        // if (neighborIdList == null || neighborIdList.length < maxLength) {
+        // neighborIdList = new int[(int) (maxLength)];
+        // }
+        neighborIdList = new IntArrayList(); // new int[(int) (maxLength)];
 
         // Seek to the first offset of neighbor list
         try {
@@ -102,7 +109,7 @@ public class FaissHnswGraph extends HnswGraph {
             throw new RuntimeException(e);
         }
         try {
-            if (KNNFeatureFlags.isPrefetchEnabled()) {
+            if (KNNFeatureFlags.isGraphPrefetchEnabled()) {
                 indexInput.prefetch(begin, end - begin);
             } else {
                 log.debug("Prefetch is disabled for neighbors");
@@ -118,11 +125,13 @@ public class FaissHnswGraph extends HnswGraph {
                 // For example, if the neighbor list size is 16 and a vector has only 8 neighbors, the list would appear as:
                 // [1, 4, 6, 8, 13, 17, 60, 88, -1, -1, ..., -1].
                 if (neighborId >= 0) {
-                    neighborIdList[index++] = neighborId;
+                    index++;
+                    neighborIdList.add(neighborId);
                 } else {
                     break;
                 }
             }
+            assert neighborIdList.size() == index;
 
             // Set variables for navigation
             numNeighbors = index;
@@ -140,7 +149,9 @@ public class FaissHnswGraph extends HnswGraph {
     @Override
     public int nextNeighbor() {
         if (nextNeighborIndex < numNeighbors) {
-            return neighborIdList[nextNeighborIndex++];
+            int neighbor = neighborIdList.get(nextNeighborIndex);
+            nextNeighborIndex++;
+            return neighbor;
         }
 
         // Neighbor list has been exhausted.

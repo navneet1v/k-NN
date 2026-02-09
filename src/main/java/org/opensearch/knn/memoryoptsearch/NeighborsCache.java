@@ -5,14 +5,16 @@
 
 package org.opensearch.knn.memoryoptsearch;
 
+import org.apache.lucene.internal.hppc.IntArrayList;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class NeighborsCache {
 
-    private final Map<Integer, int[]> neighborsCache0;
-    private final Map<Integer, int[]> neighborsCache1;
-    private final Map<Integer, int[]> neighborsCache2;
+    private final Map<Integer, IntArrayList> neighborsCache0;
+    private final Map<Integer, IntArrayList> neighborsCache1;
+    private final Map<Integer, IntArrayList> neighborsCache2;
 
     // This is not a good implementation for prod. But this should help in making the POC easy to test.
     public NeighborsCache(int totalNumberOfVector) {
@@ -29,50 +31,20 @@ public class NeighborsCache {
         neighborsCache2 = new ConcurrentHashMap<>((int) Math.ceil((double) totalNumberOfVector / (16 * 16)));
     }
 
-    public void put(int nodeId, int level, int[] neighborsList, int numberOfNeighbors) {
-        int[] arr = new int[numberOfNeighbors];
-        System.arraycopy(neighborsList, 0, arr, 0, numberOfNeighbors);
+    public void put(int nodeId, int level, IntArrayList neighbors) {
         switch (level) {
-            case 0:
-                neighborsCache0.put(nodeId, arr);
-                break;
-            case 1:
-                neighborsCache1.put(nodeId, arr);
-                break;
-            case 2:
-                neighborsCache2.put(nodeId, arr);
-                break;
+            case 0 -> neighborsCache0.putIfAbsent(nodeId, neighbors);
+            case 1 -> neighborsCache1.putIfAbsent(nodeId, neighbors);
+            case 2 -> neighborsCache2.putIfAbsent(nodeId, neighbors);
         }
     }
 
-    public int[] load(int nodeId, int level) {
-        int[] arr = null;
-        switch (level) {
-            case 0:
-                if (neighborsCache0.containsKey(nodeId)) {
-                    arr = neighborsCache0.get(nodeId);
-                }
-                break;
-            case 1:
-                if (neighborsCache1.containsKey(nodeId)) {
-                    arr = neighborsCache1.get(nodeId);
-                }
-                break;
-            case 2:
-                if (neighborsCache2.containsKey(nodeId)) {
-                    arr = neighborsCache2.get(nodeId);
-                }
-                break;
-        }
-        return arr;
-    }
-
-    public boolean contains(int nodeId, int level) {
+    public IntArrayList load(int nodeId, int level) {
         return switch (level) {
-            case 0 -> neighborsCache0.containsKey(nodeId);
-            case 1 -> neighborsCache1.containsKey(nodeId);
-            case 2 -> neighborsCache2.containsKey(nodeId);
-            default -> false;
+            case 0 -> neighborsCache0.get(nodeId);
+            case 1 -> neighborsCache1.get(nodeId);
+            case 2 -> neighborsCache2.get(nodeId);
+            default -> null;
         };
     }
 
