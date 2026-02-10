@@ -59,6 +59,11 @@ public class NativeRandomVectorScorer implements RandomVectorScorer {
         SimdVectorComputeService.saveSearchContext(query, addressAndSize, nativeFunctionTypeOrd);
     }
 
+    @Override
+    public void prefetch(int[] prefetchOrds, int ordsCount) throws IOException {
+        knnVectorValues.prefetch(prefetchOrds, ordsCount);
+    }
+
     /**
      * Computes similarity scores for multiple vectors in bulk using native SIMD code.
      *

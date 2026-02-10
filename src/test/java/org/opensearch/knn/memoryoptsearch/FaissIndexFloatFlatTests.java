@@ -248,6 +248,47 @@ public class FaissIndexFloatFlatTests extends KNNTestCase {
         56.9075f,
         20.0894f };
 
+    @SneakyThrows
+    public void testPrefetch_whenValidOrds_thenPrefetchCalledWithCorrectOffsets() {
+        // Load index
+        IndexInput indexInput = loadFlatFloatVectors(FaissIndexFloatFlat.IXF2);
+        final FaissIndex faissIndex = FaissIndex.load(indexInput);
+
+        // Create tracking IndexInput
+        indexInput = loadFlatFloatVectors(FaissIndexFloatFlat.IXF2);
+        final TrackingIndexInput trackingInput = new TrackingIndexInput(indexInput);
+
+        // Get FloatVectorValues and call prefetch
+        final FloatVectorValues values = faissIndex.getFloatValues(trackingInput);
+        final int[] ordsToPrefetch = new int[] { 0, 5, 49 };
+        values.prefetch(ordsToPrefetch, ordsToPrefetch.length);
+
+        // Verify prefetch was called with correct offsets
+        // Header size = 4 (index type) + common header, vector size = 128 * 4 = 512 bytes
+        final long oneVectorByteSize = DIMENSION * Float.BYTES;
+        assertEquals(3, trackingInput.prefetchCalls.size());
+        for (int i = 0; i < ordsToPrefetch.length; i++) {
+            long expectedOffset = trackingInput.prefetchCalls.get(i).offset();
+            // Offset should be baseOffset + ord * vectorSize
+            assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
+            assertEquals(oneVectorByteSize, trackingInput.prefetchCalls.get(i).length());
+        }
+    }
+
+    @SneakyThrows
+    public void testPrefetch_whenNullOrds_thenNoOp() {
+        IndexInput indexInput = loadFlatFloatVectors(FaissIndexFloatFlat.IXF2);
+        final FaissIndex faissIndex = FaissIndex.load(indexInput);
+
+        indexInput = loadFlatFloatVectors(FaissIndexFloatFlat.IXF2);
+        final TrackingIndexInput trackingInput = new TrackingIndexInput(indexInput);
+
+        final FloatVectorValues values = faissIndex.getFloatValues(trackingInput);
+        values.prefetch(null, 0);
+
+        assertEquals(0, trackingInput.prefetchCalls.size());
+    }
+
     private static final float[] ANSWER_LAST_VECTORS = new float[] {
         94.5368f,
         17.7749f,

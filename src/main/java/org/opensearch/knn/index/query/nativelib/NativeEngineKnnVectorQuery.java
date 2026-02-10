@@ -469,6 +469,7 @@ public class NativeEngineKnnVectorQuery extends Query {
                     .isMemoryOptimizedSearchEnabled(knnQuery.isMemoryOptimizedSearch())
                     .parentsFilter(knnQuery.getParentsFilter())
                     .build();
+
                 TopDocs rescoreResult = knnWeight.exactSearch(leafReaderContext, exactSearcherContext);
                 return new PerLeafResult(
                     perLeafeResult.getFilterBits(),

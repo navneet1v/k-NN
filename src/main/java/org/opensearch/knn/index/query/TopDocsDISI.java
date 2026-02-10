@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.query;
 
+import lombok.Getter;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.TopDocs;
 
@@ -20,6 +21,8 @@ import java.util.Comparator;
  */
 public class TopDocsDISI extends DocIdSetIterator {
 
+    // Allow consumers to peek into the candidate sortedDocIds for prefetch
+    @Getter
     private final int[] sortedDocIds;
     private final float[] scores;
     private int idx = -1;

@@ -63,6 +63,11 @@ public class KNN9120BinaryVectorScorer implements FlatVectorsScorer {
         }
 
         @Override
+        public void prefetch(int[] prefetchOrds, int numOrds) throws IOException {
+            vectorValues.prefetch(prefetchOrds, numOrds);
+        }
+
+        @Override
         public float score(int node) throws IOException {
             return KNNVectorSimilarityFunction.HAMMING.compare(queryVector, vectorValues.vectorValue(node));
         }

@@ -16,6 +16,7 @@ import org.opensearch.knn.memoryoptsearch.faiss.FlatVectorsScorerProvider;
 
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class FlatVectorsScorerProviderTests extends KNNTestCase {
@@ -104,5 +105,25 @@ public class FlatVectorsScorerProviderTests extends KNNTestCase {
             final float expected = knnVectorSimilarityFunction.compare(BYTE_VECTOR, BYTE_QUERY);
             assertEquals(expected, score, 1e-6);
         }
+    }
+
+    @SneakyThrows
+    public void testHammingScorer_prefetch_whenCalled_thenDelegatesToByteVectorValues() {
+        // Get hamming scorer
+        final FlatVectorsScorer scorer = FlatVectorsScorerProvider.getFlatVectorsScorer(KNNVectorSimilarityFunction.HAMMING);
+
+        // Create mock ByteVectorValues
+        final ByteVectorValues byteVectorValues = mock(ByteVectorValues.class);
+        when(byteVectorValues.vectorValue(anyInt())).thenReturn(BYTE_VECTOR);
+
+        // Get the RandomVectorScorer
+        final RandomVectorScorer vectorScorer = scorer.getRandomVectorScorer(null, byteVectorValues, BYTE_QUERY);
+
+        // Call prefetch on the scorer
+        final int[] prefetchOrds = new int[] { 0, 1, 2 };
+        vectorScorer.prefetch(prefetchOrds, prefetchOrds.length);
+
+        // Verify that prefetch was delegated to ByteVectorValues
+        verify(byteVectorValues).prefetch(prefetchOrds, prefetchOrds.length);
     }
 }

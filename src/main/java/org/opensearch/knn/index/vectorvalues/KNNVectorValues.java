@@ -114,4 +114,17 @@ public abstract class KNNVectorValues<T> {
     public int nextDoc() throws IOException {
         return vectorValuesIterator.nextDoc();
     }
+
+
+    /**
+     * Prefetches vector data for the given sorted doc IDs by delegating to the underlying
+     * iterator. This is useful for pre-loading vector pages from disk before the scoring loop begins.
+     *
+     * @param sortedDocIds sorted array of document IDs to prefetch
+     * @throws IOException if an I/O error occurs during prefetch
+     */
+    public void prefetchByDocIds(final int[] sortedDocIds) throws IOException {
+        vectorValuesIterator.prefetchByDocIds(sortedDocIds);
+    }
+
 }

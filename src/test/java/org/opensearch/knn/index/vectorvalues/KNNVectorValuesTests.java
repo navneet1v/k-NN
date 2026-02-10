@@ -7,6 +7,8 @@ package org.opensearch.knn.index.vectorvalues;
 
 import lombok.SneakyThrows;
 import org.apache.lucene.index.DocsWithFieldSet;
+import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.opensearch.knn.KNNTestCase;
 import org.opensearch.knn.index.VectorDataType;
@@ -14,6 +16,8 @@ import org.opensearch.knn.index.VectorDataType;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+
+import static org.mockito.Mockito.*;
 
 public class KNNVectorValuesTests extends KNNTestCase {
 
@@ -105,6 +109,69 @@ public class KNNVectorValuesTests extends KNNTestCase {
             docsWithFieldSet.add(i);
         }
         return docsWithFieldSet;
+    }
+
+    // prefetch tests
+    @SneakyThrows
+    public void testPrefetchByDocIds_whenValidDocIds_thenConvertsToOrdsAndPrefetches() {
+        final FloatVectorValues mockKnnVectorValues = mock(FloatVectorValues.class);
+        final FloatVectorValues mockCopy = mock(FloatVectorValues.class);
+        final KnnVectorValues.DocIndexIterator mockIterator = mock(KnnVectorValues.DocIndexIterator.class);
+        final KnnVectorValues.DocIndexIterator mockCopyIterator = mock(KnnVectorValues.DocIndexIterator.class);
+
+        when(mockKnnVectorValues.iterator()).thenReturn(mockIterator);
+        when(mockKnnVectorValues.copy()).thenReturn(mockCopy);
+        when(mockCopy.iterator()).thenReturn(mockCopyIterator);
+
+        when(mockCopyIterator.advance(0)).thenReturn(0);
+        when(mockCopyIterator.advance(1)).thenReturn(1);
+        when(mockCopyIterator.advance(2)).thenReturn(2);
+        when(mockCopyIterator.index()).thenReturn(10, 20, 30);  // ords returned
+
+        final KNNVectorValuesIterator.DocIdsIteratorValues docIdsIteratorValues = new KNNVectorValuesIterator.DocIdsIteratorValues(
+            mockKnnVectorValues
+        );
+        final KNNFloatVectorValues knnFloatVectorValues = new KNNFloatVectorValues(docIdsIteratorValues);
+
+        final int[] sortedDocIds = new int[] { 0, 1, 2 };
+        knnFloatVectorValues.prefetchByDocIds(sortedDocIds);
+
+        verify(mockKnnVectorValues).prefetch(new int[] { 10, 20, 30 }, 3);
+    }
+
+    @SneakyThrows
+    public void testPrefetchByDocIds_whenNullOrEmpty_thenNoOp() {
+        final FloatVectorValues mockKnnVectorValues = mock(FloatVectorValues.class);
+        final KnnVectorValues.DocIndexIterator mockIterator = mock(KnnVectorValues.DocIndexIterator.class);
+        when(mockKnnVectorValues.iterator()).thenReturn(mockIterator);
+
+        final KNNVectorValuesIterator.DocIdsIteratorValues docIdsIteratorValues = new KNNVectorValuesIterator.DocIdsIteratorValues(
+            mockKnnVectorValues
+        );
+        final KNNFloatVectorValues knnFloatVectorValues = new KNNFloatVectorValues(docIdsIteratorValues);
+
+        knnFloatVectorValues.prefetchByDocIds(null);
+        verify(mockKnnVectorValues, never()).prefetch(any(), anyInt());
+
+        knnFloatVectorValues.prefetchByDocIds(new int[] {});
+        verify(mockKnnVectorValues, never()).prefetch(any(), anyInt());
+    }
+
+    @SneakyThrows
+    public void testPrefetchByDocIds_whenNotDocIdsIteratorValues_thenNoOp() {
+        final DocsWithFieldSet docsWithFieldSet = getDocIdSetIterator(2);
+        final Map<Integer, float[]> vectorsMap = Map.of(0, new float[] { 1, 2 }, 1, new float[] { 3, 4 });
+        final KNNFloatVectorValues knnFloatVectorValues = (KNNFloatVectorValues) KNNVectorValuesFactory.getVectorValues(
+            VectorDataType.FLOAT,
+            docsWithFieldSet,
+            vectorsMap
+        );
+
+        // Verify iterator is FieldWriterIteratorValues, not DocIdsIteratorValues
+        assertFalse(knnFloatVectorValues.vectorValuesIterator instanceof KNNVectorValuesIterator.DocIdsIteratorValues);
+
+        // prefetchByDocIds should return early without any side effects
+        knnFloatVectorValues.prefetchByDocIds(new int[] { 0, 1 });
     }
 
     private class CompareVectorValues<T> {
