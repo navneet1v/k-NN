@@ -96,7 +96,7 @@ public class FaissIndexFloatFlat extends FaissIndex {
             }
 
             public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
-                if (ordsToPrefetch == null || numOrds <= 0) return;
+                if (ordsToPrefetch == null || numOrds <= 1) return;
 
                 log.debug("Prefetching [" + numOrds + "] vectors but ords size [" + ordsToPrefetch.length + "]");
 
