@@ -15,6 +15,7 @@ import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.index.KNNVectorSimilarityFunction;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -30,6 +31,7 @@ public class FaissIndexFloatFlat extends FaissIndex {
     public static final String IXF2 = "IxF2";
     // Flat format for inner product metric
     public static final String IXFI = "IxFI";
+    private static long BYTES_128 = 128 * 1024;
 
     private static final Map<String, Supplier<KNNVectorSimilarityFunction>> INDEX_TYPE_TO_INDEX_FLOAT_FLAT = Map.of(
         IXF2,
@@ -98,12 +100,37 @@ public class FaissIndexFloatFlat extends FaissIndex {
             public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
                 if (ordsToPrefetch == null || numOrds <= 1) return;
 
-                log.debug("Prefetching [" + numOrds + "] vectors but ords size [" + ordsToPrefetch.length + "]");
-
                 // 1. calculate offset and prefetch immediately
+                long[] offsets = new long[numOrds];
                 for (int i = 0; i < numOrds; i++) {
-                    long offset = floatVectors.getBaseOffset() + ((long) ordsToPrefetch[i] * oneVectorByteSize);
-                    indexInput.prefetch(offset, oneVectorByteSize);
+                    offsets[i] = floatVectors.getBaseOffset() + ((long) ordsToPrefetch[i] * oneVectorByteSize);
+                }
+                Arrays.sort(offsets);
+                int j = 0;
+                for (int i = 1; i < numOrds; i++) {
+                    if (offsets[i] - offsets[j] > BYTES_128) {
+                        j++;
+                        offsets[j] = offsets[i];
+                    }
+                }
+                log.debug(
+                    "Prefetching compressed ["
+                        + j
+                        + "] vectors but ords size ["
+                        + ordsToPrefetch.length
+                        + "], "
+                        + "num of ords is ["
+                        + numOrds
+                        + " ]"
+                );
+                for (int i = 0; i <= j; i++) {
+                    // prefetch with 128KB size, may be at some time we should make sure that the long value overflow
+                    // doesn't happen
+                    long length = Math.min(BYTES_128, indexInput.length() - offsets[i]);
+                    indexInput.prefetch(offsets[i], length);
+                    if (length != BYTES_128) {
+                        break;
+                    }
                 }
             }
 
