@@ -15,7 +15,7 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.KnnVectorsFormat;
 import org.apache.lucene.codecs.KnnVectorsReader;
 import org.apache.lucene.codecs.KnnVectorsWriter;
-import org.apache.lucene.codecs.hnsw.DefaultFlatVectorScorer;
+import org.apache.lucene.codecs.hnsw.FlatVectorScorerUtil;
 import org.apache.lucene.codecs.hnsw.FlatVectorsFormat;
 import org.apache.lucene.codecs.lucene99.Lucene99FlatVectorsFormat;
 import org.apache.lucene.index.SegmentReadState;
@@ -39,11 +39,11 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
 
     public NativeEngines990KnnVectorsFormat() {
-        this(new Lucene99FlatVectorsFormat(new DefaultFlatVectorScorer()));
+        this(new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()));
     }
 
     public NativeEngines990KnnVectorsFormat(int approximateThreshold) {
-        this(new Lucene99FlatVectorsFormat(new DefaultFlatVectorScorer()), approximateThreshold);
+        this(new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()), approximateThreshold);
     }
 
     public NativeEngines990KnnVectorsFormat(final FlatVectorsFormat flatVectorsFormat) {
