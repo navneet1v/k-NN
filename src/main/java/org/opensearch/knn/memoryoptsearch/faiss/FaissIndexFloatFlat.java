@@ -12,6 +12,7 @@ import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.store.IndexInput;
+import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
 import org.opensearch.knn.index.KNNVectorSimilarityFunction;
 
 import java.io.IOException;
@@ -98,6 +99,51 @@ public class FaissIndexFloatFlat extends FaissIndex {
             }
 
             public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
+                if (KNNFeatureFlags.isExactPrefetch()) {
+                    prefetchExact(ordsToPrefetch, numOrds);
+                } else {
+                    prefetch128KB(ordsToPrefetch, numOrds);
+                }
+            }
+
+            public void prefetch128KB(final int[] ordsToPrefetch, int numOrds) throws IOException {
+                if (ordsToPrefetch == null || numOrds <= 1) return;
+
+                // 1. calculate offset and prefetch immediately
+                long[] offsets = new long[numOrds];
+                for (int i = 0; i < numOrds; i++) {
+                    offsets[i] = floatVectors.getBaseOffset() + ((long) ordsToPrefetch[i] * oneVectorByteSize);
+                }
+                Arrays.sort(offsets);
+                int j = 0;
+                for (int i = 1; i < numOrds; i++) {
+                    if (offsets[i] - offsets[j] > BYTES_128) {
+                        j++;
+                        offsets[j] = offsets[i];
+                    }
+                }
+                log.debug(
+                    "Prefetching compressed ["
+                        + j
+                        + "] vectors but ords size ["
+                        + ordsToPrefetch.length
+                        + "], "
+                        + "num of ords is ["
+                        + numOrds
+                        + " ] using 128KB prefetch size"
+                );
+                for (int i = 0; i <= j; i++) {
+                    // prefetch with 128KB size, may be at some time we should make sure that the long value overflow
+                    // doesn't happen
+                    long length = Math.min(BYTES_128, indexInput.length() - offsets[i]);
+                    indexInput.prefetch(offsets[i], length);
+                    if (length != BYTES_128) {
+                        break;
+                    }
+                }
+            }
+
+            public void prefetchExact(final int[] ordsToPrefetch, int numOrds) throws IOException {
                 if (ordsToPrefetch == null || numOrds <= 1) return;
 
                 // Calculate all offsets and sort
@@ -138,7 +184,7 @@ public class FaissIndexFloatFlat extends FaissIndex {
                         + "], "
                         + "num of ords is ["
                         + numOrds
-                        + " ]"
+                        + " ] using exact prefetch size"
                 );
 
                 // Prefetch each group with exact size
