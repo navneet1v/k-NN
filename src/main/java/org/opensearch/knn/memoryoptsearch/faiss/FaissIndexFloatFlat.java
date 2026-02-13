@@ -100,22 +100,39 @@ public class FaissIndexFloatFlat extends FaissIndex {
             public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
                 if (ordsToPrefetch == null || numOrds <= 1) return;
 
-                // 1. calculate offset and prefetch immediately
+                // Calculate all offsets and sort
                 long[] offsets = new long[numOrds];
                 for (int i = 0; i < numOrds; i++) {
                     offsets[i] = floatVectors.getBaseOffset() + ((long) ordsToPrefetch[i] * oneVectorByteSize);
                 }
                 Arrays.sort(offsets);
-                int j = 0;
+
+                // Group vectors within 128KB ranges
+                int[] groupStarts = new int[numOrds];
+                int[] groupEnds = new int[numOrds];
+                int groupCount = 0;
+
+                groupStarts[0] = 0;
+                int currentGroupStart = 0;
+
                 for (int i = 1; i < numOrds; i++) {
-                    if (offsets[i] - offsets[j] > BYTES_128) {
-                        j++;
-                        offsets[j] = offsets[i];
+                    if (offsets[i] - offsets[currentGroupStart] > BYTES_128) {
+                        // Close current group
+                        groupEnds[groupCount] = i - 1;
+                        groupCount++;
+
+                        // Start new group
+                        groupStarts[groupCount] = i;
+                        currentGroupStart = i;
                     }
                 }
+                // Close final group
+                groupEnds[groupCount] = numOrds - 1;
+                groupCount++;
+
                 log.debug(
                     "Prefetching compressed ["
-                        + j
+                        + groupCount
                         + "] vectors but ords size ["
                         + ordsToPrefetch.length
                         + "], "
@@ -123,14 +140,12 @@ public class FaissIndexFloatFlat extends FaissIndex {
                         + numOrds
                         + " ]"
                 );
-                for (int i = 0; i <= j; i++) {
-                    // prefetch with 128KB size, may be at some time we should make sure that the long value overflow
-                    // doesn't happen
-                    long length = Math.min(BYTES_128, indexInput.length() - offsets[i]);
-                    indexInput.prefetch(offsets[i], length);
-                    if (length != BYTES_128) {
-                        break;
-                    }
+
+                // Prefetch each group with exact size
+                for (int g = 0; g < groupCount; g++) {
+                    long startOffset = offsets[groupStarts[g]];
+                    long endOffset = offsets[groupEnds[g]] + oneVectorByteSize;
+                    indexInput.prefetch(startOffset, endOffset - startOffset);
                 }
             }
 
