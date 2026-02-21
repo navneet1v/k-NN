@@ -97,7 +97,6 @@ public class FaissIndexFloatFlat extends FaissIndex {
 
             @Override
             public void prefetch(final int[] ordsToPrefetch, int numOrds) throws IOException {
-                log.trace("Prefetching the float vectors");
                 PrefetchHelper.prefetch(indexInput, floatVectors.getBaseOffset(), oneVectorByteSize, ordsToPrefetch, numOrds);
             }
 

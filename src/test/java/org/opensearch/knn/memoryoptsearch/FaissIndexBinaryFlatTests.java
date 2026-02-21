@@ -124,12 +124,12 @@ public class FaissIndexBinaryFlatTests extends KNNTestCase {
         final int[] ordsToPrefetch = new int[] { 0, 5, 49 };
         values.prefetch(ordsToPrefetch, ordsToPrefetch.length);
 
-        assertEquals(3, trackingInput.prefetchCalls.size());
-        for (int i = 0; i < ordsToPrefetch.length; i++) {
-            long expectedOffset = trackingInput.prefetchCalls.get(i).offset();
-            assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
-            assertEquals(CODE_SIZE, trackingInput.prefetchCalls.get(i).length());
-        }
+        assertEquals(1, trackingInput.prefetchCalls.size());
+
+        long expectedOffset = trackingInput.prefetchCalls.get(0).offset();
+        assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
+        assertEquals((ordsToPrefetch[ordsToPrefetch.length - 1] * CODE_SIZE) + CODE_SIZE, trackingInput.prefetchCalls.get(0).length());
+
     }
 
     @SneakyThrows

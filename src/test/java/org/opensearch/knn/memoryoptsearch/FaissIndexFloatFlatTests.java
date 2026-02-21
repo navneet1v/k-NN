@@ -266,13 +266,16 @@ public class FaissIndexFloatFlatTests extends KNNTestCase {
         // Verify prefetch was called with correct offsets
         // Header size = 4 (index type) + common header, vector size = 128 * 4 = 512 bytes
         final long oneVectorByteSize = DIMENSION * Float.BYTES;
-        assertEquals(3, trackingInput.prefetchCalls.size());
-        for (int i = 0; i < ordsToPrefetch.length; i++) {
-            long expectedOffset = trackingInput.prefetchCalls.get(i).offset();
-            // Offset should be baseOffset + ord * vectorSize
-            assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
-            assertEquals(oneVectorByteSize, trackingInput.prefetchCalls.get(i).length());
-        }
+        assertEquals(1, trackingInput.prefetchCalls.size());
+
+        long expectedOffset = trackingInput.prefetchCalls.get(0).offset();
+        // Offset should be baseOffset + ord * vectorSize
+        assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
+        assertEquals(
+            (ordsToPrefetch[ordsToPrefetch.length - 1] * oneVectorByteSize) + oneVectorByteSize,
+            trackingInput.prefetchCalls.get(0).length()
+        );
+
     }
 
     @SneakyThrows
