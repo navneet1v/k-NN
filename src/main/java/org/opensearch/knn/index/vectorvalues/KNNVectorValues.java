@@ -115,7 +115,6 @@ public abstract class KNNVectorValues<T> {
         return vectorValuesIterator.nextDoc();
     }
 
-
     /**
      * Prefetches vector data for the given sorted doc IDs by delegating to the underlying
      * iterator. This is useful for pre-loading vector pages from disk before the scoring loop begins.

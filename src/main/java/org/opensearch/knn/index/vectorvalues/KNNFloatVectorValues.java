@@ -30,7 +30,6 @@ public class KNNFloatVectorValues extends KNNVectorValues<float[]> {
         return vector;
     }
 
-
     @Override
     public float[] conditionalCloneVector() throws IOException {
         float[] vector = getVector();

@@ -88,9 +88,7 @@ public class FaissIndexBinaryFlat extends FaissBinaryIndex {
                 return new ByteVectorValuesImpl(indexInput.clone());
             }
 
-            @Override
             public void prefetch(int[] ordsToPrefetch, int numOrds) throws IOException {
-                log.trace("Prefetching the faiss index binary flat vectors");
                 PrefetchHelper.prefetch(indexInput, binaryFlatVectorSection.getBaseOffset(), codeSize, ordsToPrefetch, numOrds);
             }
         }

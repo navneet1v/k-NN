@@ -26,17 +26,21 @@ public class KNNFeatureFlags {
 
     // Feature flags
     private static final String KNN_FORCE_EVICT_CACHE_ENABLED = "knn.feature.cache.force_evict.enabled";
+    private static final String KNN_PREFETCH_TYPE_EXACT = "knn.feature.prefetch.type.exact";
+    private static final boolean KNN_PREFETCH_TYPE_EXACT_DEFAULT_VALUE = true;
 
     @VisibleForTesting
     public static final Setting<Boolean> KNN_FORCE_EVICT_CACHE_ENABLED_SETTING = Setting.boolSetting(
         KNN_FORCE_EVICT_CACHE_ENABLED,
-        false,
+        KNN_PREFETCH_TYPE_EXACT_DEFAULT_VALUE,
         NodeScope,
         Dynamic
     );
 
+    public static final Setting<Boolean> KNN_PREFETCH_TYPE_SETTING = Setting.boolSetting(KNN_PREFETCH_TYPE_EXACT, true, NodeScope, Dynamic);
+
     public static List<Setting<?>> getFeatureFlags() {
-        return ImmutableList.of(KNN_FORCE_EVICT_CACHE_ENABLED_SETTING);
+        return ImmutableList.of(KNN_FORCE_EVICT_CACHE_ENABLED_SETTING, KNN_PREFETCH_TYPE_SETTING);
     }
 
     /**
@@ -45,5 +49,12 @@ public class KNNFeatureFlags {
      */
     public static boolean isForceEvictCacheEnabled() {
         return Booleans.parseBoolean(KNNSettings.state().getSettingValue(KNN_FORCE_EVICT_CACHE_ENABLED).toString(), false);
+    }
+
+    public static boolean isExactVectorSizePrefetch() {
+        return Booleans.parseBoolean(
+            KNNSettings.state().getSettingValue(KNN_PREFETCH_TYPE_EXACT).toString(),
+            KNN_PREFETCH_TYPE_EXACT_DEFAULT_VALUE
+        );
     }
 }
