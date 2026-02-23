@@ -30,8 +30,8 @@ public class TopDocsDISITests extends OpenSearchTestCase {
             new ScoreDoc(0, 1.5f),
             new ScoreDoc(1, 1.2f),
             new ScoreDoc(2, 0.9f),
-            new ScoreDoc(3, 0.6f),
-            new ScoreDoc(4, 0.3f) };
+            new ScoreDoc(4, 0.6f),
+            new ScoreDoc(3, 0.3f) };
 
         topDocsDISI = new TopDocsDISI(new TopDocs(new TotalHits(totalHits, TotalHits.Relation.EQUAL_TO), sampleScoreDocs));
     }
@@ -77,7 +77,7 @@ public class TopDocsDISITests extends OpenSearchTestCase {
         assertEquals(0.9f, topDocsDISI.score(), 0.001f);
 
         topDocsDISI.advance(4);
-        assertEquals(0.3f, topDocsDISI.score(), 0.001f);
+        assertEquals(0.6f, topDocsDISI.score(), 0.001f);
     }
 
     public void testEmptyTopDocs() {
@@ -85,6 +85,12 @@ public class TopDocsDISITests extends OpenSearchTestCase {
         TopDocsDISI emptyDISI = new TopDocsDISI(TopDocsCollector.EMPTY_TOPDOCS);
         assertEquals(-1, emptyDISI.docID());
         assertEquals(0, emptyDISI.cost());
+    }
+
+    public void testGetSortedDocIds() {
+        int[] sortedDocIds = topDocsDISI.getSortedDocIds();
+        assertArrayEquals(new int[] { 0, 1, 2, 3, 4 }, sortedDocIds);
+
     }
 
 }

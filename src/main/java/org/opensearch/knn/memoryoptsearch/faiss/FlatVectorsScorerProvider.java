@@ -6,6 +6,7 @@
 package org.opensearch.knn.memoryoptsearch.faiss;
 
 import lombok.experimental.UtilityClass;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.hnsw.FlatVectorScorerUtil;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.index.ByteVectorValues;
@@ -21,6 +22,7 @@ import java.io.IOException;
 import java.util.EnumMap;
 import java.util.Map;
 
+@Log4j2
 @UtilityClass
 public class FlatVectorsScorerProvider {
     private static final FlatVectorsScorer DELEGATE_VECTOR_SCORER = FlatVectorScorerUtil.getLucene99FlatVectorsScorer();
@@ -145,6 +147,12 @@ public class FlatVectorsScorerProvider {
                     public float score(int internalVectorId) throws IOException {
                         final byte[] quantizedByteVector = byteVectorValues.vectorValue(internalVectorId);
                         return KNNVectorSimilarityFunction.HAMMING.compare(target, quantizedByteVector);
+                    }
+
+                    @Override
+                    public void prefetch(int[] prefetchOrds, int ordsCount) throws IOException {
+                        log.trace("prefetch in HammingFlatVectorsScorer");
+                        byteVectorValues.prefetch(prefetchOrds, ordsCount);
                     }
                 };
             }

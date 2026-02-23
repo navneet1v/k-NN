@@ -12,8 +12,11 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.Version;
@@ -39,6 +42,8 @@ import java.util.stream.Collectors;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.opensearch.knn.KNNRestTestCase.FIELD_NAME;
 import static org.opensearch.knn.KNNRestTestCase.INDEX_NAME;
@@ -204,6 +209,155 @@ public class ExactSearcherTests extends KNNTestCase {
             assertEquals(topDocs.scoreDocs.length, dataVectors.size());
             List<Float> actualScores = Arrays.stream(topDocs.scoreDocs).map(scoreDoc -> scoreDoc.score).toList();
             assertEquals(expectedScores, actualScores);
+        }
+    }
+
+    @SneakyThrows
+    public void testPrefetchVectorData_whenTopDocsDISI_thenPrefetchCalled() {
+        try (MockedStatic<KNNVectorValuesFactory> valuesFactoryMockedStatic = Mockito.mockStatic(KNNVectorValuesFactory.class)) {
+
+            final float[] queryVector = new float[] { 0.1f, 2.0f, 3.0f };
+            final SpaceType spaceType = SpaceType.L2;
+            final List<float[]> dataVectors = Arrays.asList(new float[] { 1.0f, 2.0f, 3.0f }, new float[] { 4.0f, 5.0f, 6.0f });
+
+            final TopDocs topDocs = new TopDocs(
+                new TotalHits(2, TotalHits.Relation.EQUAL_TO),
+                new ScoreDoc[] { new ScoreDoc(0, 1.0f), new ScoreDoc(1, 0.9f) }
+            );
+            final TopDocsDISI topDocsDISI = new TopDocsDISI(topDocs);
+
+            final ExactSearcher.ExactSearcherContext context = ExactSearcher.ExactSearcherContext.builder()
+                .matchedDocsIterator(topDocsDISI)
+                .numberOfMatchedDocs(2)
+                .k(2)
+                .field(FIELD_NAME)
+                .floatQueryVector(queryVector)
+                .build();
+
+            final LeafReaderContext leafReaderContext = mock(LeafReaderContext.class);
+            final SegmentReader reader = mock(SegmentReader.class);
+            when(leafReaderContext.reader()).thenReturn(reader);
+
+            final FSDirectory directory = mock(FSDirectory.class);
+            when(reader.directory()).thenReturn(directory);
+            final SegmentInfo segmentInfo = new SegmentInfo(
+                directory,
+                Version.LATEST,
+                Version.LATEST,
+                SEGMENT_NAME,
+                100,
+                false,
+                false,
+                KNNCodecVersion.CURRENT_DEFAULT,
+                Map.of(),
+                new byte[StringHelper.ID_LENGTH],
+                Map.of(),
+                Sort.RELEVANCE
+            );
+            segmentInfo.setFiles(Set.of());
+            final SegmentCommitInfo segmentCommitInfo = new SegmentCommitInfo(segmentInfo, 0, 0, 0, 0, 0, new byte[StringHelper.ID_LENGTH]);
+            when(reader.getSegmentInfo()).thenReturn(segmentCommitInfo);
+
+            final Path path = mock(Path.class);
+            when(directory.getDirectory()).thenReturn(path);
+            final FieldInfos fieldInfos = mock(FieldInfos.class);
+            final FieldInfo fieldInfo = mock(FieldInfo.class);
+            when(reader.getFieldInfos()).thenReturn(fieldInfos);
+            when(fieldInfos.fieldInfo(any())).thenReturn(fieldInfo);
+            when(fieldInfo.attributes()).thenReturn(
+                Map.of(
+                    SPACE_TYPE,
+                    spaceType.getValue(),
+                    KNN_ENGINE,
+                    KNNEngine.FAISS.getName(),
+                    PARAMETERS,
+                    String.format(Locale.ROOT, "{\"%s\":\"%s\"}", INDEX_DESCRIPTION_PARAMETER, "HNSW32")
+                )
+            );
+            when(fieldInfo.getAttribute(SPACE_TYPE)).thenReturn(spaceType.getValue());
+
+            KNNFloatVectorValues floatVectorValues = mock(KNNFloatVectorValues.class);
+            valuesFactoryMockedStatic.when(() -> KNNVectorValuesFactory.getVectorValues(fieldInfo, reader)).thenReturn(floatVectorValues);
+            when(floatVectorValues.nextDoc()).thenReturn(0, 1, NO_MORE_DOCS);
+            when(floatVectorValues.getVector()).thenReturn(dataVectors.get(0), dataVectors.get(1));
+
+            ExactSearcher exactSearcher = new ExactSearcher(null);
+            exactSearcher.searchLeaf(leafReaderContext, context);
+
+            verify(floatVectorValues).prefetchByDocIds(topDocsDISI.getSortedDocIds());
+        }
+    }
+
+    @SneakyThrows
+    public void testPrefetchVectorData_whenNotTopDocsDISI_thenNoPrefetch() {
+        try (MockedStatic<KNNVectorValuesFactory> valuesFactoryMockedStatic = Mockito.mockStatic(KNNVectorValuesFactory.class)) {
+            // Setup mocks
+            final float[] queryVector = new float[] { 0.1f, 2.0f, 3.0f };
+            final SpaceType spaceType = SpaceType.L2;
+            final List<float[]> dataVectors = Arrays.asList(new float[] { 1.0f, 2.0f, 3.0f }, new float[] { 4.0f, 5.0f, 6.0f });
+
+            final DocIdSetIterator regularIterator = mock(DocIdSetIterator.class);
+            when(regularIterator.nextDoc()).thenReturn(0, 1, NO_MORE_DOCS);
+
+            final ExactSearcher.ExactSearcherContext context = ExactSearcher.ExactSearcherContext.builder()
+                .matchedDocsIterator(regularIterator)
+                .numberOfMatchedDocs(2)
+                .k(2)
+                .field(FIELD_NAME)
+                .floatQueryVector(queryVector)
+                .build();
+
+            final LeafReaderContext leafReaderContext = mock(LeafReaderContext.class);
+            final SegmentReader reader = mock(SegmentReader.class);
+            when(leafReaderContext.reader()).thenReturn(reader);
+
+            final FSDirectory directory = mock(FSDirectory.class);
+            when(reader.directory()).thenReturn(directory);
+            final SegmentInfo segmentInfo = new SegmentInfo(
+                directory,
+                Version.LATEST,
+                Version.LATEST,
+                SEGMENT_NAME,
+                100,
+                false,
+                false,
+                KNNCodecVersion.CURRENT_DEFAULT,
+                Map.of(),
+                new byte[StringHelper.ID_LENGTH],
+                Map.of(),
+                Sort.RELEVANCE
+            );
+            segmentInfo.setFiles(Set.of());
+            final SegmentCommitInfo segmentCommitInfo = new SegmentCommitInfo(segmentInfo, 0, 0, 0, 0, 0, new byte[StringHelper.ID_LENGTH]);
+            when(reader.getSegmentInfo()).thenReturn(segmentCommitInfo);
+
+            final Path path = mock(Path.class);
+            when(directory.getDirectory()).thenReturn(path);
+            final FieldInfos fieldInfos = mock(FieldInfos.class);
+            final FieldInfo fieldInfo = mock(FieldInfo.class);
+            when(reader.getFieldInfos()).thenReturn(fieldInfos);
+            when(fieldInfos.fieldInfo(any())).thenReturn(fieldInfo);
+            when(fieldInfo.attributes()).thenReturn(
+                Map.of(
+                    SPACE_TYPE,
+                    spaceType.getValue(),
+                    KNN_ENGINE,
+                    KNNEngine.FAISS.getName(),
+                    PARAMETERS,
+                    String.format(Locale.ROOT, "{\"%s\":\"%s\"}", INDEX_DESCRIPTION_PARAMETER, "HNSW32")
+                )
+            );
+            when(fieldInfo.getAttribute(SPACE_TYPE)).thenReturn(spaceType.getValue());
+
+            KNNFloatVectorValues floatVectorValues = mock(KNNFloatVectorValues.class);
+            valuesFactoryMockedStatic.when(() -> KNNVectorValuesFactory.getVectorValues(fieldInfo, reader)).thenReturn(floatVectorValues);
+            when(floatVectorValues.nextDoc()).thenReturn(0, 1, NO_MORE_DOCS);
+            when(floatVectorValues.getVector()).thenReturn(dataVectors.get(0), dataVectors.get(1));
+
+            ExactSearcher exactSearcher = new ExactSearcher(null);
+            exactSearcher.searchLeaf(leafReaderContext, context);
+
+            verify(floatVectorValues, never()).prefetchByDocIds(any());
         }
     }
 }

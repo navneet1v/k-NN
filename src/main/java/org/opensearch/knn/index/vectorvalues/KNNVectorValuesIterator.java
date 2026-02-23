@@ -67,6 +67,15 @@ public interface KNNVectorValuesIterator {
     VectorValueExtractorStrategy getVectorExtractorStrategy();
 
     /**
+     * Prefetches vector data for the given sorted doc IDs. Default implementation is a no-op.
+     * Subclasses that have access to underlying {@link KnnVectorValues} should override this.
+     *
+     * @param sortedDocIds sorted array of document IDs to prefetch
+     * @throws IOException if an I/O error occurs during prefetch
+     */
+    default void prefetchByDocIds(final int[] sortedDocIds) throws IOException {}
+
+    /**
      * Abstract base class for KNN vector iterators, encapsulating common iteration logic.
      */
     abstract class AbstractVectorValuesIterator implements KNNVectorValuesIterator {
@@ -146,6 +155,27 @@ public interface KNNVectorValuesIterator {
         @Override
         public VectorValueExtractorStrategy getVectorExtractorStrategy() {
             return new VectorValueExtractorStrategy.DISIVectorExtractor();
+        }
+
+        @Override
+        public void prefetchByDocIds(final int[] sortedDocIds) throws IOException {
+            if (sortedDocIds == null || sortedDocIds.length == 0) {
+                return;
+            }
+            if (knnVectorValues == null) {
+                return;
+            }
+
+            // copy the iterator and use it to fetch docIDs to ord
+            final KnnVectorValues knnVectorValuesCopy = knnVectorValues.copy();
+            final KnnVectorValues.DocIndexIterator ordIterator = knnVectorValuesCopy.iterator();
+            final int[] ordsToPrefetch = new int[sortedDocIds.length];
+            for (int i = 0; i < sortedDocIds.length; i++) {
+                ordIterator.advance(sortedDocIds[i]);
+                ordsToPrefetch[i] = ordIterator.index();
+            }
+
+            knnVectorValues.prefetch(ordsToPrefetch, ordsToPrefetch.length);
         }
 
     }

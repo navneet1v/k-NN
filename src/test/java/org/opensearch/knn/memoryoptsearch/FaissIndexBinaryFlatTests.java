@@ -109,6 +109,43 @@ public class FaissIndexBinaryFlatTests extends KNNTestCase {
         }
     }
 
+    @SneakyThrows
+    public void testPrefetch_whenValidOrds_thenPrefetchCalledWithCorrectOffsets() {
+        // Load index
+        IndexInput indexInput = loadFlatBinaryVectors();
+        final FaissIndex faissIndex = FaissIndex.load(indexInput);
+
+        // Create tracking IndexInput
+        indexInput = loadFlatBinaryVectors();
+        final TrackingIndexInput trackingInput = new TrackingIndexInput(indexInput);
+
+        // Get ByteVectorValues and call prefetch
+        final ByteVectorValues values = faissIndex.getByteValues(trackingInput);
+        final int[] ordsToPrefetch = new int[] { 0, 5, 49 };
+        values.prefetch(ordsToPrefetch, ordsToPrefetch.length);
+
+        assertEquals(3, trackingInput.prefetchCalls.size());
+        for (int i = 0; i < ordsToPrefetch.length; i++) {
+            long expectedOffset = trackingInput.prefetchCalls.get(i).offset();
+            assertTrue("Prefetch offset should be positive", expectedOffset >= 0);
+            assertEquals(CODE_SIZE, trackingInput.prefetchCalls.get(i).length());
+        }
+    }
+
+    @SneakyThrows
+    public void testPrefetch_whenNullOrds_thenNoOp() {
+        IndexInput indexInput = loadFlatBinaryVectors();
+        final FaissIndex faissIndex = FaissIndex.load(indexInput);
+
+        indexInput = loadFlatBinaryVectors();
+        final TrackingIndexInput trackingInput = new TrackingIndexInput(indexInput);
+
+        final ByteVectorValues values = faissIndex.getByteValues(trackingInput);
+        values.prefetch(null, 0);
+
+        assertEquals(0, trackingInput.prefetchCalls.size());
+    }
+
     private static final byte[] FIRST_VECTOR = new byte[] {
         75,
         -23,
