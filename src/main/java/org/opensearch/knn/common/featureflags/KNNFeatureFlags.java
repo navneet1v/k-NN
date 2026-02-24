@@ -27,7 +27,9 @@ public class KNNFeatureFlags {
     // Feature flags
     private static final String KNN_FORCE_EVICT_CACHE_ENABLED = "knn.feature.cache.force_evict.enabled";
     private static final String KNN_PREFETCH_ENABLED = "knn.feature.prefetch.enabled";
+    private static final String KNN_PREFETCH_ALL_DOCS = "knn.feature.prefetch.allDocs.enabled";
     private static final boolean KNN_PREFETCH_ENABLED_DEFAULT_VALUE = true;
+    private static final boolean KNN_PREFETCH_ALL_DOCS_DEFAULT_VALUE = true;
 
     @VisibleForTesting
     public static final Setting<Boolean> KNN_FORCE_EVICT_CACHE_ENABLED_SETTING = Setting.boolSetting(
@@ -44,8 +46,15 @@ public class KNNFeatureFlags {
         Dynamic
     );
 
+    public static final Setting<Boolean> KNN_PREFETCH_ALL_DOCS_SETTING = Setting.boolSetting(
+        KNN_PREFETCH_ALL_DOCS,
+        KNN_PREFETCH_ALL_DOCS_DEFAULT_VALUE,
+        NodeScope,
+        Dynamic
+    );
+
     public static List<Setting<?>> getFeatureFlags() {
-        return ImmutableList.of(KNN_FORCE_EVICT_CACHE_ENABLED_SETTING, KNN_PREFETCH_ENABLED_SETTING);
+        return ImmutableList.of(KNN_FORCE_EVICT_CACHE_ENABLED_SETTING, KNN_PREFETCH_ALL_DOCS_SETTING, KNN_PREFETCH_ENABLED_SETTING);
     }
 
     /**
@@ -60,6 +69,13 @@ public class KNNFeatureFlags {
         return Booleans.parseBoolean(
             KNNSettings.state().getSettingValue(KNN_PREFETCH_ENABLED).toString(),
             KNN_PREFETCH_ENABLED_DEFAULT_VALUE
+        );
+    }
+
+    public static boolean isAllDocsPrefetchEnabled() {
+        return Booleans.parseBoolean(
+            KNNSettings.state().getSettingValue(KNN_PREFETCH_ALL_DOCS).toString(),
+            KNN_PREFETCH_ALL_DOCS_DEFAULT_VALUE
         );
     }
 }

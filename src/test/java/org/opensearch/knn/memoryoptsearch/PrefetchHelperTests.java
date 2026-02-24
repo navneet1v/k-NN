@@ -43,6 +43,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenPrefetchDisabled_thenNoPrefetch() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(false);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(200 * 1024);
             int[] ords = { 0, 1, 2 };
             long vectorSize = 1024L;
@@ -55,6 +56,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenVectorsWithinSameGroup_thenSingleExactPrefetch() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(200 * 1024);
             int[] ords = { 0, 1, 2 };
             long vectorSize = 1024L;
@@ -68,6 +70,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenVectorsSpanMultipleGroups_thenMultipleExactPrefetches() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(500 * 1024);
             int[] ords = { 0, 100, 300 };
             long vectorSize = 1024L;
@@ -83,6 +86,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenNumOrdsLessThanArrayLength_thenOnlyPrefetchesNumOrds() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(200 * 1024);
             int[] ords = { 0, 1, 2, 3, 4 };
             PrefetchHelper.prefetch(trackingInput, 0L, 8L, ords, 2);
@@ -95,6 +99,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenUnorderedOrds_thenSortsAndGroups() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(500 * 1024);
             int[] ords = { 300, 0, 100 };
             long vectorSize = 1024L;
@@ -110,6 +115,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenBaseOffsetNonZero_thenOffsetsCalculatedCorrectly() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(200 * 1024);
             long baseOffset = 10000L;
             int[] ords = { 0, 1 };
@@ -124,6 +130,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenVectorsExactly128KBApart_thenCreatesNewGroup() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(300 * 1024);
             int[] ords = { 0, 128 };
             long vectorSize = 1024L;
@@ -139,6 +146,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenVectorsJustUnder128KBApart_thenSameGroup() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(300 * 1024);
             int[] ords = { 0, 127 };
             long vectorSize = 1024L;
@@ -152,6 +160,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenMultipleGroupsAndFileBoundary_thenRespectsFileLength() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             int fileSize = 350 * 1024;
             TrackingIndexInput trackingInput = createTrackingInput(fileSize);
             int[] ords = { 0, 100, 340 };
@@ -168,6 +177,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenFinalVectorEndsExactlyAtFileLength_thenPrefetchesExactly() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             int fileSize = 100 * 1024;
             TrackingIndexInput trackingInput = createTrackingInput(fileSize);
             int[] ords = { 0, 99 };
@@ -183,6 +193,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenGroupLengthExactly128KB_thenPrefetches128KB() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(300 * 1024);
             int[] ords = { 0, 127 };
             long vectorSize = 1024L;
@@ -196,6 +207,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenMultipleVectorsAt128KBIntervals_thenMultipleGroups() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(600 * 1024);
             int[] ords = { 0, 128, 256 };
             long vectorSize = 1024L;
@@ -213,6 +225,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenDuplicateOrds_thenSortsAndDeduplicatesInPrefetch() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(200 * 1024);
             int[] ords = { 5, 2, 5, 2, 10 };
             long vectorSize = 1024L;
@@ -226,6 +239,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenThreeOrMoreGroups_thenCreatesAllGroups() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(800 * 1024);
             int[] ords = { 0, 50, 200, 400, 600 };
             long vectorSize = 1024L;
@@ -245,6 +259,7 @@ public class PrefetchHelperTests extends KNNTestCase {
     public void testPrefetch_whenVectorEndExactly128KBPlusOneByte_thenCreatesNewGroup() throws IOException {
         try (MockedStatic<KNNFeatureFlags> mockedFlags = mockStatic(KNNFeatureFlags.class)) {
             mockedFlags.when(KNNFeatureFlags::isPrefetchEnabled).thenReturn(true);
+            mockedFlags.when(KNNFeatureFlags::isAllDocsPrefetchEnabled).thenReturn(false);
             TrackingIndexInput trackingInput = createTrackingInput(300 * 1024);
             int[] ords = { 0, 127 };
             long vectorSize = 1025L;

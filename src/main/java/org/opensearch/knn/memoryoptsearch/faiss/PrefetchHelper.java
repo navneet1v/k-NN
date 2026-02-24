@@ -64,7 +64,11 @@ public class PrefetchHelper {
             return;
         }
         if (KNNFeatureFlags.isPrefetchEnabled()) {
-            prefetchExactVectorSize(indexInput, baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
+            if (KNNFeatureFlags.isAllDocsPrefetchEnabled()) {
+                prefetchAllDocs(indexInput, baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
+            } else {
+                prefetchExactVectorSize(indexInput, baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
+            }
         } else {
             log.debug("KNNVectors Prefetch is disabled");
         }
@@ -106,6 +110,20 @@ public class PrefetchHelper {
         indexInput.prefetch(groupStartOffset, finalLength);
 
         log.trace("Prefetching compressed [{}] vectors where num of ords was [{}] using exact prefetch size", groupCount, numOrds);
+    }
+
+    private static void prefetchAllDocs(
+        final IndexInput indexInput,
+        final long baseOffset,
+        final long oneVectorByteSize,
+        final int[] ordsToPrefetch,
+        final int numOrds
+    ) throws IOException {
+        long[] offsets = calculateAndSortOffsets(baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
+        for (int i = 0; i < numOrds; i++) {
+            indexInput.prefetch(offsets[i], oneVectorByteSize);
+        }
+        log.trace("Prefetching all [{}] vectors where num of ords was [{}] using all prefetch stratergy", offsets.length, numOrds);
     }
 
     /**
