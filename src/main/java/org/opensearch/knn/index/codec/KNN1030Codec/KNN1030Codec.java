@@ -12,7 +12,7 @@ import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.FilterCodec;
 import org.apache.lucene.codecs.KnnVectorsFormat;
 import org.apache.lucene.codecs.StoredFieldsFormat;
-import org.apache.lucene.codecs.lucene103.Lucene103Codec;
+import org.apache.lucene.backward_codecs.lucene103.Lucene103Codec;
 import org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.knn.index.codec.KNN10010Codec.KNN10010DerivedSourceStoredFieldsFormat;
