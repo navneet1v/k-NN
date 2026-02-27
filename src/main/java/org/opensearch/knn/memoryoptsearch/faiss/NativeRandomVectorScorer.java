@@ -12,7 +12,6 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.opensearch.knn.jni.SimdVectorComputeService;
 
 import java.io.IOException;
-import java.util.Arrays;
 
 /**
  * A {@link RandomVectorScorer} implementation that offloads vector similarity computation
