@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.Setter;
+import org.opensearch.Version;
 import org.opensearch.common.ValidationException;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
@@ -85,10 +86,19 @@ public class KNNMethodContext implements ToXContentFragment, Writeable {
      * @throws IOException on stream failure
      */
     public KNNMethodContext(StreamInput in) throws IOException {
-        this.knnEngine = KNNEngine.getEngine(in.readString());
+        if (in.getVersion().onOrAfter(Version.V_3_7_0)) {
+            this.isEngineConfigured = in.readBoolean();
+            if (this.isEngineConfigured) {
+                this.knnEngine = KNNEngine.getEngine(in.readString());
+            } else {
+                this.knnEngine = KNNEngine.UNDEFINED;
+            }
+        } else {
+            this.knnEngine = KNNEngine.getEngine(in.readString());
+            this.isEngineConfigured = true;
+        }
         this.spaceType = SpaceType.getSpace(in.readString());
         this.methodComponentContext = new MethodComponentContext(in);
-        this.isEngineConfigured = true;
     }
 
     /**
@@ -227,7 +237,9 @@ public class KNNMethodContext implements ToXContentFragment, Writeable {
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.field(KNN_ENGINE, knnEngine.getName());
+        if (isEngineConfigured) {
+            builder.field(KNN_ENGINE, knnEngine.getName());
+        }
         builder.field(METHOD_PARAMETER_SPACE_TYPE, spaceType.getValue());
         builder = methodComponentContext.toXContent(builder, params);
         return builder;
@@ -254,7 +266,14 @@ public class KNNMethodContext implements ToXContentFragment, Writeable {
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        out.writeString(knnEngine.getName());
+        if (out.getVersion().onOrAfter(Version.V_3_7_0)) {
+            out.writeBoolean(isEngineConfigured);
+            if (isEngineConfigured) {
+                out.writeString(knnEngine.getName());
+            }
+        } else {
+            out.writeString(knnEngine.getName());
+        }
         out.writeString(spaceType.getValue());
         this.methodComponentContext.writeTo(out);
     }

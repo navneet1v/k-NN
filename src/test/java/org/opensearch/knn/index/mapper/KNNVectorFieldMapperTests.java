@@ -2743,4 +2743,147 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
             null
         );
     }
+
+    // ======================== ClusterANN Mapper Tests ========================
+
+    public void testTypeParser_clusterMethod_validFloat() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+            .endObject()
+            .endObject();
+
+        KNNVectorFieldMapper.Builder builder = (KNNVectorFieldMapper.Builder) typeParser.parse(
+            TEST_FIELD_NAME,
+            xContentBuilderToMap(xContentBuilder),
+            buildParserContext(TEST_INDEX_NAME, settings)
+        );
+
+        Mapper.BuilderContext builderContext = new Mapper.BuilderContext(settings, new ContentPath());
+        KNNVectorFieldMapper mapper = builder.build(builderContext);
+        assertTrue(mapper instanceof ClusterANNVectorFieldMapper);
+    }
+
+    public void testTypeParser_clusterMethod_rejectsEngine() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .field(KNN_ENGINE, KNNEngine.FAISS.getName())
+            .endObject()
+            .endObject();
+
+        expectThrows(
+            MapperParsingException.class,
+            () -> typeParser.parse(TEST_FIELD_NAME, xContentBuilderToMap(xContentBuilder), buildParserContext(TEST_INDEX_NAME, settings))
+        );
+    }
+
+    public void testTypeParser_clusterMethod_rejectsModeAndCompression() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .field(MODE_PARAMETER, Mode.ON_DISK.getName())
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .endObject()
+            .endObject();
+
+        expectThrows(
+            MapperParsingException.class,
+            () -> typeParser.parse(TEST_FIELD_NAME, xContentBuilderToMap(xContentBuilder), buildParserContext(TEST_INDEX_NAME, settings))
+        );
+    }
+
+    public void testTypeParser_clusterMethod_rejectsByteDataType() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .field(VECTOR_DATA_TYPE_FIELD, VectorDataType.BYTE.getValue())
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .endObject()
+            .endObject();
+
+        MapperParsingException e = expectThrows(
+            MapperParsingException.class,
+            () -> typeParser.parse(TEST_FIELD_NAME, xContentBuilderToMap(xContentBuilder), buildParserContext(TEST_INDEX_NAME, settings))
+        );
+        assertTrue(e.getMessage().contains("only supports float data type"));
+    }
+
+    public void testTypeParser_clusterMethod_rejectsBinaryDataType() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, 8)
+            .field(VECTOR_DATA_TYPE_FIELD, VectorDataType.BINARY.getValue())
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .endObject()
+            .endObject();
+
+        MapperParsingException e = expectThrows(
+            MapperParsingException.class,
+            () -> typeParser.parse(TEST_FIELD_NAME, xContentBuilderToMap(xContentBuilder), buildParserContext(TEST_INDEX_NAME, settings))
+        );
+        assertTrue(e.getMessage().contains("only supports float data type"));
+    }
+
+    public void testClusterMethod_alwaysUsesMemoryOptimizedSearch() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+            .endObject()
+            .endObject();
+
+        KNNVectorFieldMapper.Builder builder = (KNNVectorFieldMapper.Builder) typeParser.parse(
+            TEST_FIELD_NAME,
+            xContentBuilderToMap(xContentBuilder),
+            buildParserContext(TEST_INDEX_NAME, settings)
+        );
+
+        Mapper.BuilderContext builderContext = new Mapper.BuilderContext(settings, new ContentPath());
+        KNNVectorFieldMapper mapper = builder.build(builderContext);
+        assertTrue(mapper instanceof ClusterANNVectorFieldMapper);
+
+        KNNVectorFieldType fieldType = (KNNVectorFieldType) mapper.fieldType();
+        assertTrue("Cluster ANN fields must always use memory optimized search", fieldType.isAlwaysUseMemoryOptimizedSearch());
+    }
 }

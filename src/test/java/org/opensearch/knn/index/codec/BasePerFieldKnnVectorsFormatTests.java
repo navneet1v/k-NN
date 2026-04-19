@@ -21,6 +21,7 @@ import org.opensearch.knn.index.codec.params.KNNVectorsFormatParams;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodContext;
 import org.opensearch.knn.index.engine.MethodComponentContext;
+import org.opensearch.knn.index.engine.EngineLessCodecFormatResolver;
 import org.opensearch.knn.index.engine.faiss.FaissCodecFormatResolver;
 import org.opensearch.knn.index.engine.lucene.LuceneCodecFormatResolver;
 import org.opensearch.knn.index.mapper.KNNMappingConfig;
@@ -75,6 +76,7 @@ public class BasePerFieldKnnVectorsFormatTests extends KNNTestCase {
                 () -> DEFAULT_FORMAT,
                 new LuceneCodecFormatResolver(resolvers),
                 new FaissCodecFormatResolver(mapperService, new NativeIndexBuildStrategyFactory()),
+                new EngineLessCodecFormatResolver(),
                 new NativeIndexBuildStrategyFactory()
             );
         }
