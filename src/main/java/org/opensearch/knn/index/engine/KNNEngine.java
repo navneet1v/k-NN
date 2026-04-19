@@ -21,6 +21,7 @@ import java.util.Set;
 
 import static org.opensearch.knn.common.KNNConstants.FAISS_NAME;
 import static org.opensearch.knn.common.KNNConstants.LUCENE_NAME;
+import static org.opensearch.knn.common.KNNConstants.MAX_DIMENSIONS_SUPPORTED_BY_KNN_VECTOR_SEARCH;
 import static org.opensearch.knn.common.KNNConstants.NMSLIB_NAME;
 
 /**
@@ -42,15 +43,6 @@ public enum KNNEngine implements KNNLibrary {
     public static final Set<KNNEngine> ENGINES_SUPPORTING_RADIAL_SEARCH = ImmutableSet.of(KNNEngine.LUCENE, KNNEngine.FAISS);
     public static final Set<KNNEngine> DEPRECATED_ENGINES = ImmutableSet.of(KNNEngine.NMSLIB);
     public static final Set<KNNEngine> ENGINES_SUPPORTING_NESTED_FIELDS = ImmutableSet.of(KNNEngine.LUCENE, KNNEngine.FAISS);
-
-    private static Map<KNNEngine, Integer> MAX_DIMENSIONS_BY_ENGINE = Map.of(
-        KNNEngine.NMSLIB,
-        16_000,
-        KNNEngine.FAISS,
-        16_000,
-        KNNEngine.LUCENE,
-        16_000
-    );
 
     /**
      * Constructor for KNNEngine
@@ -159,7 +151,7 @@ public enum KNNEngine implements KNNLibrary {
      * @return
      */
     public static int getMaxDimensionByEngine(KNNEngine knnEngine) {
-        return MAX_DIMENSIONS_BY_ENGINE.getOrDefault(knnEngine, MAX_DIMENSIONS_BY_ENGINE.get(KNNEngine.DEFAULT));
+        return MAX_DIMENSIONS_SUPPORTED_BY_KNN_VECTOR_SEARCH;
     }
 
     /**

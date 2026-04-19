@@ -456,7 +456,9 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> imple
 
         // This could be null in the case of when a model did not have serialized methodComponent information
         final String method = methodComponentContext != null ? methodComponentContext.getName() : null;
-        if (method != null && !method.isBlank()) {
+        // TODO: Engine-less algorithms (e.g., cluster) skip engine-specific parameter validation because they have
+        // no KNNLibrary. Add algorithm-specific parameter validation for engine-less methods.
+        if (method != null && !method.isBlank() && knnEngine != KNNEngine.UNDEFINED) {
             final KNNLibrarySearchContext engineSpecificMethodContext = knnEngine.getKNNLibrarySearchContext(method);
             QueryContext queryContext = new QueryContext(vectorQueryType);
             ValidationException validationException = validateParameters(

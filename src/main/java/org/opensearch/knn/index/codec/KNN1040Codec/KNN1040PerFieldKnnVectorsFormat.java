@@ -22,6 +22,7 @@ import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategyFactor
 import org.opensearch.knn.index.codec.params.KNNScalarQuantizedVectorsFormatParams;
 import org.opensearch.knn.index.codec.params.KNNVectorsFormatParams;
 import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.engine.EngineLessCodecFormatResolver;
 import org.opensearch.knn.index.engine.faiss.FaissCodecFormatResolver;
 import org.opensearch.knn.index.engine.lucene.LuceneCodecFormatResolver;
 import org.opensearch.knn.index.engine.lucene.LuceneSQEncoder;
@@ -58,6 +59,7 @@ public class KNN1040PerFieldKnnVectorsFormat extends KNN1040BasePerFieldKnnVecto
             Lucene99HnswVectorsFormat::new,
             new LuceneCodecFormatResolver(buildLuceneFormatResolvers()),
             new FaissCodecFormatResolver(mapperService, nativeIndexBuildStrategyFactory),
+            new EngineLessCodecFormatResolver(),
             nativeIndexBuildStrategyFactory
         );
     }

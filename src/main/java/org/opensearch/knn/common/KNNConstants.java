@@ -36,6 +36,7 @@ public class KNNConstants {
     public static final String METHOD_PARAMETER_EF_CONSTRUCTION = "ef_construction";
     public static final String METHOD_PARAMETER_M = "m";
     public static final String METHOD_IVF = "ivf";
+    public static final String METHOD_CLUSTER = "cluster";
     public static final String METHOD_PARAMETER_NLIST = "nlist";
     public static final String METHOD_PARAMETER_SPACE_TYPE = "space_type"; // used for mapping parameter
     // used for defining toplevel parameter
@@ -220,4 +221,6 @@ public class KNNConstants {
     public static final int BYTE_ALIGNMENT_MASK = 7; // Used for rounding up to nearest byte (Byte.SIZE - 1)
     // Define here: https://github.com/opensearch-project/remote-vector-index-builder/blob/main/API.md#index-parameters
     public static final int MIN_DOCS_FOR_REMOTE_INDEX_BUILD = 4;
+
+    public static final int MAX_DIMENSIONS_SUPPORTED_BY_KNN_VECTOR_SEARCH = 16_000;
 }

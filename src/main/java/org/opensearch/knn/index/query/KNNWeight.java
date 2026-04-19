@@ -28,6 +28,7 @@ import org.opensearch.common.StopWatch;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.index.mapper.EngineLessMethod;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
@@ -48,6 +49,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.opensearch.knn.common.KNNConstants.KNN_ENGINE;
+import static org.opensearch.knn.common.KNNConstants.KNN_METHOD;
 import static org.opensearch.knn.common.KNNConstants.MODEL_ID;
 import static org.opensearch.knn.common.KNNConstants.SPACE_TYPE;
 import static org.opensearch.knn.common.KNNConstants.VECTOR_DATA_TYPE_FIELD;
@@ -495,7 +497,8 @@ public abstract class KNNWeight extends Weight {
         );
 
         List<String> engineFiles = KNNCodecUtil.getEngineFiles(knnEngine.getExtension(), knnQuery.getField(), reader.getSegmentInfo().info);
-        if (engineFiles.isEmpty()) {
+        // TODO: This is a temporary fix to support indices created before 2.10. Once we have a better way to handle this, we should remove this check.
+        if (engineFiles.isEmpty() && !EngineLessMethod.isEngineLess(fieldInfo.getAttribute(KNN_METHOD))) {
             log.debug("[KNN] No native engine files found for field {} for segment {}", knnQuery.getField(), reader.getSegmentName());
             return EMPTY_TOPDOCS;
         }

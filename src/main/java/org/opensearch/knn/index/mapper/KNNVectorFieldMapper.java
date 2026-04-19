@@ -74,6 +74,11 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
     public static final String CONTENT_TYPE = "knn_vector";
     public static final String KNN_FIELD = "knn_field";
 
+    private static final Map<EngineLessMethod, EngineLessMapperFactory> ENGINE_LESS_MAPPER_FACTORIES = Map.of(
+        EngineLessMethod.CLUSTER,
+        ClusterANNVectorFieldMapper::createFieldMapper
+    );
+
     private static KNNVectorFieldMapper toType(FieldMapper in) {
         return (KNNVectorFieldMapper) in;
     }
@@ -300,6 +305,27 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 );
             }
 
+            // Engine-less algorithm routing (e.g., cluster)
+            if (originalParameters.getKnnMethodContext() != null
+                && EngineLessMethod.isEngineLess(originalParameters.getKnnMethodContext().getMethodComponentContext().getName())) {
+                EngineLessMethod method = EngineLessMethod.fromName(
+                    originalParameters.getKnnMethodContext().getMethodComponentContext().getName()
+                );
+                return ENGINE_LESS_MAPPER_FACTORIES.get(method)
+                    .create(
+                        buildFullName(context),
+                        name,
+                        metaValue,
+                        knnMethodConfigContext,
+                        multiFieldsBuilder,
+                        copyToBuilder,
+                        ignoreMalformed,
+                        stored.get(),
+                        hasDocValues.get(),
+                        originalParameters
+                    );
+            }
+
             // return FlatVectorFieldMapper only for indices that are created on or after 2.17.0, for others, use
             // EngineFieldMapper to maintain backwards compatibility
             if (originalParameters.getResolvedKnnMethodContext() == null && indexCreatedVersion.onOrAfter(Version.V_2_17_0)) {
@@ -411,6 +437,13 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 );
             }
 
+            // Check for engine-less algorithms (e.g., cluster) — bypass engine resolution entirely
+            if (builder.knnMethodContext.get() != null
+                && EngineLessMethod.isEngineLess(builder.knnMethodContext.get().getMethodComponentContext().getName())) {
+                validateFromEngineLessAlgorithm(builder);
+                return builder;
+            }
+
             // Check for flat configuration and validate only if index is created after 2.17
             if (isKNNDisabled(parserContext.getSettings()) && parserContext.indexVersionCreated().onOrAfter(Version.V_2_17_0)) {
                 validateFromFlat(builder);
@@ -497,6 +530,53 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                         + "."
                 );
             }
+        }
+
+        private void validateFromEngineLessAlgorithm(KNNVectorFieldMapper.Builder builder) {
+            String methodName = builder.knnMethodContext.get().getMethodComponentContext().getName();
+
+            if (builder.knnMethodContext.get().isEngineConfigured()) {
+                throw new MapperParsingException(String.format(Locale.ROOT, "Engine cannot be specified for algorithm '%s'", methodName));
+            }
+
+            if (KNNEngine.getEngine(builder.topLevelEngine.get()) != KNNEngine.UNDEFINED) {
+                throw new MapperParsingException(String.format(Locale.ROOT, "Engine cannot be specified for algorithm '%s'", methodName));
+            }
+
+            if (builder.mode.isConfigured() || builder.compressionLevel.isConfigured()) {
+                throw new MapperParsingException(
+                    String.format(Locale.ROOT, "mode/compression cannot be used with algorithm '%s'", methodName)
+                );
+            }
+
+            if (builder.vectorDataType.getValue() != VectorDataType.FLOAT) {
+                throw new MapperParsingException(
+                    String.format(
+                        Locale.ROOT,
+                        "Algorithm '%s' only supports float data type, but got '%s'",
+                        methodName,
+                        builder.vectorDataType.getValue().getValue()
+                    )
+                );
+            }
+
+            validateDimensionSet(builder);
+
+            final SpaceType resolvedSpaceType = SpaceTypeResolver.INSTANCE.resolveSpaceType(
+                builder.originalParameters.getKnnMethodContext(),
+                builder.topLevelSpaceType.get(),
+                builder.vectorDataType.get()
+            );
+            setSpaceType(builder.originalParameters.getKnnMethodContext(), resolvedSpaceType);
+            validateSpaceType(builder);
+
+            builder.setKnnMethodConfigContext(
+                KNNMethodConfigContext.builder()
+                    .vectorDataType(builder.originalParameters.getVectorDataType())
+                    .versionCreated(builder.indexCreatedVersion)
+                    .dimension(builder.originalParameters.getDimension())
+                    .build()
+            );
         }
 
         private void validateFromFlat(KNNVectorFieldMapper.Builder builder) {

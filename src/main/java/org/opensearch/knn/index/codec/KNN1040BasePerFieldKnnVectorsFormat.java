@@ -13,6 +13,7 @@ import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategyFactor
 import org.opensearch.knn.index.engine.CodecFormatResolver;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodContext;
+import org.opensearch.knn.index.mapper.EngineLessMethod;
 import org.opensearch.knn.index.mapper.KNNMappingConfig;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 
@@ -41,6 +42,7 @@ public abstract class KNN1040BasePerFieldKnnVectorsFormat extends PerFieldKnnVec
     private final Supplier<KnnVectorsFormat> defaultFormatSupplier;
     private final CodecFormatResolver luceneFormatResolver;
     private final CodecFormatResolver nativeFormatResolver;
+    private final CodecFormatResolver engineLessFormatResolver;
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
 
     protected KNN1040BasePerFieldKnnVectorsFormat(
@@ -50,6 +52,7 @@ public abstract class KNN1040BasePerFieldKnnVectorsFormat extends PerFieldKnnVec
         Supplier<KnnVectorsFormat> defaultFormatSupplier,
         CodecFormatResolver luceneFormatResolver,
         CodecFormatResolver nativeFormatResolver,
+        CodecFormatResolver engineLessFormatResolver,
         NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
     ) {
         this.mapperService = mapperService;
@@ -58,6 +61,7 @@ public abstract class KNN1040BasePerFieldKnnVectorsFormat extends PerFieldKnnVec
         this.defaultFormatSupplier = defaultFormatSupplier;
         this.luceneFormatResolver = luceneFormatResolver;
         this.nativeFormatResolver = nativeFormatResolver;
+        this.engineLessFormatResolver = engineLessFormatResolver;
         this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
     }
 
@@ -87,9 +91,15 @@ public abstract class KNN1040BasePerFieldKnnVectorsFormat extends PerFieldKnnVec
 
         final KNNMethodContext knnMethodContext = knnMappingConfig.getKnnMethodContext()
             .orElseThrow(() -> new IllegalArgumentException("KNN method context cannot be empty"));
+        final Map<String, Object> params = knnMethodContext.getMethodComponentContext().getParameters();
+
+        // Engine-less algorithms (e.g., cluster) — delegate to engine-less format resolver
+        if (EngineLessMethod.isEngineLess(knnMethodContext.getMethodComponentContext().getName())) {
+            return engineLessFormatResolver.resolve(field, knnMethodContext, params, defaultMaxConnections, defaultBeamWidth);
+        }
+
         nativeIndexBuildStrategyFactory.setKnnLibraryIndexingContext(knnMappingConfig.getKnnLibraryIndexingContext());
         final KNNEngine engine = knnMethodContext.getKnnEngine();
-        final Map<String, Object> params = knnMethodContext.getMethodComponentContext().getParameters();
 
         if (engine == KNNEngine.LUCENE) {
             return luceneFormatResolver.resolve(field, knnMethodContext, params, defaultMaxConnections, defaultBeamWidth);
