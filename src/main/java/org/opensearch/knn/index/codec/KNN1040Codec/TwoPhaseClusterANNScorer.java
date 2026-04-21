@@ -77,7 +77,11 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
     public void prefetch(int[] ordinals, int count) throws IOException {
         // Prefetch quantized data from .claq for upcoming ADC scoring
         org.opensearch.knn.index.codec.scorer.PrefetchHelper.prefetch(
-            quantizedInput, fieldState.quantizedOffset, recordSize, ordinals, count
+            quantizedInput,
+            fieldState.quantizedOffset,
+            recordSize,
+            ordinals,
+            count
         );
     }
 
@@ -102,8 +106,8 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
      * @param queryComponentSum query quantized component sum
      * @param queryAdditionalCorrection query additional correction
      */
-    void scoreADC(int ordinal, byte[] queryTransposed, float ay, float ly,
-                  float queryComponentSum, float queryAdditionalCorrection) throws IOException {
+    void scoreADC(int ordinal, byte[] queryTransposed, float ay, float ly, float queryComponentSum, float queryAdditionalCorrection)
+        throws IOException {
         long qOffset = fieldState.quantizedOffset + (long) ordinal * recordSize;
         quantizedInput.seek(qOffset);
 
@@ -126,10 +130,7 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         }
 
         // BBQ formula
-        float score = ax * ay * fieldState.dimension
-            + ay * lx * docComponentSum
-            + ax * ly * queryComponentSum
-            + lx * ly * (float) rawDot;
+        float score = ax * ay * fieldState.dimension + ay * lx * docComponentSum + ax * ly * queryComponentSum + lx * ly * (float) rawDot;
 
         float adcSimilarity;
         if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {
@@ -141,7 +142,7 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
             adcSimilarity = Math.max((1.0f + score) / 2.0f, 0);
         }
 
-        adcCandidates.add(new float[]{ordinal, adcSimilarity});
+        adcCandidates.add(new float[] { ordinal, adcSimilarity });
         // Evict worst if over capacity (keep as simple list, sort at finish)
     }
 
@@ -173,12 +174,11 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
      */
     QueryQuantization quantizeQuery(float[] centroid) {
         byte[] scratch = new byte[fieldState.dimension];
-        byte[][] destinations = new byte[][]{scratch};
-        byte[] bitsArray = new byte[]{QUERY_BITS};
+        byte[][] destinations = new byte[][] { scratch };
+        byte[] bitsArray = new byte[] { QUERY_BITS };
 
         float[] queryCopy = queryVector.clone();
-        OptimizedScalarQuantizer.QuantizationResult result =
-            luceneOsq.multiScalarQuantize(queryCopy, destinations, bitsArray, centroid)[0];
+        OptimizedScalarQuantizer.QuantizationResult result = luceneOsq.multiScalarQuantize(queryCopy, destinations, bitsArray, centroid)[0];
 
         int stripeSize = (fieldState.dimension + 7) / 8;
         byte[] transposed = new byte[stripeSize * 4];
@@ -187,8 +187,7 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         float ay = result.lowerInterval();
         float ly = (result.upperInterval() - ay) * FOUR_BIT_SCALE;
 
-        return new QueryQuantization(transposed, ay, ly,
-            (float) result.quantizedComponentSum(), result.additionalCorrection());
+        return new QueryQuantization(transposed, ay, ly, (float) result.quantizedComponentSum(), result.additionalCorrection());
     }
 
     /** Quantized query state for ADC scoring against a specific centroid. */

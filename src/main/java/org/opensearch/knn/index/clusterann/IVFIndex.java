@@ -5,13 +5,10 @@
 
 package org.opensearch.knn.index.clusterann;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Set;
-import java.util.stream.IntStream;
 
 /**
  * Inverted File (IVF) index with SOAR (Spilling with Orthogonal Augmented Residuals)
@@ -45,8 +42,14 @@ public final class IVFIndex {
     // SOAR posting lists: soarPostings[centroidId] = sorted docIds assigned as secondary
     private final int[][] soarPostings;
 
-    private IVFIndex(float[] centroids, int numCentroids, int dimension, DistanceMetric metric,
-                     int[][] primaryPostings, int[][] soarPostings) {
+    private IVFIndex(
+        float[] centroids,
+        int numCentroids,
+        int dimension,
+        DistanceMetric metric,
+        int[][] primaryPostings,
+        int[][] soarPostings
+    ) {
         this.centroids = centroids;
         this.numCentroids = numCentroids;
         this.dimension = dimension;
@@ -162,8 +165,7 @@ public final class IVFIndex {
 
     // ========== SOAR Computation ==========
 
-    private static int[] computeSOAR(VectorData vectors, float[] centroids, int[] assignments,
-                                     int numCentroids, Config config) {
+    private static int[] computeSOAR(VectorData vectors, float[] centroids, int[] assignments, int numCentroids, Config config) {
         int n = vectors.numVectors();
         int dim = vectors.dimension();
         float[] data = vectors.data();
@@ -229,7 +231,8 @@ public final class IVFIndex {
 
         // Partial sort: find top-nprobe smallest
         int[] indices = new int[numCentroids];
-        for (int i = 0; i < numCentroids; i++) indices[i] = i;
+        for (int i = 0; i < numCentroids; i++)
+            indices[i] = i;
 
         // Simple selection for small nprobe
         for (int i = 0; i < nprobe; i++) {
@@ -283,11 +286,25 @@ public final class IVFIndex {
 
     // ========== Accessors ==========
 
-    public float[] centroids() { return centroids; }
-    public int numCentroids() { return numCentroids; }
-    public int dimension() { return dimension; }
-    public int[][] primaryPostings() { return primaryPostings; }
-    public int[][] soarPostings() { return soarPostings; }
+    public float[] centroids() {
+        return centroids;
+    }
+
+    public int numCentroids() {
+        return numCentroids;
+    }
+
+    public int dimension() {
+        return dimension;
+    }
+
+    public int[][] primaryPostings() {
+        return primaryPostings;
+    }
+
+    public int[][] soarPostings() {
+        return soarPostings;
+    }
 
     // ========== Search Result ==========
 
@@ -324,7 +341,9 @@ public final class IVFIndex {
             this.parallel = b.parallel;
         }
 
-        public static Builder builder() { return new Builder(); }
+        public static Builder builder() {
+            return new Builder();
+        }
 
         public static final class Builder {
             private int numCentroids = 1024;
@@ -336,15 +355,49 @@ public final class IVFIndex {
             private long seed = 42L;
             private boolean parallel = true;
 
-            public Builder numCentroids(int n) { this.numCentroids = n; return this; }
-            public Builder targetClusterSize(int t) { this.targetClusterSize = t; return this; }
-            public Builder maxDepth(int d) { this.maxDepth = d; return this; }
-            public Builder kmeansIterations(int i) { this.kmeansIterations = i; return this; }
-            public Builder metric(DistanceMetric m) { this.metric = m; return this; }
-            public Builder soarLambda(float l) { this.soarLambda = l; return this; }
-            public Builder seed(long s) { this.seed = s; return this; }
-            public Builder parallel(boolean p) { this.parallel = p; return this; }
-            public Config build() { return new Config(this); }
+            public Builder numCentroids(int n) {
+                this.numCentroids = n;
+                return this;
+            }
+
+            public Builder targetClusterSize(int t) {
+                this.targetClusterSize = t;
+                return this;
+            }
+
+            public Builder maxDepth(int d) {
+                this.maxDepth = d;
+                return this;
+            }
+
+            public Builder kmeansIterations(int i) {
+                this.kmeansIterations = i;
+                return this;
+            }
+
+            public Builder metric(DistanceMetric m) {
+                this.metric = m;
+                return this;
+            }
+
+            public Builder soarLambda(float l) {
+                this.soarLambda = l;
+                return this;
+            }
+
+            public Builder seed(long s) {
+                this.seed = s;
+                return this;
+            }
+
+            public Builder parallel(boolean p) {
+                this.parallel = p;
+                return this;
+            }
+
+            public Config build() {
+                return new Config(this);
+            }
         }
     }
 }

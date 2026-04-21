@@ -39,9 +39,17 @@ final class ClusterANNFieldState {
     volatile long[] primaryPostingOffsets;
     volatile long[] soarPostingOffsets;
 
-    private ClusterANNFieldState(int fieldNumber, int numVectors, int dimension, int numCentroids,
-                                 DistanceMetric metric, byte docBits,
-                                 long centroidsOffset, long postingsOffset, long quantizedOffset) {
+    private ClusterANNFieldState(
+        int fieldNumber,
+        int numVectors,
+        int dimension,
+        int numCentroids,
+        DistanceMetric metric,
+        byte docBits,
+        long centroidsOffset,
+        long postingsOffset,
+        long quantizedOffset
+    ) {
         this.fieldNumber = fieldNumber;
         this.numVectors = numVectors;
         this.dimension = dimension;
@@ -121,10 +129,14 @@ final class ClusterANNFieldState {
      * @return map from field number to field state
      */
     static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
-        CodecUtil.checkIndexHeader(metaInput, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+        CodecUtil.checkIndexHeader(
+            metaInput,
+            ClusterANN1040KnnVectorsWriter.CODEC_NAME,
             ClusterANN1040KnnVectorsWriter.VERSION_START,
             ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-            state.segmentInfo.getId(), state.segmentSuffix);
+            state.segmentInfo.getId(),
+            state.segmentSuffix
+        );
 
         Map<Integer, ClusterANNFieldState> fields = new HashMap<>();
         while (true) {
@@ -147,10 +159,20 @@ final class ClusterANNFieldState {
                 metric = DistanceMetric.L2;
             }
 
-            fields.put(fieldNumber, new ClusterANNFieldState(
-                fieldNumber, numVectors, dimension, numCentroids,
-                metric, docBits, centroidsOffset, postingsOffset, quantizedOffset
-            ));
+            fields.put(
+                fieldNumber,
+                new ClusterANNFieldState(
+                    fieldNumber,
+                    numVectors,
+                    dimension,
+                    numCentroids,
+                    metric,
+                    docBits,
+                    centroidsOffset,
+                    postingsOffset,
+                    quantizedOffset
+                )
+            );
         }
         return fields;
     }

@@ -31,6 +31,7 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.knn.index.query.MemoryOptimizedSearchScoreConverter;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
 import org.opensearch.lucene.OptimisticKnnCollectorManager;
 import org.opensearch.lucene.ReentrantKnnCollectorManager;
 
@@ -196,12 +197,21 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
         final KnnCollector knnCollector = collectorManager.newCollector(visitedLimit, DEFAULT_HNSW_SEARCH_STRATEGY, context);
         final AcceptDocs acceptDocs = getAcceptedDocs(reader, cardinality, filterIdsBitSet);
 
+        // Reset metrics context for this segment search
+        SearchMetricsContext.reset();
+
         // Start searching index
         if (targetVector instanceof float[] floatTargetVector) {
             reader.getVectorReader().search(knnQuery.getField(), floatTargetVector, knnCollector, acceptDocs);
         } else {
             reader.getVectorReader().search(knnQuery.getField(), (byte[]) targetVector, knnCollector, acceptDocs);
         }
+
+        // Capture vectors scored before collector is discarded
+        SearchMetricsContext.current().setVectorsScored(knnCollector.visitedCount());
+        // Compute vector bytes read from visited count and target vector size
+        long vectorByteSize = targetVector instanceof float[] f ? (long) f.length * Float.BYTES : ((byte[]) targetVector).length;
+        SearchMetricsContext.current().addVectorBytesRead(knnCollector.visitedCount() * vectorByteSize);
 
         // Make results to return
         TopDocs topDocs = knnCollector.topDocs();

@@ -78,8 +78,7 @@ public final class HierarchicalKMeans {
 
     // ========== Recursive Splitting ==========
 
-    private static void clusterRecursive(VectorData allVectors, int[] subset, List<float[]> centroidList,
-                                         Config config, int depth) {
+    private static void clusterRecursive(VectorData allVectors, int[] subset, List<float[]> centroidList, Config config, int depth) {
         int n = subset.length;
         int dim = allVectors.dimension();
 
@@ -93,8 +92,7 @@ public final class HierarchicalKMeans {
         // For small n/targetSize ratios, this produces fewer but larger clusters (less overhead).
         // For large ratios, it grows sub-linearly, avoiding excessive fragmentation.
         // k = clamp(ceil(sqrt(n / targetSize)) * 2, 2, maxK)
-        int k = Math.max(2, Math.min(config.maxK,
-            (int) Math.ceil(Math.sqrt((double) n / config.targetSize) * 2)));
+        int k = Math.max(2, Math.min(config.maxK, (int) Math.ceil(Math.sqrt((double) n / config.targetSize) * 2)));
 
         // Extract subset into contiguous VectorData for k-means
         VectorData subsetData = extractSubset(allVectors, subset);
@@ -158,7 +156,8 @@ public final class HierarchicalKMeans {
 
     private static int[] indices(int n) {
         int[] idx = new int[n];
-        for (int i = 0; i < n; i++) idx[i] = i;
+        for (int i = 0; i < n; i++)
+            idx[i] = i;
         return idx;
     }
 
@@ -181,16 +180,24 @@ public final class HierarchicalKMeans {
         }
 
         /** Flat centroid array. */
-        public float[] centroids() { return centroids; }
+        public float[] centroids() {
+            return centroids;
+        }
 
         /** Vector-to-centroid assignments. */
-        public int[] assignments() { return assignments; }
+        public int[] assignments() {
+            return assignments;
+        }
 
         /** Number of centroids produced. */
-        public int numCentroids() { return numCentroids; }
+        public int numCentroids() {
+            return numCentroids;
+        }
 
         /** Vector dimension. */
-        public int dimension() { return dimension; }
+        public int dimension() {
+            return dimension;
+        }
 
         /** Get a single centroid as a copy. */
         public float[] getCentroid(int index) {
@@ -218,7 +225,9 @@ public final class HierarchicalKMeans {
             this.kmeansConfig = b.kmeansConfig;
         }
 
-        public static Builder builder() { return new Builder(); }
+        public static Builder builder() {
+            return new Builder();
+        }
 
         public static final class Builder {
             private int targetSize = 512;
@@ -226,11 +235,29 @@ public final class HierarchicalKMeans {
             private int maxDepth = 10;
             private KMeans.Config kmeansConfig = KMeans.Config.defaults();
 
-            public Builder targetSize(int t) { this.targetSize = t; return this; }
-            public Builder maxK(int m) { this.maxK = m; return this; }
-            public Builder maxDepth(int d) { this.maxDepth = d; return this; }
-            public Builder kmeansConfig(KMeans.Config c) { this.kmeansConfig = c; return this; }
-            public Config build() { return new Config(this); }
+            public Builder targetSize(int t) {
+                this.targetSize = t;
+                return this;
+            }
+
+            public Builder maxK(int m) {
+                this.maxK = m;
+                return this;
+            }
+
+            public Builder maxDepth(int d) {
+                this.maxDepth = d;
+                return this;
+            }
+
+            public Builder kmeansConfig(KMeans.Config c) {
+                this.kmeansConfig = c;
+                return this;
+            }
+
+            public Config build() {
+                return new Config(this);
+            }
         }
     }
 }

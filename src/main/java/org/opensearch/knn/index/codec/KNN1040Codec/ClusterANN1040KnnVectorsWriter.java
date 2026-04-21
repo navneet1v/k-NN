@@ -104,8 +104,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     @Override
     public KnnFieldVectorsWriter<?> addField(FieldInfo fieldInfo) throws IOException {
         @SuppressWarnings("unchecked")
-        KnnFieldVectorsWriter<float[]> delegateWriter =
-            (KnnFieldVectorsWriter<float[]>) flatVectorsWriter.addField(fieldInfo);
+        KnnFieldVectorsWriter<float[]> delegateWriter = (KnnFieldVectorsWriter<float[]>) flatVectorsWriter.addField(fieldInfo);
 
         FieldWriterInfo info = new FieldWriterInfo(fieldInfo);
         fields.add(info);
@@ -145,8 +144,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         flatVectorsWriter.mergeOneField(fieldInfo, mergeState);
 
         // Collect merged vectors and rebuild IVF
-        FloatVectorValues mergedValues =
-            KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(fieldInfo, mergeState);
+        FloatVectorValues mergedValues = KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(fieldInfo, mergeState);
         if (mergedValues == null) return;
 
         int dimension = fieldInfo.getVectorDimension();
@@ -241,11 +239,24 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         writeCentroids(index);
         writePostings(index);
         writeQuantizedVectors(info, index, dimension);
-        writeFieldMeta(info.fieldInfo, numVectors, dimension, index.numCentroids(),
-            metric, centroidsOffset, postingsOffset, quantizedOffset);
+        writeFieldMeta(
+            info.fieldInfo,
+            numVectors,
+            dimension,
+            index.numCentroids(),
+            metric,
+            centroidsOffset,
+            postingsOffset,
+            quantizedOffset
+        );
 
-        log.info("[ClusterANN] wrote field={} vectors={} centroids={} dim={}",
-            info.fieldInfo.name, numVectors, index.numCentroids(), dimension);
+        log.info(
+            "[ClusterANN] wrote field={} vectors={} centroids={} dim={}",
+            info.fieldInfo.name,
+            numVectors,
+            index.numCentroids(),
+            dimension
+        );
     }
 
     private void writeCentroids(IVFIndex index) throws IOException {
@@ -321,7 +332,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         float[] centroids = index.centroids();
         byte[] scratch = new byte[dimension];
-        byte[] bitsArray = new byte[]{docBits};
+        byte[] bitsArray = new byte[] { docBits };
 
         for (int i = 0; i < numVectors; i++) {
             float[] vector = info.vectors.get(i).clone();
@@ -329,10 +340,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             // For cosine, normalize the vector (Lucene OSQ expects normalized input for cosine)
             if (simFunc == VectorSimilarityFunction.COSINE) {
                 float norm = 0f;
-                for (float v : vector) norm += v * v;
+                for (float v : vector)
+                    norm += v * v;
                 norm = (float) Math.sqrt(norm);
                 if (norm > 0f) {
-                    for (int d = 0; d < dimension; d++) vector[d] /= norm;
+                    for (int d = 0; d < dimension; d++)
+                        vector[d] /= norm;
                 }
             }
 
@@ -345,17 +358,18 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             // For cosine, normalize centroid too (Lucene OSQ expects both normalized)
             if (simFunc == VectorSimilarityFunction.COSINE) {
                 float cNorm = 0f;
-                for (float v : centroid) cNorm += v * v;
+                for (float v : centroid)
+                    cNorm += v * v;
                 cNorm = (float) Math.sqrt(cNorm);
                 if (cNorm > 0f) {
-                    for (int d = 0; d < dimension; d++) centroid[d] /= cNorm;
+                    for (int d = 0; d < dimension; d++)
+                        centroid[d] /= cNorm;
                 }
             }
 
             // Quantize relative to centroid
-            byte[][] destinations = new byte[][]{scratch};
-            OptimizedScalarQuantizer.QuantizationResult[] results =
-                osq.multiScalarQuantize(vector, destinations, bitsArray, centroid);
+            byte[][] destinations = new byte[][] { scratch };
+            OptimizedScalarQuantizer.QuantizationResult[] results = osq.multiScalarQuantize(vector, destinations, bitsArray, centroid);
 
             // Pack codes based on bit width
             int packedBytes = packedBytesPerVector(dimension, docBits);
@@ -385,7 +399,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     /** Pack 1-bit values MSB-first into bytes. */
     static void packAsBinary(byte[] vector, byte[] packed, int dimension) {
-        for (int i = 0; i < dimension; ) {
+        for (int i = 0; i < dimension;) {
             byte result = 0;
             for (int j = 7; j >= 0 && i < dimension; j--) {
                 result |= (byte) ((vector[i] & 1) << j);
@@ -454,10 +468,16 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         return (byte) bits;
     }
 
-    private void writeFieldMeta(FieldInfo fieldInfo, int numVectors, int dimension,
-                                int numCentroids, DistanceMetric metric,
-                                long centroidsOffset, long postingsOffset,
-                                long quantizedOffset) throws IOException {
+    private void writeFieldMeta(
+        FieldInfo fieldInfo,
+        int numVectors,
+        int dimension,
+        int numCentroids,
+        DistanceMetric metric,
+        long centroidsOffset,
+        long postingsOffset,
+        long quantizedOffset
+    ) throws IOException {
         metaOutput.writeInt(fieldInfo.number);
         metaOutput.writeInt(numVectors);
         metaOutput.writeInt(dimension);
@@ -484,12 +504,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     // ========== Helpers ==========
 
     private IndexOutput createOutput(String extension) throws IOException {
-        String fileName = IndexFileNames.segmentFileName(
-            state.segmentInfo.name, state.segmentSuffix, extension
-        );
+        String fileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, extension);
         IndexOutput output = state.directory.createOutput(fileName, state.context);
-        CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT,
-            state.segmentInfo.getId(), state.segmentSuffix);
+        CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
         return output;
     }
 
@@ -503,11 +520,15 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     private static DistanceMetric toDistanceMetric(VectorSimilarityFunction simFunc) {
         switch (simFunc) {
-            case EUCLIDEAN: return DistanceMetric.L2;
+            case EUCLIDEAN:
+                return DistanceMetric.L2;
             case DOT_PRODUCT:
-            case MAXIMUM_INNER_PRODUCT: return DistanceMetric.INNER_PRODUCT;
-            case COSINE: return DistanceMetric.COSINE;
-            default: return DistanceMetric.L2;
+            case MAXIMUM_INNER_PRODUCT:
+                return DistanceMetric.INNER_PRODUCT;
+            case COSINE:
+                return DistanceMetric.COSINE;
+            default:
+                return DistanceMetric.L2;
         }
     }
 }

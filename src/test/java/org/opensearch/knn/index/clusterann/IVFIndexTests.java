@@ -23,8 +23,7 @@ public class IVFIndexTests extends KNNTestCase {
 
     public void testBuildSmallDataset() {
         VectorData vectors = makeGaussianBlobs(3, 30, DIM, SEED);
-        IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(10).metric(DistanceMetric.L2).seed(SEED).parallel(false).build();
+        IVFIndex.Config config = IVFIndex.Config.builder().numCentroids(10).metric(DistanceMetric.L2).seed(SEED).parallel(false).build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -36,8 +35,13 @@ public class IVFIndexTests extends KNNTestCase {
     public void testBuildLargeDataset() {
         VectorData vectors = makeGaussianBlobs(5, 200, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(50).targetClusterSize(100).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).kmeansIterations(10).build();
+            .numCentroids(50)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .kmeansIterations(10)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -56,7 +60,12 @@ public class IVFIndexTests extends KNNTestCase {
         int n = 500;
         VectorData vectors = makeRandom(n, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(20).metric(DistanceMetric.L2).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(20)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -72,7 +81,12 @@ public class IVFIndexTests extends KNNTestCase {
     public void testSearchReturnsKResults() {
         VectorData vectors = makeRandom(1000, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(20).metric(DistanceMetric.L2).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(20)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
         float[] query = vectors.getVectorCopy(0);
@@ -89,8 +103,13 @@ public class IVFIndexTests extends KNNTestCase {
     public void testSearchNprobeAffectsRecall() {
         VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(50).targetClusterSize(50).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(50)
+            .targetClusterSize(50)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -106,8 +125,7 @@ public class IVFIndexTests extends KNNTestCase {
         IVFIndex.SearchResult[] highProbe = index.search(query, 10, 50, vectors);
         float recallHigh = computeRecall(highProbe, groundTruth);
 
-        assertTrue("Higher nprobe should give better recall: low=" + recallLow + " high=" + recallHigh,
-            recallHigh >= recallLow);
+        assertTrue("Higher nprobe should give better recall: low=" + recallLow + " high=" + recallHigh, recallHigh >= recallLow);
         assertTrue("Full probe should give perfect recall", recallHigh >= 0.9f);
     }
 
@@ -117,11 +135,21 @@ public class IVFIndexTests extends KNNTestCase {
         VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
 
         IVFIndex.Config noSoar = IVFIndex.Config.builder()
-            .numCentroids(30).targetClusterSize(100).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(30)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
         IVFIndex.Config withSoar = IVFIndex.Config.builder()
-            .numCentroids(30).targetClusterSize(100).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).soarLambda(1.0f).build();
+            .numCentroids(30)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(1.0f)
+            .build();
 
         IVFIndex indexNoSoar = IVFIndex.build(vectors, noSoar);
         IVFIndex indexWithSoar = IVFIndex.build(vectors, withSoar);
@@ -144,15 +172,22 @@ public class IVFIndexTests extends KNNTestCase {
         avgRecallNoSoar /= numQueries;
         avgRecallWithSoar /= numQueries;
 
-        assertTrue("SOAR should improve recall at low nprobe: noSoar=" + avgRecallNoSoar + " withSoar=" + avgRecallWithSoar,
-            avgRecallWithSoar >= avgRecallNoSoar);
+        assertTrue(
+            "SOAR should improve recall at low nprobe: noSoar=" + avgRecallNoSoar + " withSoar=" + avgRecallWithSoar,
+            avgRecallWithSoar >= avgRecallNoSoar
+        );
     }
 
     public void testSOARPostingListsPopulated() {
         VectorData vectors = makeRandom(1000, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(10).targetClusterSize(100).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).soarLambda(1.0f).build();
+            .numCentroids(10)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(1.0f)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -166,7 +201,12 @@ public class IVFIndexTests extends KNNTestCase {
     public void testNoSOARWhenLambdaZero() {
         VectorData vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(10).metric(DistanceMetric.L2).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(10)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -180,8 +220,13 @@ public class IVFIndexTests extends KNNTestCase {
     public void testSearchWithInnerProduct() {
         VectorData vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(10).targetClusterSize(100).metric(DistanceMetric.INNER_PRODUCT)
-            .seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(10)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.INNER_PRODUCT)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
         float[] query = vectors.getVectorCopy(0);
@@ -192,7 +237,10 @@ public class IVFIndexTests extends KNNTestCase {
         // Self should be in results (highest dot product with itself)
         boolean foundSelf = false;
         for (IVFIndex.SearchResult r : results) {
-            if (r.docId == 0) { foundSelf = true; break; }
+            if (r.docId == 0) {
+                foundSelf = true;
+                break;
+            }
         }
         assertTrue("Self should be in top-5 with full probe", foundSelf);
     }
@@ -200,7 +248,12 @@ public class IVFIndexTests extends KNNTestCase {
     public void testSearchWithCosine() {
         VectorData vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(10).metric(DistanceMetric.COSINE).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(10)
+            .metric(DistanceMetric.COSINE)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
         float[] query = vectors.getVectorCopy(0);
@@ -216,7 +269,12 @@ public class IVFIndexTests extends KNNTestCase {
     public void testSearchEmptyIndex() {
         VectorData vectors = makeRandom(10, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(5).metric(DistanceMetric.L2).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(5)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
         float[] query = new float[DIM]; // zero vector
@@ -228,7 +286,12 @@ public class IVFIndexTests extends KNNTestCase {
     public void testNprobeGreaterThanCentroids() {
         VectorData vectors = makeRandom(100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(5).metric(DistanceMetric.L2).seed(SEED).parallel(false).soarLambda(0).build();
+            .numCentroids(5)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(0)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
         float[] query = vectors.getVectorCopy(0);
@@ -243,8 +306,13 @@ public class IVFIndexTests extends KNNTestCase {
     public void testRecallAbove90PercentWithFullProbe() {
         VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(30).targetClusterSize(100).metric(DistanceMetric.L2)
-            .seed(SEED).parallel(false).soarLambda(1.0f).build();
+            .numCentroids(30)
+            .targetClusterSize(100)
+            .metric(DistanceMetric.L2)
+            .seed(SEED)
+            .parallel(false)
+            .soarLambda(1.0f)
+            .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
 
@@ -267,7 +335,8 @@ public class IVFIndexTests extends KNNTestCase {
     private static VectorData makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
         float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++) data[i] = rng.nextFloat();
+        for (int i = 0; i < data.length; i++)
+            data[i] = rng.nextFloat();
         return new VectorData(data, n, dim);
     }
 
@@ -277,7 +346,8 @@ public class IVFIndexTests extends KNNTestCase {
         float[] data = new float[n * dim];
         for (int b = 0; b < numBlobs; b++) {
             float[] center = new float[dim];
-            for (int d = 0; d < dim; d++) center[d] = rng.nextFloat() * 30f;
+            for (int d = 0; d < dim; d++)
+                center[d] = rng.nextFloat() * 30f;
             for (int i = 0; i < perBlob; i++) {
                 int idx = b * perBlob + i;
                 for (int d = 0; d < dim; d++) {
@@ -300,7 +370,8 @@ public class IVFIndexTests extends KNNTestCase {
 
         // Find top-k smallest
         int[] indices = new int[n];
-        for (int i = 0; i < n; i++) indices[i] = i;
+        for (int i = 0; i < n; i++)
+            indices[i] = i;
 
         // Partial sort
         for (int i = 0; i < k; i++) {
@@ -308,7 +379,9 @@ public class IVFIndexTests extends KNNTestCase {
             for (int j = i + 1; j < n; j++) {
                 if (dists[indices[j]] < dists[indices[minIdx]]) minIdx = j;
             }
-            int tmp = indices[i]; indices[i] = indices[minIdx]; indices[minIdx] = tmp;
+            int tmp = indices[i];
+            indices[i] = indices[minIdx];
+            indices[minIdx] = tmp;
         }
 
         int[] result = new int[k];
@@ -318,7 +391,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     private static float computeRecall(IVFIndex.SearchResult[] results, int[] groundTruth) {
         Set<Integer> gtSet = new HashSet<>();
-        for (int id : groundTruth) gtSet.add(id);
+        for (int id : groundTruth)
+            gtSet.add(id);
 
         int hits = 0;
         for (IVFIndex.SearchResult r : results) {

@@ -25,10 +25,12 @@ public class KMeansClustererTests extends KNNTestCase {
         float[] data = new float[n * DIM];
         Random rng = new Random(SEED);
         for (int i = 0; i < n / 2; i++) {
-            for (int d = 0; d < DIM; d++) data[i * DIM + d] = rng.nextFloat();
+            for (int d = 0; d < DIM; d++)
+                data[i * DIM + d] = rng.nextFloat();
         }
         for (int i = n / 2; i < n; i++) {
-            for (int d = 0; d < DIM; d++) data[i * DIM + d] = 10f + rng.nextFloat();
+            for (int d = 0; d < DIM; d++)
+                data[i * DIM + d] = 10f + rng.nextFloat();
         }
 
         VectorData vectors = new VectorData(data, n, DIM);
@@ -85,10 +87,12 @@ public class KMeansClustererTests extends KNNTestCase {
         float[] data = new float[n * DIM];
         Random rng = new Random(SEED);
         for (int i = 0; i < n - 1; i++) {
-            for (int d = 0; d < DIM; d++) data[i * DIM + d] = rng.nextFloat() * 0.1f;
+            for (int d = 0; d < DIM; d++)
+                data[i * DIM + d] = rng.nextFloat() * 0.1f;
         }
         // One outlier far away
-        for (int d = 0; d < DIM; d++) data[(n - 1) * DIM + d] = 100f;
+        for (int d = 0; d < DIM; d++)
+            data[(n - 1) * DIM + d] = 100f;
 
         VectorData vectors = new VectorData(data, n, DIM);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).rebalanceEmpty(true).build();
@@ -96,7 +100,8 @@ public class KMeansClustererTests extends KNNTestCase {
 
         // After rebalancing, no cluster should be empty (all 3 should have assignments)
         int[] counts = new int[result.k()];
-        for (int a : result.assignments()) counts[a]++;
+        for (int a : result.assignments())
+            counts[a]++;
         for (int c = 0; c < result.k(); c++) {
             assertTrue("Cluster " + c + " should not be empty after rebalancing", counts[c] > 0);
         }
@@ -166,7 +171,10 @@ public class KMeansClustererTests extends KNNTestCase {
         // Very unlikely to be identical with different seeds
         boolean allSame = true;
         for (int i = 0; i < r1.assignments().length; i++) {
-            if (r1.assignments()[i] != r2.assignments()[i]) { allSame = false; break; }
+            if (r1.assignments()[i] != r2.assignments()[i]) {
+                allSame = false;
+                break;
+            }
         }
         assertFalse("Different seeds should produce different results", allSame);
     }
@@ -200,8 +208,7 @@ public class KMeansClustererTests extends KNNTestCase {
 
     public void testConvergenceThreshold() {
         VectorData vectors = makeGaussianBlobs(4, 200, DIM, SEED);
-        KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false)
-            .convergenceThreshold(0.05f).maxIterations(100).build();
+        KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).convergenceThreshold(0.05f).maxIterations(100).build();
         KMeans.Result result = KMeans.cluster(vectors, 4, config);
 
         // Should converge early due to threshold
@@ -213,8 +220,11 @@ public class KMeansClustererTests extends KNNTestCase {
     public void testCentroidsNearClusterCenters() {
         // 4 blobs centered at known positions
         int perCluster = 100;
-        float[][] centers = {{0, 0, 0, 0, 0, 0, 0, 0}, {10, 0, 0, 0, 0, 0, 0, 0},
-                             {0, 10, 0, 0, 0, 0, 0, 0}, {10, 10, 0, 0, 0, 0, 0, 0}};
+        float[][] centers = {
+            { 0, 0, 0, 0, 0, 0, 0, 0 },
+            { 10, 0, 0, 0, 0, 0, 0, 0 },
+            { 0, 10, 0, 0, 0, 0, 0, 0 },
+            { 10, 10, 0, 0, 0, 0, 0, 0 } };
         int n = 4 * perCluster;
         float[] data = new float[n * DIM];
         Random rng = new Random(SEED);
@@ -241,7 +251,10 @@ public class KMeansClustererTests extends KNNTestCase {
                     float diff = centroid[d] - center[d];
                     dist += diff * diff;
                 }
-                if (dist < 1.0f) { nearAny = true; break; }
+                if (dist < 1.0f) {
+                    nearAny = true;
+                    break;
+                }
             }
             assertTrue("Centroid " + c + " should be near a true center", nearAny);
         }
@@ -252,7 +265,8 @@ public class KMeansClustererTests extends KNNTestCase {
     private static VectorData makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
         float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++) data[i] = rng.nextFloat();
+        for (int i = 0; i < data.length; i++)
+            data[i] = rng.nextFloat();
         return new VectorData(data, n, dim);
     }
 
@@ -262,7 +276,8 @@ public class KMeansClustererTests extends KNNTestCase {
         float[] data = new float[n * dim];
         for (int b = 0; b < numBlobs; b++) {
             float[] center = new float[dim];
-            for (int d = 0; d < dim; d++) center[d] = rng.nextFloat() * 20f;
+            for (int d = 0; d < dim; d++)
+                center[d] = rng.nextFloat() * 20f;
             for (int i = 0; i < perBlob; i++) {
                 int idx = b * perBlob + i;
                 for (int d = 0; d < dim; d++) {

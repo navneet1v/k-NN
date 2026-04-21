@@ -17,11 +17,9 @@ import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.index.VectorSimilarityFunction;
-import org.apache.lucene.search.Sort;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.Version;
@@ -30,14 +28,11 @@ import org.opensearch.knn.KNNTestCase;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
-import java.util.Map;
 import java.util.Random;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * Component tests for {@link ClusterANN1040KnnVectorsWriter} that exercise the full
@@ -95,10 +90,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
 
             // Read and verify metadata
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 int fieldNumber = metaIn.readInt();
                 int numVectors = metaIn.readInt();
@@ -130,10 +129,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             }
 
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 int marker = metaIn.readInt();
                 assertEquals(ClusterANN1040KnnVectorsWriter.END_OF_FIELDS, marker);
@@ -162,10 +165,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             // Read meta to get numCentroids
             int numCentroids;
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
                 metaIn.readInt(); // fieldNumber
                 metaIn.readInt(); // numVectors
                 metaIn.readInt(); // dimension
@@ -174,10 +181,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
 
             // Verify centroids file has correct size
             try (IndexInput centIn = dir.openInput("seg0.clac", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(centIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    centIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 // Read all centroids and verify they're valid floats
                 for (int c = 0; c < numCentroids; c++) {
@@ -212,20 +223,30 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             // Read meta
             int numCentroids;
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
-                metaIn.readInt(); metaIn.readInt(); metaIn.readInt();
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
+                metaIn.readInt();
+                metaIn.readInt();
+                metaIn.readInt();
                 numCentroids = metaIn.readInt();
             }
 
             // Read postings and count total vectors
             try (IndexInput postIn = dir.openInput("seg0.clap", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(postIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    postIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 // Primary postings
                 int totalPrimary = 0;
@@ -280,8 +301,7 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                 int footerSize = CodecUtil.footerLength();
                 long dataSize = quantIn.length() - headerSize - footerSize;
 
-                assertEquals("Quantized data size should match numVectors * bytesPerVector",
-                    (long) numVectors * bytesPerVector, dataSize);
+                assertEquals("Quantized data size should match numVectors * bytesPerVector", (long) numVectors * bytesPerVector, dataSize);
             }
         }
     }
@@ -305,10 +325,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             int packedBytesPerVec = (DIM + 7) / 8;
 
             try (IndexInput quantIn = dir.openInput("seg0.claq", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(quantIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    quantIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 for (int i = 0; i < numVectors; i++) {
                     // Skip packed codes
@@ -347,10 +371,14 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             }
 
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
 
                 assertEquals(5, metaIn.readInt()); // fieldNumber
                 assertEquals(0, metaIn.readInt()); // numVectors = 0
@@ -376,11 +404,18 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             }
 
             try (IndexInput metaIn = dir.openInput("seg0.clam", IOContext.READONCE)) {
-                CodecUtil.checkIndexHeader(metaIn, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                CodecUtil.checkIndexHeader(
+                    metaIn,
+                    ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                     ClusterANN1040KnnVectorsWriter.VERSION_START,
                     ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                    writeState.segmentInfo.getId(), "");
-                metaIn.readInt(); metaIn.readInt(); metaIn.readInt(); metaIn.readInt();
+                    writeState.segmentInfo.getId(),
+                    ""
+                );
+                metaIn.readInt();
+                metaIn.readInt();
+                metaIn.readInt();
+                metaIn.readInt();
                 String metric = metaIn.readString();
                 assertEquals("COSINE", metric);
             }
@@ -405,12 +440,16 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
             }
 
             // Verify all files have valid headers and footers
-            for (String ext : new String[]{"seg0.clam", "seg0.clac", "seg0.clap", "seg0.claq"}) {
+            for (String ext : new String[] { "seg0.clam", "seg0.clac", "seg0.clap", "seg0.claq" }) {
                 try (IndexInput in = dir.openInput(ext, IOContext.READONCE)) {
-                    CodecUtil.checkIndexHeader(in, ClusterANN1040KnnVectorsWriter.CODEC_NAME,
+                    CodecUtil.checkIndexHeader(
+                        in,
+                        ClusterANN1040KnnVectorsWriter.CODEC_NAME,
                         ClusterANN1040KnnVectorsWriter.VERSION_START,
                         ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-                        writeState.segmentInfo.getId(), "");
+                        writeState.segmentInfo.getId(),
+                        ""
+                    );
                     // Verify footer is present (check file length accounts for it)
                     assertTrue("File should have footer", in.length() >= CodecUtil.footerLength());
                 }
@@ -421,36 +460,55 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
     // ========== Helpers ==========
 
     @SuppressWarnings("unchecked")
-    private static void addRandomVectors(KnnFieldVectorsWriter<?> fieldWriter, int count, int dim, long seed)
-        throws IOException {
+    private static void addRandomVectors(KnnFieldVectorsWriter<?> fieldWriter, int count, int dim, long seed) throws IOException {
         Random rng = new Random(seed);
         KnnFieldVectorsWriter<float[]> typedWriter = (KnnFieldVectorsWriter<float[]>) fieldWriter;
         for (int i = 0; i < count; i++) {
             float[] vec = new float[dim];
-            for (int d = 0; d < dim; d++) vec[d] = rng.nextFloat();
+            for (int d = 0; d < dim; d++)
+                vec[d] = rng.nextFloat();
             typedWriter.addValue(i, vec);
         }
     }
 
     private SegmentWriteState createWriteState(Directory dir, String segmentName) {
         SegmentInfo segmentInfo = new SegmentInfo(
-            dir, Version.LATEST, Version.LATEST, segmentName, 0, false, false,
-            mock(org.apache.lucene.codecs.Codec.class), Collections.emptyMap(),
-            new byte[16], Collections.emptyMap(), null
+            dir,
+            Version.LATEST,
+            Version.LATEST,
+            segmentName,
+            0,
+            false,
+            false,
+            mock(org.apache.lucene.codecs.Codec.class),
+            Collections.emptyMap(),
+            new byte[16],
+            Collections.emptyMap(),
+            null
         );
-        return new SegmentWriteState(
-            InfoStream.NO_OUTPUT, dir, segmentInfo,
-            new FieldInfos(new FieldInfo[0]), null, IOContext.DEFAULT
-        );
+        return new SegmentWriteState(InfoStream.NO_OUTPUT, dir, segmentInfo, new FieldInfos(new FieldInfo[0]), null, IOContext.DEFAULT);
     }
 
     private FieldInfo createFieldInfo(String name, int number, int dim, VectorSimilarityFunction simFunc) {
         return new FieldInfo(
-            name, number, false, false, false,
-            IndexOptions.NONE, org.apache.lucene.index.DocValuesType.NONE,
-            org.apache.lucene.index.DocValuesSkipIndexType.NONE, -1,
-            Collections.emptyMap(), 0, 0, 0, dim,
-            VectorEncoding.FLOAT32, simFunc, false, false
+            name,
+            number,
+            false,
+            false,
+            false,
+            IndexOptions.NONE,
+            org.apache.lucene.index.DocValuesType.NONE,
+            org.apache.lucene.index.DocValuesSkipIndexType.NONE,
+            -1,
+            Collections.emptyMap(),
+            0,
+            0,
+            0,
+            dim,
+            VectorEncoding.FLOAT32,
+            simFunc,
+            false,
+            false
         );
     }
 

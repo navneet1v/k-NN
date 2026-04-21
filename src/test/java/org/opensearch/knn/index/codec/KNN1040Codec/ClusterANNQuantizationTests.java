@@ -43,14 +43,15 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
 
     public void testPackAsBinary_allOnes() {
         byte[] raw = new byte[8];
-        for (int i = 0; i < 8; i++) raw[i] = 1;
+        for (int i = 0; i < 8; i++)
+            raw[i] = 1;
         byte[] packed = new byte[1];
         ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 8);
         assertEquals((byte) 0xFF, packed[0]); // all bits set MSB-first
     }
 
     public void testPackAsBinary_alternating() {
-        byte[] raw = new byte[]{1, 0, 1, 0, 1, 0, 1, 0};
+        byte[] raw = new byte[] { 1, 0, 1, 0, 1, 0, 1, 0 };
         byte[] packed = new byte[1];
         ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 8);
         assertEquals((byte) 0xAA, packed[0]); // 10101010
@@ -66,7 +67,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         queryTransposed[2] = (byte) 0xFF; // bit2 all set
         queryTransposed[3] = (byte) 0xFF; // bit3 all set
 
-        byte[] docPacked = new byte[]{(byte) 0xFF}; // all 1-bits
+        byte[] docPacked = new byte[] { (byte) 0xFF }; // all 1-bits
 
         long dot = TwoPhaseClusterANNScorer.int4BitDotProduct(queryTransposed, docPacked);
         // Each of 8 positions: query=15, doc=1, contribution = 15
@@ -78,7 +79,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
 
     public void testInt4BitDotProduct_zeros() {
         byte[] queryTransposed = new byte[4];
-        byte[] docPacked = new byte[]{(byte) 0xFF};
+        byte[] docPacked = new byte[] { (byte) 0xFF };
         long dot = TwoPhaseClusterANNScorer.int4BitDotProduct(queryTransposed, docPacked);
         assertEquals(0L, dot);
     }
@@ -88,7 +89,8 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testTransposeDibit_allThrees() {
         // All values = 3 (binary 11) → lower stripe all 1s, upper stripe all 1s
         byte[] raw = new byte[8];
-        for (int i = 0; i < 8; i++) raw[i] = 3;
+        for (int i = 0; i < 8; i++)
+            raw[i] = 3;
         byte[] packed = new byte[2]; // 2 stripes of 1 byte each
         ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 8);
         assertEquals((byte) 0xFF, packed[0]); // lower bits all 1
@@ -99,7 +101,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         // Values: 1, 2, 1, 2, 1, 2, 1, 2
         // 1 = binary 01 (lower=1, upper=0)
         // 2 = binary 10 (lower=0, upper=1)
-        byte[] raw = new byte[]{1, 2, 1, 2, 1, 2, 1, 2};
+        byte[] raw = new byte[] { 1, 2, 1, 2, 1, 2, 1, 2 };
         byte[] packed = new byte[2];
         ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 8);
         assertEquals((byte) 0xAA, packed[0]); // lower: 10101010
@@ -110,7 +112,8 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         // Query: all 15 (4-bit), Doc: all 3 (2-bit)
         int stripeSize = 1;
         byte[] queryTransposed = new byte[4];
-        for (int i = 0; i < 4; i++) queryTransposed[i] = (byte) 0xFF;
+        for (int i = 0; i < 4; i++)
+            queryTransposed[i] = (byte) 0xFF;
 
         byte[] dibitPacked = new byte[2];
         dibitPacked[0] = (byte) 0xFF; // lower all 1
@@ -129,7 +132,8 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testTransposeHalfByte_value15() {
         // All values = 15 (binary 1111) → all 4 stripes should be all 1s
         byte[] raw = new byte[8];
-        for (int i = 0; i < 8; i++) raw[i] = 15;
+        for (int i = 0; i < 8; i++)
+            raw[i] = 15;
         byte[] packed = new byte[4]; // 4 stripes of 1 byte
         ClusterANN1040KnnVectorsWriter.transposeHalfByte(raw, packed, 8);
         for (int s = 0; s < 4; s++) {
@@ -140,7 +144,8 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testTransposeHalfByte_value5() {
         // Value 5 = binary 0101 → stripe0=1, stripe1=0, stripe2=1, stripe3=0
         byte[] raw = new byte[8];
-        for (int i = 0; i < 8; i++) raw[i] = 5;
+        for (int i = 0; i < 8; i++)
+            raw[i] = 5;
         byte[] packed = new byte[4];
         ClusterANN1040KnnVectorsWriter.transposeHalfByte(raw, packed, 8);
         assertEquals((byte) 0xFF, packed[0]); // bit0 stripe
@@ -264,12 +269,9 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
 
     public void testInvalidDocBits_throws() {
         // Validation happens in writer constructor
-        expectThrows(IllegalArgumentException.class, () ->
-            new ClusterANN1040KnnVectorsWriter(null, null, 3));
-        expectThrows(IllegalArgumentException.class, () ->
-            new ClusterANN1040KnnVectorsWriter(null, null, 0));
-        expectThrows(IllegalArgumentException.class, () ->
-            new ClusterANN1040KnnVectorsWriter(null, null, 8));
+        expectThrows(IllegalArgumentException.class, () -> new ClusterANN1040KnnVectorsWriter(null, null, 3));
+        expectThrows(IllegalArgumentException.class, () -> new ClusterANN1040KnnVectorsWriter(null, null, 0));
+        expectThrows(IllegalArgumentException.class, () -> new ClusterANN1040KnnVectorsWriter(null, null, 8));
     }
 
     public void testValidDocBits_noThrow() {
@@ -284,7 +286,8 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testPackAsBinary_nonAligned() {
         // 13 dimensions (not multiple of 8)
         byte[] raw = new byte[13];
-        for (int i = 0; i < 13; i++) raw[i] = 1;
+        for (int i = 0; i < 13; i++)
+            raw[i] = 1;
         byte[] packed = new byte[2]; // (13+7)/8 = 2
         ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 13);
         assertEquals((byte) 0xFF, packed[0]); // first 8 bits
@@ -293,7 +296,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
 
     public void testTransposeDibit_nonAligned() {
         // 5 dimensions
-        byte[] raw = new byte[]{3, 3, 3, 3, 3};
+        byte[] raw = new byte[] { 3, 3, 3, 3, 3 };
         byte[] packed = new byte[2]; // (5+7)/8 * 2 = 2
         ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 5);
         // 5 bits set MSB-first: 11111000 = 0xF8

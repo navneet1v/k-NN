@@ -33,11 +33,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
         // Should produce multiple centroids
-        assertTrue("Should have > 1 centroid for " + n + " vectors with targetSize=" + targetSize,
-            result.numCentroids() > 1);
+        assertTrue("Should have > 1 centroid for " + n + " vectors with targetSize=" + targetSize, result.numCentroids() > 1);
         // Expected: roughly n/targetSize = 10 centroids (±50%)
-        assertTrue("Expected ~10 centroids, got " + result.numCentroids(),
-            result.numCentroids() >= 5 && result.numCentroids() <= 30);
+        assertTrue("Expected ~10 centroids, got " + result.numCentroids(), result.numCentroids() >= 5 && result.numCentroids() <= 30);
     }
 
     public void testSmallDatasetSingleCentroid() {
@@ -81,8 +79,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
         // With depth=1, max centroids = maxK = 128
-        assertTrue("Depth limit should cap centroids, got " + result.numCentroids(),
-            result.numCentroids() <= 128);
+        assertTrue("Depth limit should cap centroids, got " + result.numCentroids(), result.numCentroids() <= 128);
     }
 
     public void testDeepRecursion() {
@@ -99,8 +96,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
         // Should produce roughly n/targetSize = 100 centroids
-        assertTrue("Expected many centroids from deep recursion, got " + result.numCentroids(),
-            result.numCentroids() >= 30);
+        assertTrue("Expected many centroids from deep recursion, got " + result.numCentroids(), result.numCentroids() >= 30);
     }
 
     // ========== Assignment Quality ==========
@@ -119,8 +115,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         assertEquals(n, result.assignments().length);
         for (int i = 0; i < n; i++) {
             int a = result.assignments()[i];
-            assertTrue("Assignment " + a + " out of range [0, " + result.numCentroids() + ")",
-                a >= 0 && a < result.numCentroids());
+            assertTrue("Assignment " + a + " out of range [0, " + result.numCentroids() + ")", a >= 0 && a < result.numCentroids());
         }
     }
 
@@ -156,8 +151,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
         // At depth=1 with targetSize=500, should get ~4 centroids (some may not split further)
-        assertTrue("Expected 3-5 centroids, got " + result.numCentroids(),
-            result.numCentroids() >= 3 && result.numCentroids() <= 6);
+        assertTrue("Expected 3-5 centroids, got " + result.numCentroids(), result.numCentroids() >= 3 && result.numCentroids() <= 6);
     }
 
     // ========== Determinism ==========
@@ -202,7 +196,8 @@ public class HierarchicalKMeansTests extends KNNTestCase {
     private static VectorData makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
         float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++) data[i] = rng.nextFloat() * 10f;
+        for (int i = 0; i < data.length; i++)
+            data[i] = rng.nextFloat() * 10f;
         return new VectorData(data, n, dim);
     }
 }

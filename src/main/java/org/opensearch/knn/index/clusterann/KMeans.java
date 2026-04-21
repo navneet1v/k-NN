@@ -127,8 +127,15 @@ public final class KMeans {
 
     // ========== Assignment Step ==========
 
-    private static int assignmentStep(VectorData vectors, float[] centroids, int[] assignments,
-                                      float[] clusterSums, int[] clusterCounts, int k, Config config) {
+    private static int assignmentStep(
+        VectorData vectors,
+        float[] centroids,
+        int[] assignments,
+        float[] clusterSums,
+        int[] clusterCounts,
+        int k,
+        Config config
+    ) {
         int n = vectors.numVectors();
         int dim = vectors.dimension();
         float[] data = vectors.data();
@@ -191,8 +198,14 @@ public final class KMeans {
 
     // ========== Empty Cluster Rebalancing ==========
 
-    private static void rebalanceEmptyClusters(VectorData vectors, float[] centroids, int[] clusterCounts,
-                                               int[] assignments, int k, Config config) {
+    private static void rebalanceEmptyClusters(
+        VectorData vectors,
+        float[] centroids,
+        int[] clusterCounts,
+        int[] assignments,
+        int k,
+        Config config
+    ) {
         int dim = vectors.dimension();
         float[] data = vectors.data();
         Random rng = new Random(config.seed + 7);
@@ -220,8 +233,7 @@ public final class KMeans {
 
     // ========== Post-Processing ==========
 
-    private static Result postProcess(VectorData vectors, float[] centroids, int[] assignments,
-                                      int k, Config config) {
+    private static Result postProcess(VectorData vectors, float[] centroids, int[] assignments, int k, Config config) {
         int dim = vectors.dimension();
         int[] clusterCounts = new int[k];
         for (int a : assignments) {
@@ -269,22 +281,34 @@ public final class KMeans {
         }
 
         /** Flat centroid array: centroids[c * dimension + d]. */
-        public float[] centroids() { return centroids; }
+        public float[] centroids() {
+            return centroids;
+        }
 
         /** Assignment of each vector to a cluster index. */
-        public int[] assignments() { return assignments; }
+        public int[] assignments() {
+            return assignments;
+        }
 
         /** Number of clusters. */
-        public int k() { return k; }
+        public int k() {
+            return k;
+        }
 
         /** Vector dimension. */
-        public int dimension() { return dimension; }
+        public int dimension() {
+            return dimension;
+        }
 
         /** Number of iterations run. */
-        public int iterations() { return iterations; }
+        public int iterations() {
+            return iterations;
+        }
 
         /** Whether convergence was reached. */
-        public boolean converged() { return converged; }
+        public boolean converged() {
+            return converged;
+        }
 
         /** Get centroid as a copy. */
         public float[] getCentroid(int clusterIndex) {
@@ -320,10 +344,14 @@ public final class KMeans {
             this.maxClusterSize = b.maxClusterSize;
         }
 
-        public static Builder builder() { return new Builder(); }
+        public static Builder builder() {
+            return new Builder();
+        }
 
         /** Default config: L2, 20 iterations, parallel, seed=42. */
-        public static Config defaults() { return builder().build(); }
+        public static Config defaults() {
+            return builder().build();
+        }
 
         public static final class Builder {
             private DistanceMetric metric = DistanceMetric.L2;
@@ -335,15 +363,49 @@ public final class KMeans {
             private float perturbation = 0.01f;
             private int maxClusterSize = Integer.MAX_VALUE;
 
-            public Builder metric(DistanceMetric m) { this.metric = m; return this; }
-            public Builder maxIterations(int n) { this.maxIterations = n; return this; }
-            public Builder convergenceThreshold(float t) { this.convergenceThreshold = t; return this; }
-            public Builder seed(long s) { this.seed = s; return this; }
-            public Builder parallel(boolean p) { this.parallel = p; return this; }
-            public Builder rebalanceEmpty(boolean r) { this.rebalanceEmpty = r; return this; }
-            public Builder perturbation(float p) { this.perturbation = p; return this; }
-            public Builder maxClusterSize(int m) { this.maxClusterSize = m; return this; }
-            public Config build() { return new Config(this); }
+            public Builder metric(DistanceMetric m) {
+                this.metric = m;
+                return this;
+            }
+
+            public Builder maxIterations(int n) {
+                this.maxIterations = n;
+                return this;
+            }
+
+            public Builder convergenceThreshold(float t) {
+                this.convergenceThreshold = t;
+                return this;
+            }
+
+            public Builder seed(long s) {
+                this.seed = s;
+                return this;
+            }
+
+            public Builder parallel(boolean p) {
+                this.parallel = p;
+                return this;
+            }
+
+            public Builder rebalanceEmpty(boolean r) {
+                this.rebalanceEmpty = r;
+                return this;
+            }
+
+            public Builder perturbation(float p) {
+                this.perturbation = p;
+                return this;
+            }
+
+            public Builder maxClusterSize(int m) {
+                this.maxClusterSize = m;
+                return this;
+            }
+
+            public Config build() {
+                return new Config(this);
+            }
         }
     }
 }

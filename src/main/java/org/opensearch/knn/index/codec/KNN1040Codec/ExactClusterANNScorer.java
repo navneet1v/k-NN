@@ -74,8 +74,13 @@ final class ExactClusterANNScorer implements ClusterANNScorer {
         }
     }
 
-    int[] batchOrdinals() { return batchOrdinals; }
-    float[] batchScores() { return batchScores; }
+    int[] batchOrdinals() {
+        return batchOrdinals;
+    }
+
+    float[] batchScores() {
+        return batchScores;
+    }
 
     @Override
     public void finish(ResultCollector collector) throws IOException {
