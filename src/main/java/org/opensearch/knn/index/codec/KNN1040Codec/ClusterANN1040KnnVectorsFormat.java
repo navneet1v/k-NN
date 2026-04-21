@@ -37,21 +37,35 @@ public class ClusterANN1040KnnVectorsFormat extends KnnVectorsFormat {
         new PrefetchableFlatVectorScorer(new NativeEngines990KnnVectorsScorer(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()))
     );
     private static final String FORMAT_NAME = "ClusterANN1040KnnVectorsFormat";
+    private static final int DEFAULT_DOC_BITS = 1;
+
+    private final int docBits;
 
     /**
-     * Constructs a ClusterANN1040KnnVectorsFormat with the default format name.
+     * Constructs with default 1-bit quantization.
      */
     public ClusterANN1040KnnVectorsFormat() {
-        this(FORMAT_NAME);
+        this(FORMAT_NAME, DEFAULT_DOC_BITS);
     }
 
     /**
-     * Constructs a ClusterANN1040KnnVectorsFormat with the given name.
+     * Constructs with specified quantization bits.
      *
-     * @param name the format name used for codec registration
+     * @param docBits quantization bits for document vectors (1, 2, or 4)
      */
-    public ClusterANN1040KnnVectorsFormat(final String name) {
+    public ClusterANN1040KnnVectorsFormat(int docBits) {
+        this(FORMAT_NAME, docBits);
+    }
+
+    /**
+     * Constructs with the given name and quantization bits.
+     *
+     * @param name    the format name used for codec registration
+     * @param docBits quantization bits for document vectors (1, 2, or 4)
+     */
+    public ClusterANN1040KnnVectorsFormat(final String name, int docBits) {
         super(name);
+        this.docBits = docBits;
     }
 
     /**
@@ -65,7 +79,7 @@ public class ClusterANN1040KnnVectorsFormat extends KnnVectorsFormat {
      */
     @Override
     public KnnVectorsWriter fieldsWriter(SegmentWriteState state) throws IOException {
-        return new ClusterANN1040KnnVectorsWriter(flatVectorsFormat.fieldsWriter(state));
+        return new ClusterANN1040KnnVectorsWriter(state, flatVectorsFormat.fieldsWriter(state), docBits);
     }
 
     /**
