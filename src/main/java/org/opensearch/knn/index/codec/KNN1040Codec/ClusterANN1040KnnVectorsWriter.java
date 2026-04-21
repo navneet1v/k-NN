@@ -6,74 +6,200 @@
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
 import lombok.extern.log4j.Log4j2;
+import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.KnnVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.MergeState;
+import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Sorter;
+import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.index.clusterann.DistanceMetric;
+import org.opensearch.knn.index.clusterann.IVFIndex;
+import org.opensearch.knn.index.clusterann.VectorData;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Writer for the cluster-based ANN format. Delegates vector storage to a {@link FlatVectorsWriter}
- * which writes raw vectors without any index structure. The cluster index building logic
- * will be layered on top in a follow-up.
+ * Writer for the ClusterANN IVF format. Builds a cluster-based inverted file index
+ * with SOAR secondary assignments during segment flush and merge.
+ *
+ * <p>File layout:
+ * <ul>
+ *   <li>{@code .clam} — metadata: per-field config, centroid count, offsets</li>
+ *   <li>{@code .clac} — centroids: flat float arrays</li>
+ *   <li>{@code .clap} — posting lists: primary + SOAR, size-prefixed per centroid</li>
+ * </ul>
+ *
+ * <p>Raw vectors are stored separately by the delegate {@link FlatVectorsWriter} for
+ * exact rescoring during the second phase of search.
  */
 @Log4j2
 public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
+    static final String META_EXTENSION = "clam";
+    static final String CENTROIDS_EXTENSION = "clac";
+    static final String POSTINGS_EXTENSION = "clap";
+    static final String QUANTIZED_EXTENSION = "claq";
+    static final String CODEC_NAME = "ClusterANN1040";
+    static final int VERSION_START = 0;
+    static final int VERSION_CURRENT = VERSION_START;
+    static final int END_OF_FIELDS = -1;
+
     private static final long SHALLOW_SIZE = RamUsageEstimator.shallowSizeOfInstance(ClusterANN1040KnnVectorsWriter.class);
 
+    private final SegmentWriteState state;
     private final FlatVectorsWriter flatVectorsWriter;
+    private final byte docBits;
+    private final List<FieldWriterInfo> fields = new ArrayList<>();
+
+    private final IndexOutput metaOutput;
+    private final IndexOutput centroidsOutput;
+    private final IndexOutput postingsOutput;
+    private final IndexOutput quantizedOutput;
 
     /**
-     * Creates a new writer that delegates vector storage to the given flat vectors writer.
-     *
-     * @param flatVectorsWriter the underlying flat vectors writer for raw vector storage
+     * Per-field state: collects vectors during indexing for IVF construction at flush time.
      */
-    public ClusterANN1040KnnVectorsWriter(FlatVectorsWriter flatVectorsWriter) {
-        this.flatVectorsWriter = flatVectorsWriter;
+    private static class FieldWriterInfo {
+        final FieldInfo fieldInfo;
+        final List<float[]> vectors = new ArrayList<>();
+        final List<Integer> docIds = new ArrayList<>();
+
+        FieldWriterInfo(FieldInfo fieldInfo) {
+            this.fieldInfo = fieldInfo;
+        }
     }
 
-    /**
-     * Adds a new field for indexing, delegating to the flat vectors writer.
-     *
-     * @param fieldInfo the field info
-     * @return a writer for the field's vectors
-     * @throws IOException if an I/O error occurs
-     */
+    public ClusterANN1040KnnVectorsWriter(SegmentWriteState state, FlatVectorsWriter flatVectorsWriter, int docBits) throws IOException {
+        this.state = state;
+        this.flatVectorsWriter = flatVectorsWriter;
+        this.docBits = validateDocBits(docBits);
+
+        boolean success = false;
+        try {
+            metaOutput = createOutput(META_EXTENSION);
+            centroidsOutput = createOutput(CENTROIDS_EXTENSION);
+            postingsOutput = createOutput(POSTINGS_EXTENSION);
+            quantizedOutput = createOutput(QUANTIZED_EXTENSION);
+            success = true;
+        } finally {
+            if (!success) {
+                IOUtils.closeWhileHandlingException(this);
+            }
+        }
+    }
+
     @Override
     public KnnFieldVectorsWriter<?> addField(FieldInfo fieldInfo) throws IOException {
-        log.info("[ClusterANN] addField: {}", fieldInfo.getName());
-        return flatVectorsWriter.addField(fieldInfo);
+        @SuppressWarnings("unchecked")
+        KnnFieldVectorsWriter<float[]> delegateWriter =
+            (KnnFieldVectorsWriter<float[]>) flatVectorsWriter.addField(fieldInfo);
+
+        FieldWriterInfo info = new FieldWriterInfo(fieldInfo);
+        fields.add(info);
+
+        return new KnnFieldVectorsWriter<float[]>() {
+            @Override
+            public void addValue(int docID, float[] value) throws IOException {
+                delegateWriter.addValue(docID, value);
+                info.vectors.add(value.clone());
+                info.docIds.add(docID);
+            }
+
+            @Override
+            public float[] copyValue(float[] value) {
+                return value.clone();
+            }
+
+            @Override
+            public long ramBytesUsed() {
+                return delegateWriter.ramBytesUsed();
+            }
+        };
     }
 
-    /**
-     * Flushes buffered vectors to disk via the flat vectors writer.
-     *
-     * @param maxDoc the maximum document number
-     * @param sortMap the sort map, or null if unsorted
-     * @throws IOException if an I/O error occurs
-     */
     @Override
     public void flush(int maxDoc, Sorter.DocMap sortMap) throws IOException {
-        log.info("[ClusterANN] flush: maxDoc={}", maxDoc);
         flatVectorsWriter.flush(maxDoc, sortMap);
+
+        for (FieldWriterInfo info : fields) {
+            writeField(info);
+        }
     }
 
-    /**
-     * Merges vectors from multiple segments via the flat vectors writer.
-     *
-     * @param mergeState the merge state
-     * @throws IOException if an I/O error occurs
-     */
     @Override
     public void mergeOneField(FieldInfo fieldInfo, MergeState mergeState) throws IOException {
-        log.info("[ClusterANN] mergeOneField: {}", fieldInfo.getName());
+        // Delegate raw vector merge
         flatVectorsWriter.mergeOneField(fieldInfo, mergeState);
+
+        // Collect merged vectors and rebuild IVF
+        FloatVectorValues mergedValues =
+            KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(fieldInfo, mergeState);
+        if (mergedValues == null) return;
+
+        int dimension = fieldInfo.getVectorDimension();
+        FieldWriterInfo info = new FieldWriterInfo(fieldInfo);
+
+        // Read vectors via temp file to avoid holding all in memory simultaneously during iteration
+        IndexOutput tempOut = state.directory.createTempOutput(state.segmentInfo.name, "clann_merge", state.context);
+        int count = 0;
+        try {
+            var iterator = mergedValues.iterator();
+            for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
+                float[] vec = mergedValues.vectorValue(iterator.index());
+                for (int d = 0; d < dimension; d++) {
+                    tempOut.writeInt(Float.floatToIntBits(vec[d]));
+                }
+                count++;
+            }
+        } finally {
+            tempOut.close();
+        }
+
+        if (count > 0) {
+            IndexInput tempIn = state.directory.openInput(tempOut.getName(), state.context);
+            try {
+                for (int i = 0; i < count; i++) {
+                    float[] vec = new float[dimension];
+                    for (int d = 0; d < dimension; d++) {
+                        vec[d] = Float.intBitsToFloat(tempIn.readInt());
+                    }
+                    info.vectors.add(vec);
+                    info.docIds.add(i);
+                }
+            } finally {
+                tempIn.close();
+                state.directory.deleteFile(tempOut.getName());
+            }
+            writeField(info);
+        }
+    }
+
+    @Override
+    public void finish() throws IOException {
+        flatVectorsWriter.finish();
+        metaOutput.writeInt(END_OF_FIELDS);
+        CodecUtil.writeFooter(metaOutput);
+        CodecUtil.writeFooter(centroidsOutput);
+        CodecUtil.writeFooter(postingsOutput);
+        CodecUtil.writeFooter(quantizedOutput);
+    }
+
+    @Override
+    public void close() throws IOException {
+        IOUtils.close(flatVectorsWriter, metaOutput, centroidsOutput, postingsOutput, quantizedOutput);
     }
 
     @Override
@@ -81,19 +207,307 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         return SHALLOW_SIZE + flatVectorsWriter.ramBytesUsed();
     }
 
-    /**
-     * Finishes writing vectors for this segment, delegating to the flat vectors writer.
-     *
-     * @throws IOException if an I/O error occurs
-     */
-    @Override
-    public void finish() throws IOException {
-        log.info("[ClusterANN] finish");
-        flatVectorsWriter.finish();
+    // ========== Private: Index Building & Serialization ==========
+
+    private void writeField(FieldWriterInfo info) throws IOException {
+        int numVectors = info.vectors.size();
+        int dimension = info.fieldInfo.getVectorDimension();
+
+        if (numVectors == 0) {
+            writeEmptyFieldMeta(info.fieldInfo);
+            return;
+        }
+
+        // Build IVF index using our clusterann package
+        VectorData vectorData = VectorData.fromList(info.vectors, dimension);
+        DistanceMetric metric = toDistanceMetric(info.fieldInfo.getVectorSimilarityFunction());
+
+        IVFIndex.Config config = IVFIndex.Config.builder()
+            .numCentroids(estimateCentroids(numVectors))
+            .targetClusterSize(512)
+            .metric(metric)
+            .soarLambda(1.0f)
+            .seed(42L)
+            .parallel(true)
+            .build();
+
+        IVFIndex index = IVFIndex.build(vectorData, config);
+
+        // Serialize
+        long centroidsOffset = centroidsOutput.getFilePointer();
+        long postingsOffset = postingsOutput.getFilePointer();
+        long quantizedOffset = quantizedOutput.getFilePointer();
+
+        writeCentroids(index);
+        writePostings(index);
+        writeQuantizedVectors(info, index, dimension);
+        writeFieldMeta(info.fieldInfo, numVectors, dimension, index.numCentroids(),
+            metric, centroidsOffset, postingsOffset, quantizedOffset);
+
+        log.info("[ClusterANN] wrote field={} vectors={} centroids={} dim={}",
+            info.fieldInfo.name, numVectors, index.numCentroids(), dimension);
     }
 
-    @Override
-    public void close() throws IOException {
-        IOUtils.close(flatVectorsWriter);
+    private void writeCentroids(IVFIndex index) throws IOException {
+        float[] centroids = index.centroids();
+        for (float v : centroids) {
+            centroidsOutput.writeInt(Float.floatToIntBits(v));
+        }
+    }
+
+    private void writePostings(IVFIndex index) throws IOException {
+        int numCentroids = index.numCentroids();
+
+        // Write primary posting lists, record offsets
+        long[] primaryOffsets = new long[numCentroids];
+        for (int c = 0; c < numCentroids; c++) {
+            primaryOffsets[c] = postingsOutput.getFilePointer();
+            int[] posting = index.primaryPostings()[c];
+            postingsOutput.writeVInt(posting.length);
+            for (int docId : posting) {
+                postingsOutput.writeVInt(docId);
+            }
+        }
+
+        // Write SOAR posting lists, record offsets
+        long[] soarOffsets = new long[numCentroids];
+        for (int c = 0; c < numCentroids; c++) {
+            soarOffsets[c] = postingsOutput.getFilePointer();
+            int[] posting = index.soarPostings()[c];
+            postingsOutput.writeVInt(posting.length);
+            for (int docId : posting) {
+                postingsOutput.writeVInt(docId);
+            }
+        }
+
+        // Write offset table at the end of postings (for direct seek + prefetch)
+        long offsetTablePos = postingsOutput.getFilePointer();
+        for (int c = 0; c < numCentroids; c++) {
+            postingsOutput.writeLong(primaryOffsets[c]);
+        }
+        for (int c = 0; c < numCentroids; c++) {
+            postingsOutput.writeLong(soarOffsets[c]);
+        }
+        // Write offset table position as the very last long (reader reads this first)
+        postingsOutput.writeLong(offsetTablePos);
+    }
+
+    /**
+     * Quantize each vector relative to its assigned centroid using Lucene's OptimizedScalarQuantizer.
+     * Writes packed codes + 4 correction factors per vector in ordinal order.
+     *
+     * <p>Format per vector:
+     * <ul>
+     *   <li>packed codes: byte[packedBytesPerVector]</li>
+     *   <li>lowerInterval: float (as int bits)</li>
+     *   <li>upperInterval: float (as int bits)</li>
+     *   <li>additionalCorrection: float (as int bits)</li>
+     *   <li>quantizedComponentSum: int</li>
+     * </ul>
+     */
+    private void writeQuantizedVectors(FieldWriterInfo info, IVFIndex index, int dimension) throws IOException {
+        VectorSimilarityFunction simFunc = info.fieldInfo.getVectorSimilarityFunction();
+        OptimizedScalarQuantizer osq = new OptimizedScalarQuantizer(simFunc);
+
+        // Build ordinal-to-centroid mapping from posting lists
+        int numVectors = info.vectors.size();
+        int[] assignments = new int[numVectors];
+        int numCentroids = index.numCentroids();
+        for (int c = 0; c < numCentroids; c++) {
+            for (int ord : index.primaryPostings()[c]) {
+                assignments[ord] = c;
+            }
+        }
+
+        float[] centroids = index.centroids();
+        byte[] scratch = new byte[dimension];
+        byte[] bitsArray = new byte[]{docBits};
+
+        for (int i = 0; i < numVectors; i++) {
+            float[] vector = info.vectors.get(i).clone();
+
+            // For cosine, normalize the vector (Lucene OSQ expects normalized input for cosine)
+            if (simFunc == VectorSimilarityFunction.COSINE) {
+                float norm = 0f;
+                for (float v : vector) norm += v * v;
+                norm = (float) Math.sqrt(norm);
+                if (norm > 0f) {
+                    for (int d = 0; d < dimension; d++) vector[d] /= norm;
+                }
+            }
+
+            int centroidOffset = assignments[i] * dimension;
+
+            // Extract centroid for this vector
+            float[] centroid = new float[dimension];
+            System.arraycopy(centroids, centroidOffset, centroid, 0, dimension);
+
+            // For cosine, normalize centroid too (Lucene OSQ expects both normalized)
+            if (simFunc == VectorSimilarityFunction.COSINE) {
+                float cNorm = 0f;
+                for (float v : centroid) cNorm += v * v;
+                cNorm = (float) Math.sqrt(cNorm);
+                if (cNorm > 0f) {
+                    for (int d = 0; d < dimension; d++) centroid[d] /= cNorm;
+                }
+            }
+
+            // Quantize relative to centroid
+            byte[][] destinations = new byte[][]{scratch};
+            OptimizedScalarQuantizer.QuantizationResult[] results =
+                osq.multiScalarQuantize(vector, destinations, bitsArray, centroid);
+
+            // Pack codes based on bit width
+            int packedBytes = packedBytesPerVector(dimension, docBits);
+            byte[] packed = new byte[packedBytes];
+            packQuantizedCodes(scratch, packed, dimension, docBits);
+
+            // Write packed codes + corrections
+            quantizedOutput.writeBytes(packed, 0, packed.length);
+            quantizedOutput.writeInt(Float.floatToIntBits(results[0].lowerInterval()));
+            quantizedOutput.writeInt(Float.floatToIntBits(results[0].upperInterval()));
+            quantizedOutput.writeInt(Float.floatToIntBits(results[0].additionalCorrection()));
+            quantizedOutput.writeInt(results[0].quantizedComponentSum());
+        }
+    }
+
+    /** Pack quantized codes based on bit width. */
+    static void packQuantizedCodes(byte[] raw, byte[] packed, int dimension, byte bits) {
+        if (bits == 1) {
+            packAsBinary(raw, packed, dimension);
+        } else if (bits == 2) {
+            transposeDibit(raw, packed, dimension);
+        } else {
+            // 4-bit: transpose into 4 nibble stripes (same as transposeHalfByte)
+            transposeHalfByte(raw, packed, dimension);
+        }
+    }
+
+    /** Pack 1-bit values MSB-first into bytes. */
+    static void packAsBinary(byte[] vector, byte[] packed, int dimension) {
+        for (int i = 0; i < dimension; ) {
+            byte result = 0;
+            for (int j = 7; j >= 0 && i < dimension; j--) {
+                result |= (byte) ((vector[i] & 1) << j);
+                ++i;
+            }
+            packed[((i + 7) / 8) - 1] = result;
+        }
+    }
+
+    /** Transpose 2-bit values into 2 stripes (lower bits, upper bits) MSB-first. */
+    static void transposeDibit(byte[] vector, byte[] packed, int dimension) {
+        int stripeSize = packed.length / 2;
+        int i = 0, index = 0;
+        int limit = dimension - 7;
+        for (; i < limit; i += 8, index++) {
+            int lower = 0, upper = 0;
+            for (int j = 7; j >= 0; j--) {
+                lower |= (vector[i + (7 - j)] & 1) << j;
+                upper |= ((vector[i + (7 - j)] >> 1) & 1) << j;
+            }
+            packed[index] = (byte) lower;
+            packed[index + stripeSize] = (byte) upper;
+        }
+        if (i < dimension) {
+            int lower = 0, upper = 0;
+            for (int j = 7; i < dimension; j--, i++) {
+                lower |= (vector[i] & 1) << j;
+                upper |= ((vector[i] >> 1) & 1) << j;
+            }
+            packed[index] = (byte) lower;
+            packed[index + stripeSize] = (byte) upper;
+        }
+    }
+
+    /** Transpose 4-bit values into 4 nibble stripes for SIMD-friendly dot product. */
+    static void transposeHalfByte(byte[] input, byte[] output, int dimension) {
+        int stripeSize = (dimension + 7) / 8;
+        for (int i = 0; i < dimension; i++) {
+            int val = input[i] & 0x0F;
+            int byteIdx = i / 8;
+            int bitIdx = 7 - (i % 8);
+            if ((val & 1) != 0) output[byteIdx] |= (byte) (1 << bitIdx);
+            if ((val & 2) != 0) output[stripeSize + byteIdx] |= (byte) (1 << bitIdx);
+            if ((val & 4) != 0) output[2 * stripeSize + byteIdx] |= (byte) (1 << bitIdx);
+            if ((val & 8) != 0) output[3 * stripeSize + byteIdx] |= (byte) (1 << bitIdx);
+        }
+    }
+
+    /** Compute packed bytes per vector for a given bit width. */
+    static int packedBytesPerVector(int dimension, int bits) {
+        if (bits == 1) {
+            return (dimension + 7) / 8;
+        } else if (bits == 2) {
+            return ((dimension + 7) / 8) * 2;  // 2 stripes
+        } else {
+            // 4-bit: 4 stripes
+            return ((dimension + 7) / 8) * 4;
+        }
+    }
+
+    /** Validate docBits is a supported value. */
+    private static byte validateDocBits(int bits) {
+        if (bits != 1 && bits != 2 && bits != 4) {
+            throw new IllegalArgumentException("docBits must be 1, 2, or 4, got: " + bits);
+        }
+        return (byte) bits;
+    }
+
+    private void writeFieldMeta(FieldInfo fieldInfo, int numVectors, int dimension,
+                                int numCentroids, DistanceMetric metric,
+                                long centroidsOffset, long postingsOffset,
+                                long quantizedOffset) throws IOException {
+        metaOutput.writeInt(fieldInfo.number);
+        metaOutput.writeInt(numVectors);
+        metaOutput.writeInt(dimension);
+        metaOutput.writeInt(numCentroids);
+        metaOutput.writeString(metric.name());
+        metaOutput.writeByte(docBits);
+        metaOutput.writeLong(centroidsOffset);
+        metaOutput.writeLong(postingsOffset);
+        metaOutput.writeLong(quantizedOffset);
+    }
+
+    private void writeEmptyFieldMeta(FieldInfo fieldInfo) throws IOException {
+        metaOutput.writeInt(fieldInfo.number);
+        metaOutput.writeInt(0); // numVectors = 0 signals empty
+        metaOutput.writeInt(0);
+        metaOutput.writeInt(0);
+        metaOutput.writeString(DistanceMetric.L2.name());
+        metaOutput.writeByte(docBits);
+        metaOutput.writeLong(0);
+        metaOutput.writeLong(0);
+        metaOutput.writeLong(0);
+    }
+
+    // ========== Helpers ==========
+
+    private IndexOutput createOutput(String extension) throws IOException {
+        String fileName = IndexFileNames.segmentFileName(
+            state.segmentInfo.name, state.segmentSuffix, extension
+        );
+        IndexOutput output = state.directory.createOutput(fileName, state.context);
+        CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT,
+            state.segmentInfo.getId(), state.segmentSuffix);
+        return output;
+    }
+
+    /**
+     * Estimate number of centroids based on dataset size.
+     * Formula: clamp((n + 256) / 512, 2, 4096)
+     */
+    private static int estimateCentroids(int numVectors) {
+        return Math.max(2, Math.min(4096, (numVectors + 256) / 512));
+    }
+
+    private static DistanceMetric toDistanceMetric(VectorSimilarityFunction simFunc) {
+        switch (simFunc) {
+            case EUCLIDEAN: return DistanceMetric.L2;
+            case DOT_PRODUCT:
+            case MAXIMUM_INNER_PRODUCT: return DistanceMetric.INNER_PRODUCT;
+            case COSINE: return DistanceMetric.COSINE;
+            default: return DistanceMetric.L2;
+        }
     }
 }
