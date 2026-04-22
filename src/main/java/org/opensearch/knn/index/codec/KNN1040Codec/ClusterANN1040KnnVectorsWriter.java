@@ -169,7 +169,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         if (count > 0) {
             docIds = Arrays.copyOf(docIds, count);
             // Pick initial centroids from reservoir (skip k-means++ for merge)
-            int numCentroids = count <= FLAT_VECTOR_THRESHOLD ? 1 : estimateCentroids(count);
+            int numCentroids = estimateCentroids(count);
             int actualReservoir = Math.min(count, reservoirSize);
             float[][] initialCentroids = new float[Math.min(numCentroids, actualReservoir)][];
             for (int i = 0; i < initialCentroids.length; i++) {
@@ -212,7 +212,6 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     // ========== Private: Index Building & Serialization ==========
 
     /** Below this threshold, store as flat (single centroid) — clustering overhead not worth it. */
-    private static final int FLAT_VECTOR_THRESHOLD = 128;
 
     private void writeField(FieldWriterInfo info) throws IOException {
         List<float[]> vectors = info.flatFieldWriter.getVectors();
@@ -238,7 +237,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         DistanceMetric metric = toDistanceMetric(info.fieldInfo.getVectorSimilarityFunction());
 
         // Skip clustering for tiny segments — single centroid, all vectors in one posting list
-        int numCentroids = numVectors <= FLAT_VECTOR_THRESHOLD ? 1 : estimateCentroids(numVectors);
+        int numCentroids = estimateCentroids(numVectors);
 
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(numCentroids)
@@ -575,11 +574,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     }
 
     /**
-     * Estimate number of centroids based on dataset size.
-     * Formula: clamp((n + 256) / 512, 2, 4096)
+     * Estimate number of centroids: √n clamped to [2, 4096].
+     * Matches FAISS/ScaNN heuristic for optimal IVF search complexity.
      */
     private static int estimateCentroids(int numVectors) {
-        return Math.max(2, Math.min(4096, (numVectors + 256) / 512));
+        return Math.max(2, Math.min(4096, (int) Math.sqrt(numVectors)));
     }
 
     private static DistanceMetric toDistanceMetric(VectorSimilarityFunction simFunc) {
