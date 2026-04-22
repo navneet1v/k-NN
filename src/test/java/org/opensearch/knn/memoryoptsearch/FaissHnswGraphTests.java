@@ -117,4 +117,31 @@ public class FaissHnswGraphTests extends KNNTestCase {
     private static final int[] FIRST_NEIGHBOR_LIST_AT_0_LEVEL = new int[] { 25, 10, 11, 16, 82 };
     private static final int[] NINETY_NINETH_NEIGHBOR_LIST_AT_0_LEVEL = new int[] { 79, 14, 51, 42, 87, 11, 34, 60, 77, 46, 37, 62 };
     private static final int[] FIRST_NEIGHBOR_LIST_AT_1_LEVEL = new int[] { 51, 31, 10, 33, 11, 23, 97, 16, 65, 32, 24, 98 };
+
+    public void testSearchMetricsCounters() {
+        final FaissHnswGraph graph = prepareFaissHnswGraph();
+
+        assertEquals(0, graph.getEdgesTraversed());
+        assertEquals(0, graph.getNeighborSeeks());
+        assertEquals(0, graph.getNeighborBytesRead());
+
+        // Seek loads neighbor list for node 0 at level 0 — 5 neighbors
+        graph.seek(0, 0);
+        assertEquals(1, graph.getNeighborSeeks());
+        assertEquals(5L * Integer.BYTES, graph.getNeighborBytesRead());
+
+        // Traverse all neighbors
+        int[] neighbors = getNeighborIdList(graph);
+        assertEquals(5, neighbors.length);
+        assertEquals(5, graph.getEdgesTraversed());
+
+        // Second seek — node 99 at level 0 — 12 neighbors
+        graph.seek(0, 99);
+        assertEquals(2, graph.getNeighborSeeks());
+        assertEquals(5L * Integer.BYTES + 12L * Integer.BYTES, graph.getNeighborBytesRead());
+
+        // Traverse all neighbors of node 99
+        getNeighborIdList(graph);
+        assertEquals(5 + 12, graph.getEdgesTraversed());
+    }
 }

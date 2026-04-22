@@ -20,7 +20,7 @@ buildscript {
         opensearch_group = "org.opensearch"
         isSnapshot = "true" == System.getProperty("build.snapshot", "true")
         avx2_enabled = System.getProperty("avx2.enabled")
-        nproc_count = System.getProperty("nproc.count", "1")
+        nproc_count = System.getProperty("nproc.count", "8")
         avx512_enabled = System.getProperty("avx512.enabled")
         avx512_spr_enabled = System.getProperty("avx512_spr.enabled")
         // This flag determines whether the CMake build system should apply a custom patch. It prevents build failures
@@ -58,6 +58,8 @@ buildscript {
         opensearch_version_no_snapshot = opensearch_version.replace("-SNAPSHOT","")
         repo_s3_resource_folder = "build/resource/repository-s3"
         repo_s3_download_url = "https://ci.opensearch.org/ci/dbc/distribution-build-opensearch/${opensearch_version_no_snapshot}/latest/${os_platform}/x64/${artifact_type}/builds/opensearch/core-plugins/repository-s3-${opensearch_version_no_snapshot}.zip"
+        telemetry_otel_resource_folder = "build/resource/telemetry-otel"
+        telemetry_otel_download_url = "https://ci.opensearch.org/ci/dbc/distribution-build-opensearch/${opensearch_version_no_snapshot}/latest/${os_platform}/x64/${artifact_type}/builds/opensearch/core-plugins/telemetry-otel-${opensearch_version_no_snapshot}.zip"
     }
 
     // This isn't applying from repositories.gradle so repeating git diff it here
@@ -200,6 +202,27 @@ ext {
                                 dest: repo_s3_resource_folder,
                                 httpusecaches: false)
                         return fileTree(repo_s3_resource_folder).getSingleFile()
+                    }
+                }
+            }
+        }))
+    }
+
+    configureTelemetryOtelPlugin = { OpenSearchCluster cluster ->
+        cluster.plugin(provider(new Callable<RegularFile>(){
+            @Override
+            RegularFile call() throws Exception {
+                return new RegularFile() {
+                    @Override
+                    File getAsFile() {
+                        if (new File("$project.rootDir/$telemetry_otel_resource_folder").exists()) {
+                            project.delete(files("$project.rootDir/$telemetry_otel_resource_folder"))
+                        }
+                        project.mkdir telemetry_otel_resource_folder
+                        ant.get(src: telemetry_otel_download_url,
+                                dest: telemetry_otel_resource_folder,
+                                httpusecaches: false)
+                        return fileTree(telemetry_otel_resource_folder).getSingleFile()
                     }
                 }
             }
@@ -371,58 +394,58 @@ task release(type: Copy, group: 'build') {
 tasks.register('generateTaskGraph') {
     group = 'documentation'
     description = 'Generates a Mermaid graph of the build task dependencies'
-    
+
     doLast {
         def buildTask = project.tasks.getByName('build')
         def taskDeps = [:]
         def mustRunAfter = [:]
-        
+
         def finalizedBy = [:]
-        
+
         def collectDeps
         collectDeps = { task ->
             if (taskDeps.containsKey(task.name)) return
-            
+
             def deps = task.taskDependencies.getDependencies(task)
             def mustRunAfterTasks = task.mustRunAfter.getDependencies(task)
             def finalizedByTasks = task.finalizedBy.getDependencies(task)
-            
+
             finalizedBy[task.name] = finalizedByTasks.collect { it.name }.findAll { it != task.name }
 
             // Combine regular dependencies and mustRunAfter, filter out self-dependencies
             def allDeps = (deps + mustRunAfterTasks).collect { it.name }.unique().findAll { it != task.name }
             taskDeps[task.name] = allDeps
-            
+
             (deps + mustRunAfterTasks + finalizedByTasks).each { collectDeps(it) }
         }
-        
+
         collectDeps(buildTask)
-        
+
         def taskToLevel = [:]
-        
+
         def calculateLevel
         calculateLevel = { taskName ->
             if (taskToLevel.containsKey(taskName)) {
                 return taskToLevel[taskName]
             }
-            
+
             def allConstraints = taskDeps[taskName] ?: []
-            
+
             if (allConstraints.isEmpty()) {
                 taskToLevel[taskName] = 0
                 return 0
             }
-            
+
             def depLevels = allConstraints.collect { calculateLevel(it) }
             def maxDepLevel = depLevels.isEmpty() ? -1 : depLevels.max()
             def level = maxDepLevel + 1
             taskToLevel[taskName] = level
             return level
         }
-        
+
         // Proper transitive reduction
         def reducedDeps = [:]
-        
+
         def isReachable
         isReachable = { from, to, visited = [] as Set ->
             if (from == to) return true
@@ -430,36 +453,36 @@ tasks.register('generateTaskGraph') {
             visited.add(from)
             return (taskDeps[from] ?: []).any { dep -> isReachable(dep, to, visited) }
         }
-        
+
         taskDeps.each { taskName, deps ->
             def directDeps = deps.findAll { dep ->
                 !deps.any { otherDep -> otherDep != dep && isReachable(otherDep, dep) }
             }
             reducedDeps[taskName] = directDeps
         }
-        
+
         def mermaid = [
             '%%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 80}}}%%',
             'graph TD'
         ]
-        
+
         // Generate connections with reduced dependencies
         reducedDeps.each { taskName, deps ->
             deps.each { dep ->
                 mermaid << "    ${dep} --> ${taskName}"
             }
         }
-        
+
         // Generate bold arrows for finalizedBy relationships
         finalizedBy.each { taskName, finalizedTasks ->
             finalizedTasks.each { finalizedTask ->
                 mermaid << "    ${taskName} ==> ${finalizedTask}"
             }
         }
-        
+
         def outputFile = file('GRADLE_GRAPH.md')
         outputFile.text = "# Gradle Build Task Graph\n\nDependency DAG with transitive dependencies removed for clarity.\n\nPrompt AI with questions like 'Analyzing GRADLE_GRAPH.md, does buildJniTest come before integTest?'\n\nRegenerate with `./gradlew generateTaskGraph`\n\n```mermaid\n${mermaid.join('\n')}\n```\n"
-        
+
         println "Task graph generated in GRADLE_GRAPH.md"
     }
 }
@@ -712,6 +735,14 @@ def commonIntegTestClusters(OpenSearchCluster cluster, _numNodes){
             }
           }))
        }
+    }
+
+    // Install telemetry-otel plugin for metrics support
+    if (System.getProperty("telemetry.enabled") != null) {
+        configureTelemetryOtelPlugin(cluster)
+        cluster.systemProperty('opensearch.experimental.feature.telemetry.enabled', 'true')
+        cluster.setting('telemetry.feature.metrics.enabled', 'true')
+        cluster.setting('telemetry.otel.metrics.exporter.class', 'io.opentelemetry.exporter.logging.LoggingMetricExporter')
     }
 
     cluster.plugin(project.tasks.bundlePlugin.archiveFile)

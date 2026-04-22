@@ -19,6 +19,7 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 
 import org.opensearch.knn.index.util.WarmupUtil;
 import org.opensearch.knn.index.warmup.WarmableReader;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
 
 import java.io.IOException;
 
@@ -67,6 +68,8 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         }
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         int maxOrd = scorer.maxOrd();
+        long vectorBytesRead = 0;
+        long vectorByteSize = target.length;
         for (int ord = 0; ord < maxOrd; ord++) {
             int docId = scorer.ordToDoc(ord);
             if (acceptBits != null && !acceptBits.get(docId)) {
@@ -74,7 +77,9 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
             }
             knnCollector.collect(docId, scorer.score(ord));
             knnCollector.incVisitedCount(1);
+            vectorBytesRead += vectorByteSize;
         }
+        SearchMetricsContext.current().addVectorBytesPrefetched(vectorBytesRead);
     }
 
     @Override

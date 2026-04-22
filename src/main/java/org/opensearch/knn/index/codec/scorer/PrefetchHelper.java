@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -98,14 +99,20 @@ public class PrefetchHelper {
             long currentOffset = baseOffset + (long) ordsToPrefetch[i] * oneVectorByteSize;
             if ((currentOffset + oneVectorByteSize) - groupStartOffset > BYTES_128) {
                 long prevOffset = baseOffset + (long) ordsToPrefetch[i - 1] * oneVectorByteSize;
-                indexInput.prefetch(groupStartOffset, (prevOffset + oneVectorByteSize) - groupStartOffset);
+                long prefetchLength = (prevOffset + oneVectorByteSize) - groupStartOffset;
+                indexInput.prefetch(groupStartOffset, prefetchLength);
+                SearchMetricsContext.current().addVectorBytesPrefetched(prefetchLength);
+                SearchMetricsContext.current().incrementPrefetchGroupCount();
                 groupCount++;
                 groupStartOffset = currentOffset;
             }
         }
         // Prefetch final group
         long lastOffset = baseOffset + (long) ordsToPrefetch[numOrds - 1] * oneVectorByteSize;
-        indexInput.prefetch(groupStartOffset, (lastOffset + oneVectorByteSize) - groupStartOffset);
+        long finalPrefetchLength = (lastOffset + oneVectorByteSize) - groupStartOffset;
+        indexInput.prefetch(groupStartOffset, finalPrefetchLength);
+        SearchMetricsContext.current().addVectorBytesPrefetched(finalPrefetchLength);
+        SearchMetricsContext.current().incrementPrefetchGroupCount();
 
         log.trace("Prefetching grouped [{}] vectors where num of ords was [{}] using exact prefetch size", groupCount, numOrds);
     }

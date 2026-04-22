@@ -32,6 +32,19 @@ public class FaissHnswGraph extends HnswGraph {
     private int numNeighbors;
     private int nextNeighborIndex;
 
+    // Search metrics counters
+
+    /** Number of individual neighbor IDs read from loaded neighbor lists (nextNeighbor() calls).
+     *  Each call returns one neighbor link. edgesTraversed = sum of neighbor list sizes across all seeks. */
+    private long edgesTraversed;
+
+    /** Number of times a node's neighbor list was loaded from disk (seek() calls). Each seek loads the
+     *  entire neighbor list for one node. neighborSeeks = number of nodes whose neighbors were expanded. */
+    private long neighborSeeks;
+
+    /** Bytes read for HNSW neighbor lists. Computed as sum of (numNeighbors × 4 bytes) per seek. */
+    private long neighborBytesRead;
+
     public FaissHnswGraph(final FaissHNSW faissHNSW, final IndexInput indexInput) {
         this.faissHnsw = faissHNSW;
         // Offset readers MUST non null.
@@ -57,6 +70,8 @@ public class FaissHnswGraph extends HnswGraph {
         final long begin = o + faissHnsw.getCumNumberNeighborPerLevel()[level];
         final long end = o + faissHnsw.getCumNumberNeighborPerLevel()[level + 1];
         loadNeighborIdList(begin, end);
+        neighborSeeks++;
+        neighborBytesRead += (long) numNeighbors * Integer.BYTES;
     }
 
     private void loadNeighborIdList(final long begin, final long end) {
@@ -106,6 +121,7 @@ public class FaissHnswGraph extends HnswGraph {
     @Override
     public int nextNeighbor() {
         if (nextNeighborIndex < numNeighbors) {
+            edgesTraversed++;
             return neighborIdList[nextNeighborIndex++];
         }
 
@@ -199,5 +215,17 @@ public class FaissHnswGraph extends HnswGraph {
         // expectation from this function is to return M. The factor of 2 is already taken care by Lucene in
         // graph searcher class. Hence, we are dividing here by 2 to ensure that we return correct value of M.
         return faissHnsw.getMaxNumNeighbors() / 2;
+    }
+
+    public long getEdgesTraversed() {
+        return edgesTraversed;
+    }
+
+    public long getNeighborSeeks() {
+        return neighborSeeks;
+    }
+
+    public long getNeighborBytesRead() {
+        return neighborBytesRead;
     }
 }

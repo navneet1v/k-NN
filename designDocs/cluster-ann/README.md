@@ -14,6 +14,8 @@
 
 6. **CLUSTER_ANN_SEARCH_PATH_LLD.md** — Low-level design for the search/query path: how cluster fields route through `MemoryOptimizedKNNWeight` and the Lucene reader.
 
+7. **QUERY_PATH_REFACTORING.md** — Future work: composition-based refactoring of the query path to cleanly support multiple engine-less algorithms without ad-hoc guards.
+
 ## Key Concepts
 
 - **Engine-less algorithm**: An algorithm that doesn't tie to any `KNNEngine` (Faiss, NMSLIB, Lucene). It owns its own indexing and search end-to-end via Lucene's native `KnnVectorsFormat`.

@@ -29,6 +29,9 @@ import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.mapper.EngineLessMethod;
+import org.opensearch.knn.index.query.metrics.KNNSearchMetricsEmitter;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
+import org.opensearch.knn.index.query.metrics.SegmentSearchMetrics;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
@@ -90,6 +93,7 @@ public abstract class KNNWeight extends Weight {
 
     protected final QuantizationService quantizationService;
     private final KnnExplanation knnExplanation;
+    private final SegmentSearchMetrics querySearchMetrics;
 
     public KNNWeight(KNNQuery query, float boost) {
         this(query, boost, null);
@@ -104,6 +108,7 @@ public abstract class KNNWeight extends Weight {
         this.exactSearcher = DEFAULT_EXACT_SEARCHER;
         this.quantizationService = QuantizationService.getInstance();
         this.knnExplanation = new KnnExplanation();
+        this.querySearchMetrics = new SegmentSearchMetrics();
     }
 
     public static void initialize(ModelDao modelDao) {
@@ -119,6 +124,13 @@ public abstract class KNNWeight extends Weight {
     @VisibleForTesting
     KnnExplanation getKnnExplanation() {
         return knnExplanation;
+    }
+
+    /**
+     * Returns the accumulated search metrics across all segments for this query.
+     */
+    public SegmentSearchMetrics getQuerySearchMetrics() {
+        return querySearchMetrics;
     }
 
     @Override
@@ -347,6 +359,19 @@ public abstract class KNNWeight extends Weight {
         final TopDocs topDocs = approximateSearch(context, filterBitSet, filterCardinality, k);
         stopStopWatchAndLog(log, annStopWatch, "ANN search", knnQuery.getShardId(), segmentName, knnQuery.getField());
 
+        // Merge this segment's search metrics into the per-query accumulator
+        querySearchMetrics.merge(SearchMetricsContext.current());
+
+        // Emit per-segment metrics via debug logging
+        KNNSearchMetricsEmitter.emit(
+            SearchMetricsContext.current().toSearchMetrics(false, topDocs.scoreDocs.length),
+            knnQuery.getIndexName(),
+            knnQuery.getShardId(),
+            FieldInfoExtractor.getFieldInfo(reader, knnQuery.getField()) != null
+                ? FieldInfoExtractor.getFieldInfo(reader, knnQuery.getField()).getAttribute(KNN_METHOD)
+                : "unknown"
+        );
+
         if (knnQuery.isExplain()) {
             knnExplanation.addLeafResult(context.id(), topDocs.scoreDocs.length);
         }
@@ -497,7 +522,8 @@ public abstract class KNNWeight extends Weight {
         );
 
         List<String> engineFiles = KNNCodecUtil.getEngineFiles(knnEngine.getExtension(), knnQuery.getField(), reader.getSegmentInfo().info);
-        // TODO: This is a temporary fix to support indices created before 2.10. Once we have a better way to handle this, we should remove this check.
+        // TODO: This is a temporary fix to support indices created before 2.10. Once we have a better way to handle this, we should remove
+        // this check.
         if (engineFiles.isEmpty() && !EngineLessMethod.isEngineLess(fieldInfo.getAttribute(KNN_METHOD))) {
             log.debug("[KNN] No native engine files found for field {} for segment {}", knnQuery.getField(), reader.getSegmentName());
             return EMPTY_TOPDOCS;
