@@ -44,11 +44,20 @@ public final class KMeans {
     private static final int PROXIMITY_MAP_SIZE = 8;
 
     public static Result cluster(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
+        return cluster(vectors, k, config, null);
+    }
+
+    /**
+     * Cluster vectors into k groups, optionally with pre-selected initial centroids.
+     *
+     * @param initialCentroids if non-null, skip k-means++ init and use these directly
+     */
+    public static Result cluster(ClusterANNVectorValues vectors, int k, Config config, float[][] initialCentroids) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
         k = Math.max(1, Math.min(k, n));
 
-        float[][] centroids = initCentroids(vectors, k, config);
+        float[][] centroids = initialCentroids != null ? initialCentroids : initCentroids(vectors, k, config);
 
         float[][] clusterSums = new float[k][dim];
         int[] clusterCounts = new int[k];

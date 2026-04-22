@@ -76,10 +76,16 @@ public final class IVFIndex {
      * @return built IVF index ready for search
      */
     public static IVFIndex build(ClusterANNVectorValues vectors, Config config) throws IOException {
+        return build(vectors, config, null);
+    }
+
+    /**
+     * Build an IVF index, optionally with pre-selected initial centroids (skips k-means++ init).
+     */
+    public static IVFIndex build(ClusterANNVectorValues vectors, Config config, float[][] initialCentroids) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
 
-        // Clustering
         float[][] centroids;
         int[] assignments;
         int numCentroids;
@@ -92,9 +98,8 @@ public final class IVFIndex {
             .build();
 
         if (n <= FLAT_KMEANS_THRESHOLD) {
-            // Small dataset: flat k-means
             int k = Math.max(1, Math.min(config.numCentroids, n));
-            KMeans.Result result = KMeans.cluster(vectors, k, kmeansConfig);
+            KMeans.Result result = KMeans.cluster(vectors, k, kmeansConfig, initialCentroids);
             centroids = result.centroids();
             assignments = result.assignments();
             numCentroids = result.k();

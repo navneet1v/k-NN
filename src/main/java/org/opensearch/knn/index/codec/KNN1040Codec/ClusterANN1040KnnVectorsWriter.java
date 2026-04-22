@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 
 /**
  * Writer for the ClusterANN IVF format. Builds a cluster-based inverted file index
@@ -133,20 +134,26 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         if (mergedValues == null) return;
 
         int dimension = fieldInfo.getVectorDimension();
-        int vectorBytes = dimension * Float.BYTES;
 
-        // Write vectors to temp file, collect docIds in a compact int array
-        // Vectors go off-heap via temp file; docIds are small (4 bytes each)
+        // Write vectors to temp file + reservoir sample for k-means init
         IndexOutput tempOut = state.directory.createTempOutput(state.segmentInfo.name, "clann_merge", state.context);
         int count = 0;
         int docIdCapacity = 1024;
         int[] docIds = new int[docIdCapacity];
+        int reservoirSize = 1024;
+        float[][] reservoir = new float[reservoirSize][];
+        Random rng = new Random(42L);
         try {
             var iterator = mergedValues.iterator();
             for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
                 float[] vec = mergedValues.vectorValue(iterator.index());
                 for (int d = 0; d < dimension; d++) {
                     tempOut.writeInt(Float.floatToIntBits(vec[d]));
+                }
+                if (count < reservoirSize) {
+                    reservoir[count] = vec.clone();
+                } else if (rng.nextInt(count + 1) < reservoirSize) {
+                    reservoir[rng.nextInt(reservoirSize)] = vec.clone();
                 }
                 if (count == docIdCapacity) {
                     docIdCapacity = docIdCapacity * 2;
@@ -161,10 +168,18 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         if (count > 0) {
             docIds = Arrays.copyOf(docIds, count);
+            // Pick initial centroids from reservoir (skip k-means++ for merge)
+            int numCentroids = count <= FLAT_VECTOR_THRESHOLD ? 1 : estimateCentroids(count);
+            int actualReservoir = Math.min(count, reservoirSize);
+            float[][] initialCentroids = new float[Math.min(numCentroids, actualReservoir)][];
+            for (int i = 0; i < initialCentroids.length; i++) {
+                initialCentroids[i] = reservoir[i].clone();
+            }
+
             IndexInput tempIn = state.directory.openInput(tempOut.getName(), state.context);
             try {
                 ClusterANNVectorValues vectorValues = ClusterANNVectorValues.fromIndexInput(tempIn, docIds, count, dimension);
-                writeMergedField(fieldInfo, vectorValues, count, dimension);
+                writeMergedField(fieldInfo, vectorValues, count, dimension, initialCentroids);
             } finally {
                 tempIn.close();
                 state.directory.deleteFile(tempOut.getName());
@@ -268,8 +283,13 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
      * Write a merged field using off-heap ClusterANNVectorValues (from IndexInput).
      * For merge-time, vectors need to be read into memory for quantization.
      */
-    private void writeMergedField(FieldInfo fieldInfo, ClusterANNVectorValues vectorValues, int numVectors, int dimension)
-        throws IOException {
+    private void writeMergedField(
+        FieldInfo fieldInfo,
+        ClusterANNVectorValues vectorValues,
+        int numVectors,
+        int dimension,
+        float[][] initialCentroids
+    ) throws IOException {
         if (numVectors == 0) {
             writeEmptyFieldMeta(fieldInfo);
             return;
@@ -286,7 +306,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             .parallel(true)
             .build();
 
-        IVFIndex index = IVFIndex.build(vectorValues, config);
+        IVFIndex index = IVFIndex.build(vectorValues, config, initialCentroids);
 
         long centroidsOffset = centroidsOutput.getFilePointer();
         long postingsOffset = postingsOutput.getFilePointer();
