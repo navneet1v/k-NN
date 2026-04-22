@@ -28,8 +28,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(targetSize)
-            .maxK(32)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
+
+            .seed(SEED)
+            .parallel(false)
             .build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
@@ -45,10 +46,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         int targetSize = 100;
         ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
-        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(targetSize)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
-            .build();
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().targetSize(targetSize).seed(SEED).parallel(false).build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
@@ -70,18 +68,19 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         int n = 10000;
         ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
-        // Very small targetSize + depth=1 should limit splitting
+        // Small targetSize should produce many centroids via recursive splitting
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(10)  // would need many levels
-            .maxK(128)
-            .maxDepth(1)     // but limited to 1 level
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).maxIterations(5).build())
+            .targetSize(10)
+            .seed(SEED)
+            .parallel(false)
+            .maxIterations(5)
             .build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
-        // With depth=1, max centroids = maxK = 128
-        assertTrue("Depth limit should cap centroids, got " + result.numCentroids(), result.numCentroids() <= 128);
+        // Should produce roughly n/targetSize centroids (with some variance from splitting)
+        assertTrue("Expected many centroids, got " + result.numCentroids(), result.numCentroids() >= 100);
+        assertTrue("Centroids should not exceed vector count, got " + result.numCentroids(), result.numCentroids() <= n);
     }
 
     public void testDeepRecursion() throws Exception {
@@ -90,9 +89,11 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(50)
-            .maxK(4)  // small maxK forces deeper recursion
-            .maxDepth(10)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).maxIterations(10).build())
+            // small maxK forces deeper recursion
+
+            .seed(SEED)
+            .parallel(false)
+            .maxIterations(10)
             .build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
@@ -107,10 +108,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         int n = 1000;
         ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
-        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(100)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
-            .build();
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().targetSize(100).seed(SEED).parallel(false).build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
@@ -125,10 +123,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         int n = 500;
         ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
-        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(100)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
-            .build();
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().targetSize(100).seed(SEED).parallel(false).build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
@@ -145,9 +140,10 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(500)
-            .maxK(128)
-            .maxDepth(1)  // single level to test formula directly
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
+
+            // single level to test formula directly
+            .seed(SEED)
+            .parallel(false)
             .build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
@@ -160,10 +156,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     public void testDeterministic() throws Exception {
         ClusterANNVectorValues vectors = makeRandom(1000, DIM, SEED);
-        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(100)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
-            .build();
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().targetSize(100).seed(SEED).parallel(false).build();
 
         HierarchicalKMeans.Result r1 = HierarchicalKMeans.cluster(vectors, config);
         HierarchicalKMeans.Result r2 = HierarchicalKMeans.cluster(vectors, config);
@@ -176,10 +169,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     public void testGetCentroid() throws Exception {
         ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
-        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
-            .targetSize(100)
-            .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
-            .build();
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().targetSize(100).seed(SEED).parallel(false).build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 

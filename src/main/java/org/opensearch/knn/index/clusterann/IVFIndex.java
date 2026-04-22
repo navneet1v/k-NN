@@ -36,7 +36,6 @@ public final class IVFIndex {
 
     /** Threshold below which flat k-means is used instead of hierarchical. */
     /** Maximum sub-clusters per hierarchical level. */
-    private static final int HIERARCHICAL_MAX_K = 128;
     /** Maximum SOAR candidate centroids to evaluate per vector. */
     private static final int SOAR_CANDIDATE_LIMIT = 10;
 
@@ -85,38 +84,22 @@ public final class IVFIndex {
         int n = vectors.size();
         int dim = vectors.dimension();
 
-        float[][] centroids;
-        int[] assignments;
-        int numCentroids;
-
-        KMeans.Config kmeansConfig = KMeans.Config.builder()
-            .metric(config.metric)
+        // Single path: HierarchicalKMeans handles everything
+        // - Small k: effectively one level of flat k-means (no recursion needed)
+        // - Large k: automatically splits oversized clusters
+        HierarchicalKMeans.Config hConfig = HierarchicalKMeans.Config.builder()
+            .targetSize(config.targetClusterSize)
             .maxIterations(config.kmeansIterations)
+            .samplePercentage(0.1f)
+            .metric(config.metric)
             .seed(config.seed)
             .parallel(config.parallel)
             .build();
 
-        int k = Math.max(1, Math.min(config.numCentroids, n));
-
-        if (k <= HIERARCHICAL_MAX_K) {
-            // Flat k-means: centroid count fits in one level
-            KMeans.Result result = KMeans.cluster(vectors, k, kmeansConfig, initialCentroids);
-            centroids = result.centroids();
-            assignments = result.assignments();
-            numCentroids = result.k();
-        } else {
-            // Hierarchical: too many centroids for flat, need recursive splitting
-            HierarchicalKMeans.Config hConfig = HierarchicalKMeans.Config.builder()
-                .targetSize(config.targetClusterSize)
-                .maxK(HIERARCHICAL_MAX_K)
-                .maxDepth(config.maxDepth)
-                .kmeansConfig(kmeansConfig)
-                .build();
-            HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, hConfig);
-            centroids = result.centroids();
-            assignments = result.assignments();
-            numCentroids = result.numCentroids();
-        }
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, hConfig, initialCentroids);
+        float[][] centroids = result.centroids();
+        int[] assignments = result.assignments();
+        int numCentroids = result.numCentroids();
 
         // Build primary posting lists
         int[][] primaryPostings = buildPostingLists(assignments, numCentroids);
