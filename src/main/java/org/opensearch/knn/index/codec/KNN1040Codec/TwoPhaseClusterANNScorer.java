@@ -32,7 +32,7 @@ import java.util.Arrays;
  * <p>This matches the scoring approach from Lucene's BinaryQuantizedVectors but adapted
  * for IVF posting list access patterns.
  */
-final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
+final class TwoPhaseClusterANNScorer {
 
     private static final float RESCORE_OVERSAMPLE = 2.0f;
     private static final int ADC_MULTIPLIER = 20;
@@ -117,7 +117,6 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         this.useNativeScoring = quantizedAddressAndSize != null && fieldState.docBits == 1;
     }
 
-    @Override
     public void prefetch(int[] ordinals, int count) throws IOException {
         if (!useNativeScoring) {
             PrefetchHelper.prefetch(quantizedInput, fieldState.quantizedOffset, recordSize, ordinals, count);
@@ -128,7 +127,6 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
      * ADC score: reads quantized data and computes approximate similarity.
      * The query is quantized per-centroid at call time by the reader.
      */
-    @Override
     public float score(int ordinal) throws IOException {
         // This is called per-ordinal during posting list scan.
         // We buffer candidates and defer exact scoring to finish().
@@ -258,7 +256,6 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         }
     }
 
-    @Override
     public int ordToDoc(int ordinal) {
         return exactScorer.ordToDoc(ordinal);
     }
@@ -276,7 +273,6 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
     /**
      * Phase 2: rescore top ADC candidates with exact scorer and collect results.
      */
-    @Override
     public void finish(KnnCollector collector) throws IOException {
         // Sort by ADC score descending using index sort
         Integer[] sortedIndices = new Integer[candidateCount];
