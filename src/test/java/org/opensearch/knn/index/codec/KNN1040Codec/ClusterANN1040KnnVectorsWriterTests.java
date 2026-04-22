@@ -10,6 +10,7 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatFieldVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
+import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexOptions;
@@ -27,10 +28,14 @@ import org.opensearch.knn.KNNTestCase;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Random;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
@@ -515,8 +520,28 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
     @SuppressWarnings("unchecked")
     private FlatVectorsWriter mockFlatVectorsWriter() throws IOException {
         FlatVectorsWriter flatWriter = mock(FlatVectorsWriter.class);
-        FlatFieldVectorsWriter<?> mockFieldWriter = mock(FlatFieldVectorsWriter.class);
-        doReturn(mockFieldWriter).when(flatWriter).addField(any(FieldInfo.class));
+
+        doAnswer(invocation -> {
+            FieldInfo fieldInfo = invocation.getArgument(0);
+            List<float[]> vectors = new ArrayList<>();
+            DocsWithFieldSet docsWithField = new DocsWithFieldSet();
+
+            FlatFieldVectorsWriter<float[]> fieldWriter = mock(FlatFieldVectorsWriter.class);
+            doAnswer(addInvocation -> {
+                int docId = addInvocation.getArgument(0);
+                float[] value = addInvocation.getArgument(1);
+                vectors.add(value.clone());
+                docsWithField.add(docId);
+                return null;
+            }).when(fieldWriter).addValue(anyInt(), any(float[].class));
+            doReturn(vectors).when(fieldWriter).getVectors();
+            doReturn(docsWithField).when(fieldWriter).getDocsWithFieldSet();
+            doAnswer(inv -> ((float[]) inv.getArgument(0)).clone()).when(fieldWriter).copyValue(any(float[].class));
+            doReturn(0L).when(fieldWriter).ramBytesUsed();
+
+            return fieldWriter;
+        }).when(flatWriter).addField(any(FieldInfo.class));
+
         return flatWriter;
     }
 

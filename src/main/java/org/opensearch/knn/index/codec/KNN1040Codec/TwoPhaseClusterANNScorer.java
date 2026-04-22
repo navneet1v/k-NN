@@ -9,8 +9,12 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.index.codec.scorer.PrefetchHelper;
+import org.opensearch.knn.jni.SimdVectorComputeService;
+import org.opensearch.knn.memoryoptsearch.MemorySegmentAddressExtractorUtil;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 /**
  * Two-phase scorer: ADC (Asymmetric Distance Computation) first pass using 1-bit quantized
@@ -31,34 +35,50 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
     private static final float RESCORE_OVERSAMPLE = 2.0f;
     private static final int ADC_MULTIPLIER = 20;
     private static final byte QUERY_BITS = 4;
-    private static final float FOUR_BIT_SCALE = 1.0f / 15f;
+    private static final float FOUR_BIT_SCALE = 1.0f / ((1 << QUERY_BITS) - 1);
 
     private final RandomVectorScorer exactScorer;
     private final IndexInput quantizedInput;
     private final ClusterANNFieldState fieldState;
     private final VectorSimilarityFunction simFunc;
-    private final OptimizedScalarQuantizer luceneOsq;
     private final float[] queryVector;
     private final int k;
-
-    // Per-vector record size in .claq: packed codes + 4 correction ints
-    private final int packedBytesPerVec;
+    private final ScalarBitEncoding encoding;
     private final int recordSize;
-    private final float docBitScale;
 
-    // ADC candidate buffer: parallel arrays instead of List<float[]> (#5 fix)
-    private int[] adcOrdinals;
-    private float[] adcScores;
-    private int adcCount;
-    private final int maxCandidates;
+    // Native SIMD: mmap address of .claq for C++ bulk scoring
+    private final long[] quantizedAddressAndSize;
+    private final boolean useNativeScoring;
 
-    // #4 fix: reusable byte buffer for packed codes
+    // Candidate buffer for ADC results (ordinals + scores collected across posting lists)
+    private int[] candidateOrdinals;
+    private float[] candidateScores;
+    private int candidateCount;
+
+    // Temp buffer for native bulk scoring
+    private int[] nativeBatchOrds;
+    private float[] nativeBatchScores;
+
+    // Reusable scratch for quantization and per-vector reads
+    private final QueryQuantizationState qState;
     private final byte[] packedBuffer;
-    // #13 fix: reusable scratch arrays for query quantization
-    private final byte[] queryScratch;
-    private final byte[][] queryDestinations;
-    private final byte[] queryBitsArray;
-    private final float[] queryCopyBuffer;
+
+    /** Reusable scratch arrays for per-centroid query quantization. */
+    private static final class QueryQuantizationState {
+        final OptimizedScalarQuantizer osq;
+        final byte[] scratch;
+        final byte[][] destinations;
+        final byte[] bitsArray;
+        final float[] queryCopy;
+
+        QueryQuantizationState(VectorSimilarityFunction simFunc, int dimension) {
+            this.osq = new OptimizedScalarQuantizer(simFunc);
+            this.scratch = new byte[dimension];
+            this.destinations = new byte[][] { scratch };
+            this.bitsArray = new byte[] { QUERY_BITS };
+            this.queryCopy = new float[dimension];
+        }
+    }
 
     TwoPhaseClusterANNScorer(
         RandomVectorScorer exactScorer,
@@ -72,33 +92,34 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         this.quantizedInput = quantizedInput;
         this.fieldState = fieldState;
         this.simFunc = simFunc;
-        this.luceneOsq = new OptimizedScalarQuantizer(simFunc);
         this.queryVector = queryVector;
         this.k = k;
-        this.packedBytesPerVec = ScalarBitEncoding.fromDocBits(fieldState.docBits).docPackedBytes(fieldState.dimension);
-        this.recordSize = packedBytesPerVec + 16; // 4 ints = 16 bytes
-        this.docBitScale = ScalarBitEncoding.fromDocBits(fieldState.docBits).docBitScale();
-        this.maxCandidates = k * ADC_MULTIPLIER;
-        this.adcOrdinals = new int[maxCandidates + 1];
-        this.adcScores = new float[maxCandidates + 1];
-        this.adcCount = 0;
-        this.packedBuffer = new byte[packedBytesPerVec];
-        this.queryScratch = new byte[fieldState.dimension];
-        this.queryDestinations = new byte[][] { queryScratch };
-        this.queryBitsArray = new byte[] { QUERY_BITS };
-        this.queryCopyBuffer = new float[fieldState.dimension];
+        this.encoding = ScalarBitEncoding.fromDocBits(fieldState.docBits);
+        this.recordSize = encoding.recordBytes(fieldState.dimension);
+        int maxCandidates = k * ADC_MULTIPLIER;
+        this.candidateOrdinals = new int[maxCandidates + 1];
+        this.candidateScores = new float[maxCandidates + 1];
+        this.candidateCount = 0;
+        this.nativeBatchOrds = new int[256];
+        this.nativeBatchScores = new float[256];
+        this.packedBuffer = new byte[encoding.docPackedBytes(fieldState.dimension)];
+        this.qState = new QueryQuantizationState(simFunc, fieldState.dimension);
+
+        // Try to extract mmap address for native SIMD scoring
+        long totalQuantizedBytes = (long) fieldState.numVectors * recordSize;
+        this.quantizedAddressAndSize = MemorySegmentAddressExtractorUtil.tryExtractAddressAndSize(
+            quantizedInput,
+            fieldState.quantizedOffset,
+            totalQuantizedBytes
+        );
+        this.useNativeScoring = quantizedAddressAndSize != null && fieldState.docBits == 1;
     }
 
     @Override
     public void prefetch(int[] ordinals, int count) throws IOException {
-        // Prefetch quantized data from .claq for upcoming ADC scoring
-        org.opensearch.knn.index.codec.scorer.PrefetchHelper.prefetch(
-            quantizedInput,
-            fieldState.quantizedOffset,
-            recordSize,
-            ordinals,
-            count
-        );
+        if (!useNativeScoring) {
+            PrefetchHelper.prefetch(quantizedInput, fieldState.quantizedOffset, recordSize, ordinals, count);
+        }
     }
 
     /**
@@ -134,12 +155,12 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
         quantizedInput.seek(qOffset);
 
         // #4 fix: reuse buffer
-        quantizedInput.readBytes(packedBuffer, 0, packedBytesPerVec);
+        quantizedInput.readBytes(packedBuffer, 0, encoding.docPackedBytes(fieldState.dimension));
         float docLower = Float.intBitsToFloat(quantizedInput.readInt());
         float docUpper = Float.intBitsToFloat(quantizedInput.readInt());
         float docAdditionalCorrection = Float.intBitsToFloat(quantizedInput.readInt());
         float docComponentSum = (float) quantizedInput.readInt();
-        float docScale = (docUpper - docLower) * docBitScale;
+        float docScale = (docUpper - docLower) * encoding.docBitScale();
 
         // Dot product based on doc bit width
         long rawDot;
@@ -165,17 +186,89 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
             adcSimilarity = Math.max((1.0f + score) / 2.0f, 0);
         }
 
-        if (adcCount < adcOrdinals.length) {
-            adcOrdinals[adcCount] = ordinal;
-            adcScores[adcCount] = adcSimilarity;
-            adcCount++;
+        if (candidateCount < candidateOrdinals.length) {
+            candidateOrdinals[candidateCount] = ordinal;
+            candidateScores[candidateCount] = adcSimilarity;
+            candidateCount++;
         }
         // Evict worst if over capacity (keep as simple list, sort at finish)
+    }
+
+    /**
+     * Batch ADC scoring for a posting list. When native SIMD is available, uses
+     * {@link SimdVectorComputeService} for AVX512/NEON-accelerated bulk scoring.
+     * Falls back to per-ordinal Java scoring otherwise.
+     *
+     * @param ordinals     vector ordinals to score
+     * @param count        number of valid ordinals
+     * @param centroidIdx  centroid index for query quantization
+     * @param centroid     centroid vector
+     * @param centroidDp   dot product of query with centroid (for IP/cosine)
+     */
+    void scoreADCBatch(int[] ordinals, int count, int centroidIdx, float[] centroid, float centroidDp) throws IOException {
+        if (count == 0) return;
+
+        QueryQuantization qQuant = quantizeQuery(centroid);
+
+        if (useNativeScoring) {
+            // Native path: C++ AVX512/NEON bulk scoring via JNI
+            if (nativeBatchOrds.length < count) {
+                nativeBatchOrds = new int[count];
+                nativeBatchScores = new float[count];
+            }
+            System.arraycopy(ordinals, 0, nativeBatchOrds, 0, count);
+
+            SimdVectorComputeService.saveSQSearchContext(
+                qQuant.transposed,
+                qQuant.queryLower,
+                qQuant.queryLower + qQuant.queryScale / FOUR_BIT_SCALE, // reconstruct upper
+                qQuant.additionalCorrection,
+                (int) qQuant.queryComponentSum,
+                quantizedAddressAndSize,
+                simFunc == VectorSimilarityFunction.EUCLIDEAN
+                    ? SimdVectorComputeService.SimilarityFunctionType.SQ_L2.ordinal()
+                    : SimdVectorComputeService.SimilarityFunctionType.SQ_IP.ordinal(),
+                fieldState.dimension,
+                centroidDp
+            );
+
+            SimdVectorComputeService.scoreSimilarityInBulk(nativeBatchOrds, nativeBatchScores, count);
+
+            for (int i = 0; i < count; i++) {
+                if (candidateCount < candidateOrdinals.length) {
+                    candidateOrdinals[candidateCount] = ordinals[i];
+                    candidateScores[candidateCount] = nativeBatchScores[i];
+                    candidateCount++;
+                }
+            }
+        } else {
+            // Java fallback: per-ordinal scoring
+            for (int i = 0; i < count; i++) {
+                scoreADC(
+                    ordinals[i],
+                    qQuant.transposed,
+                    qQuant.queryLower,
+                    qQuant.queryScale,
+                    qQuant.queryComponentSum,
+                    qQuant.additionalCorrection
+                );
+            }
+        }
     }
 
     @Override
     public int ordToDoc(int ordinal) {
         return exactScorer.ordToDoc(ordinal);
+    }
+
+    /** Similarity function used by this scorer. */
+    VectorSimilarityFunction getSimFunc() {
+        return simFunc;
+    }
+
+    /** Whether native SIMD scoring via mmap is active. */
+    boolean isNativeScoring() {
+        return useNativeScoring;
     }
 
     /**
@@ -184,15 +277,15 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
     @Override
     public void finish(ResultCollector collector) throws IOException {
         // Sort by ADC score descending using index sort
-        Integer[] sortedIndices = new Integer[adcCount];
-        for (int i = 0; i < adcCount; i++)
+        Integer[] sortedIndices = new Integer[candidateCount];
+        for (int i = 0; i < candidateCount; i++)
             sortedIndices[i] = i;
-        java.util.Arrays.sort(sortedIndices, (a, b) -> Float.compare(adcScores[b], adcScores[a]));
+        Arrays.sort(sortedIndices, (a, b) -> Float.compare(candidateScores[b], candidateScores[a]));
 
-        int rescoreCount = Math.min((int) (k * RESCORE_OVERSAMPLE), adcCount);
+        int rescoreCount = Math.min((int) (k * RESCORE_OVERSAMPLE), candidateCount);
         for (int i = 0; i < rescoreCount; i++) {
             int idx = sortedIndices[i];
-            int ord = adcOrdinals[idx];
+            int ord = candidateOrdinals[idx];
             int doc = exactScorer.ordToDoc(ord);
             float exactScore = exactScorer.score(ord);
             collector.collect(doc, exactScore);
@@ -204,22 +297,22 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
      * Returns the transposed query + correction factors.
      */
     QueryQuantization quantizeQuery(float[] centroid) {
-        java.util.Arrays.fill(queryScratch, (byte) 0);
-        // reuse queryDestinations
-        // reuse queryBitsArray
+        Arrays.fill(qState.scratch, (byte) 0);
+        // reuse qState.destinations
+        // reuse qState.bitsArray
 
-        System.arraycopy(queryVector, 0, queryCopyBuffer, 0, queryVector.length);
-        float[] queryCopy = queryCopyBuffer;
-        OptimizedScalarQuantizer.QuantizationResult result = luceneOsq.multiScalarQuantize(
+        System.arraycopy(queryVector, 0, qState.queryCopy, 0, queryVector.length);
+        float[] queryCopy = qState.queryCopy;
+        OptimizedScalarQuantizer.QuantizationResult result = qState.osq.multiScalarQuantize(
             queryCopy,
-            queryDestinations,
-            queryBitsArray,
+            qState.destinations,
+            qState.bitsArray,
             centroid
         )[0];
 
         int stripeSize = (fieldState.dimension + 7) / 8;
         byte[] transposed = new byte[stripeSize * 4];
-        transposeHalfByte(queryScratch, transposed);
+        transposeHalfByte(qState.scratch, transposed);
 
         float queryLower = result.lowerInterval();
         float queryScale = (result.upperInterval() - queryLower) * FOUR_BIT_SCALE;

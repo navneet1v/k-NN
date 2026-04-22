@@ -27,6 +27,7 @@ import org.opensearch.knn.index.util.WarmupUtil;
 import org.opensearch.knn.index.warmup.WarmableReader;
 
 import java.io.IOException;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -164,16 +165,29 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         // #2 fix: use BitSet instead of HashSet for O(1) dedup without boxing
-        java.util.BitSet visited = new java.util.BitSet(fieldState.numVectors);
+        BitSet visited = new BitSet(fieldState.numVectors);
 
-        // Prefetch posting list data for probed centroids
-        prefetchPostingLists(fieldState, nearestCentroids, nprobe, postingsClone);
+        // Pipelined prefetch: prefetches next centroids while current is being scored
+        boolean nativeScoring = twoPhase != null && twoPhase.isNativeScoring();
+        PipelinedPrefetcher prefetcher = new PipelinedPrefetcher(
+            postingsClone,
+            useADC ? quantizedInput : null,
+            nearestCentroids,
+            fieldState.primaryPostingOffsets,
+            fieldState.soarPostingOffsets,
+            fieldState.quantizedOffset,
+            useADC ? ScalarBitEncoding.fromDocBits(fieldState.docBits).recordBytes(fieldState.dimension) : 0,
+            fieldState.numVectors,
+            fieldState.numCentroids,
+            nativeScoring
+        );
 
         // #7 fix: allocate centroid buffer once, reuse across posting lists
         float[] centroidBuffer = new float[fieldState.dimension];
 
         // Scan posting lists for probed centroids using direct seek
         for (int i = 0; i < nprobe; i++) {
+            prefetcher.advanceTo(i);
             int centId = nearestCentroids[i];
 
             // Primary posting list
@@ -266,7 +280,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         int centroidIdx,
         float[] target,
         Bits acceptBits,
-        java.util.BitSet visited,
+        BitSet visited,
         KnnCollector knnCollector,
         boolean useADC,
         float[] centroidBuffer
@@ -275,7 +289,6 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
         if (useADC && twoPhase != null) {
             System.arraycopy(fieldState.centroids, centroidIdx * fieldState.dimension, centroidBuffer, 0, fieldState.dimension);
-            TwoPhaseClusterANNScorer.QueryQuantization qQuant = twoPhase.quantizeQuery(centroidBuffer);
 
             int[] validOrds = new int[ordinals.length];
             int validCount = 0;
@@ -289,16 +302,14 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
             if (validCount > 0) {
                 twoPhase.prefetch(validOrds, validCount);
-                for (int i = 0; i < validCount; i++) {
-                    twoPhase.scoreADC(
-                        validOrds[i],
-                        qQuant.transposed,
-                        qQuant.queryLower,
-                        qQuant.queryScale,
-                        qQuant.queryComponentSum,
-                        qQuant.additionalCorrection
-                    );
+                // Compute centroid dot product for IP/cosine scoring
+                float centroidDp = 0f;
+                if (twoPhase.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
+                    for (int d = 0; d < fieldState.dimension; d++) {
+                        centroidDp += target[d] * centroidBuffer[d];
+                    }
                 }
+                twoPhase.scoreADCBatch(validOrds, validCount, centroidIdx, centroidBuffer, centroidDp);
                 knnCollector.incVisitedCount(validCount);
             }
         } else {
@@ -324,27 +335,6 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
                 }
                 knnCollector.incVisitedCount(batchCount);
             }
-        }
-    }
-
-    // ========== Private: Posting List Prefetch ==========
-
-    /**
-     * Prefetch posting list byte ranges for probed centroids from .clap.
-     * Issues OS-level prefetch hints so data is in page cache before we seek to read.
-     */
-    private void prefetchPostingLists(ClusterANNFieldState fieldState, int[] nearestCentroids, int nprobe, IndexInput postingsClone)
-        throws IOException {
-        // Estimate average posting size for prefetch range calculation
-        // Use a conservative estimate: avgVectorsPerCentroid * 5 bytes (VInt avg)
-        int avgPostingBytes = Math.max(64, (fieldState.numVectors / fieldState.numCentroids) * 5);
-
-        for (int i = 0; i < nprobe; i++) {
-            int centId = nearestCentroids[i];
-            long primaryOff = fieldState.primaryPostingOffsets[centId];
-            long soarOff = fieldState.soarPostingOffsets[centId];
-            postingsClone.prefetch(primaryOff, avgPostingBytes);
-            postingsClone.prefetch(soarOff, avgPostingBytes);
         }
     }
 

@@ -9,6 +9,7 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.KnnVectorsWriter;
+import org.apache.lucene.codecs.hnsw.FlatFieldVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FloatVectorValues;
@@ -25,7 +26,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.IVFIndex;
-import org.opensearch.knn.index.clusterann.VectorData;
+import org.opensearch.knn.index.clusterann.ClusterANNVectorValues;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -70,15 +71,15 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     private final IndexOutput quantizedOutput;
 
     /**
-     * Per-field state: collects vectors during indexing for IVF construction at flush time.
+     * Per-field state: holds reference to the flat writer for zero-copy vector access at flush time.
      */
     private static class FieldWriterInfo {
         final FieldInfo fieldInfo;
-        final List<float[]> vectors = new ArrayList<>();
-        final List<Integer> docIds = new ArrayList<>();
+        final FlatFieldVectorsWriter<float[]> flatFieldWriter;
 
-        FieldWriterInfo(FieldInfo fieldInfo) {
+        FieldWriterInfo(FieldInfo fieldInfo, FlatFieldVectorsWriter<float[]> flatFieldWriter) {
             this.fieldInfo = fieldInfo;
+            this.flatFieldWriter = flatFieldWriter;
         }
     }
 
@@ -104,29 +105,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     @Override
     public KnnFieldVectorsWriter<?> addField(FieldInfo fieldInfo) throws IOException {
         @SuppressWarnings("unchecked")
-        KnnFieldVectorsWriter<float[]> delegateWriter = (KnnFieldVectorsWriter<float[]>) flatVectorsWriter.addField(fieldInfo);
+        FlatFieldVectorsWriter<float[]> flatFieldWriter = (FlatFieldVectorsWriter<float[]>) flatVectorsWriter.addField(fieldInfo);
 
-        FieldWriterInfo info = new FieldWriterInfo(fieldInfo);
+        FieldWriterInfo info = new FieldWriterInfo(fieldInfo, flatFieldWriter);
         fields.add(info);
 
-        return new KnnFieldVectorsWriter<float[]>() {
-            @Override
-            public void addValue(int docID, float[] value) throws IOException {
-                delegateWriter.addValue(docID, value);
-                info.vectors.add(value.clone());
-                info.docIds.add(docID);
-            }
-
-            @Override
-            public float[] copyValue(float[] value) {
-                return value.clone();
-            }
-
-            @Override
-            public long ramBytesUsed() {
-                return delegateWriter.ramBytesUsed();
-            }
-        };
+        return flatFieldWriter;
     }
 
     @Override
@@ -148,10 +132,10 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         if (mergedValues == null) return;
 
         int dimension = fieldInfo.getVectorDimension();
-        FieldWriterInfo info = new FieldWriterInfo(fieldInfo);
 
-        // Read vectors via temp file to avoid holding all in memory simultaneously during iteration
+        // Write vectors to temp file for off-heap access during clustering
         IndexOutput tempOut = state.directory.createTempOutput(state.segmentInfo.name, "clann_merge", state.context);
+        List<Integer> docIdList = new ArrayList<>();
         int count = 0;
         try {
             var iterator = mergedValues.iterator();
@@ -160,6 +144,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 for (int d = 0; d < dimension; d++) {
                     tempOut.writeInt(Float.floatToIntBits(vec[d]));
                 }
+                docIdList.add(doc);
                 count++;
             }
         } finally {
@@ -169,19 +154,14 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         if (count > 0) {
             IndexInput tempIn = state.directory.openInput(tempOut.getName(), state.context);
             try {
-                for (int i = 0; i < count; i++) {
-                    float[] vec = new float[dimension];
-                    for (int d = 0; d < dimension; d++) {
-                        vec[d] = Float.intBitsToFloat(tempIn.readInt());
-                    }
-                    info.vectors.add(vec);
-                    info.docIds.add(i);
-                }
+                int[] docIds = docIdList.stream().mapToInt(Integer::intValue).toArray();
+                // Off-heap: cluster directly from disk
+                ClusterANNVectorValues vectorValues = ClusterANNVectorValues.fromIndexInput(tempIn, docIds, count, dimension);
+                writeMergedField(fieldInfo, vectorValues, count, dimension);
             } finally {
                 tempIn.close();
                 state.directory.deleteFile(tempOut.getName());
             }
-            writeField(info);
         }
     }
 
@@ -208,7 +188,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     // ========== Private: Index Building & Serialization ==========
 
     private void writeField(FieldWriterInfo info) throws IOException {
-        int numVectors = info.vectors.size();
+        List<float[]> vectors = info.flatFieldWriter.getVectors();
+        int numVectors = vectors.size();
         int dimension = info.fieldInfo.getVectorDimension();
 
         if (numVectors == 0) {
@@ -216,8 +197,18 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             return;
         }
 
-        // Build IVF index using our clusterann package
-        VectorData vectorData = VectorData.fromList(info.vectors, dimension);
+        // Build doc ID mapping if there are deleted docs
+        int[] docIds = null;
+        if (info.flatFieldWriter.getDocsWithFieldSet() != null) {
+            DocIdSetIterator iter = info.flatFieldWriter.getDocsWithFieldSet().iterator();
+            docIds = new int[numVectors];
+            for (int i = 0; i < numVectors; i++) {
+                docIds[i] = iter.nextDoc();
+            }
+        }
+
+        // Zero-copy: wrap the flat writer's vector list directly
+        ClusterANNVectorValues vectorValues = ClusterANNVectorValues.fromList(vectors, docIds, dimension);
         DistanceMetric metric = toDistanceMetric(info.fieldInfo.getVectorSimilarityFunction());
 
         IVFIndex.Config config = IVFIndex.Config.builder()
@@ -229,7 +220,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             .parallel(true)
             .build();
 
-        IVFIndex index = IVFIndex.build(vectorData, config);
+        IVFIndex index = IVFIndex.build(vectorValues, config);
 
         // Serialize
         long centroidsOffset = centroidsOutput.getFilePointer();
@@ -238,7 +229,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         writeCentroids(index);
         writePostings(index);
-        writeQuantizedVectors(info, index, dimension);
+        writeQuantizedVectors(info.fieldInfo, info.flatFieldWriter.getVectors(), index, dimension);
         writeFieldMeta(
             info.fieldInfo,
             numVectors,
@@ -253,6 +244,54 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         log.info(
             "[ClusterANN] wrote field={} vectors={} centroids={} dim={}",
             info.fieldInfo.name,
+            numVectors,
+            index.numCentroids(),
+            dimension
+        );
+    }
+
+    /**
+     * Write a merged field using off-heap ClusterANNVectorValues (from IndexInput).
+     * For merge-time, vectors need to be read into memory for quantization.
+     */
+    private void writeMergedField(FieldInfo fieldInfo, ClusterANNVectorValues vectorValues, int numVectors, int dimension)
+        throws IOException {
+        if (numVectors == 0) {
+            writeEmptyFieldMeta(fieldInfo);
+            return;
+        }
+
+        DistanceMetric metric = toDistanceMetric(fieldInfo.getVectorSimilarityFunction());
+
+        IVFIndex.Config config = IVFIndex.Config.builder()
+            .numCentroids(estimateCentroids(numVectors))
+            .targetClusterSize(512)
+            .metric(metric)
+            .soarLambda(1.0f)
+            .seed(42L)
+            .parallel(true)
+            .build();
+
+        IVFIndex index = IVFIndex.build(vectorValues, config);
+
+        // Materialize vectors for quantization (off-heap can't random-access efficiently for quantization)
+        List<float[]> materializedVectors = new ArrayList<>(numVectors);
+        for (int i = 0; i < numVectors; i++) {
+            materializedVectors.add(vectorValues.vectorValueCopy(i));
+        }
+
+        long centroidsOffset = centroidsOutput.getFilePointer();
+        long postingsOffset = postingsOutput.getFilePointer();
+        long quantizedOffset = quantizedOutput.getFilePointer();
+
+        writeCentroids(index);
+        writePostings(index);
+        writeQuantizedVectors(fieldInfo, materializedVectors, index, dimension);
+        writeFieldMeta(fieldInfo, numVectors, dimension, index.numCentroids(), metric, centroidsOffset, postingsOffset, quantizedOffset);
+
+        log.info(
+            "[ClusterANN] merged field={} vectors={} centroids={} dim={}",
+            fieldInfo.name,
             numVectors,
             index.numCentroids(),
             dimension
@@ -316,12 +355,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
      *   <li>quantizedComponentSum: int</li>
      * </ul>
      */
-    private void writeQuantizedVectors(FieldWriterInfo info, IVFIndex index, int dimension) throws IOException {
-        VectorSimilarityFunction simFunc = info.fieldInfo.getVectorSimilarityFunction();
+    private void writeQuantizedVectors(FieldInfo fieldInfo, List<float[]> vectors, IVFIndex index, int dimension) throws IOException {
+        VectorSimilarityFunction simFunc = fieldInfo.getVectorSimilarityFunction();
         OptimizedScalarQuantizer osq = new OptimizedScalarQuantizer(simFunc);
 
         // Build ordinal-to-centroid mapping from posting lists
-        int numVectors = info.vectors.size();
+        int numVectors = vectors.size();
         int[] assignments = new int[numVectors];
         int numCentroids = index.numCentroids();
         for (int c = 0; c < numCentroids; c++) {
@@ -335,7 +374,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         byte[] bitsArray = new byte[] { docBits };
 
         for (int i = 0; i < numVectors; i++) {
-            float[] vector = info.vectors.get(i).clone();
+            float[] vector = vectors.get(i).clone();
 
             // For cosine, normalize the vector (Lucene OSQ expects normalized input for cosine)
             if (simFunc == VectorSimilarityFunction.COSINE) {

@@ -5,7 +5,12 @@
 
 package org.opensearch.knn.index.clusterann;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
@@ -16,7 +21,7 @@ import java.util.stream.IntStream;
  *
  * <p>Performance optimizations:
  * <ul>
- *   <li>Operates on flat {@link VectorData} — cache-line friendly sequential access</li>
+ *   <li>Operates on flat {@link ClusterANNVectorValues} — cache-line friendly sequential access</li>
  *   <li>Incremental centroid updates — O(moved × d) per iteration vs O(n × d)</li>
  *   <li>Thread-safe convergence via {@link AtomicInteger} (no memory fence per vector)</li>
  *   <li>Parallel assignment step with configurable threading</li>
@@ -36,8 +41,8 @@ public final class KMeans {
      * @param config     clustering configuration
      * @return clustering result with centroids and assignments
      */
-    public static Result cluster(VectorData vectors, int k, Config config) {
-        int n = vectors.numVectors();
+    public static Result cluster(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
         k = Math.max(1, Math.min(k, n));
 
@@ -50,22 +55,41 @@ public final class KMeans {
         int[] assignments = new int[n];
         Arrays.fill(assignments, -1);
 
+        // Sampling: run iterations on a percentage-based subset, then finalize on full data
+        int sampleSize = Math.max(k, (int) (n * config.samplePercentage));
+        boolean sampled = sampleSize < n && n > 10_000;
+        ClusterANNVectorValues iterVectors = vectors;
+        int[] sampleIndices = null;
+        if (sampled) {
+            sampleIndices = createRandomSample(n, sampleSize, config.seed);
+            List<float[]> sampleList = new ArrayList<>(sampleSize);
+            for (int idx : sampleIndices) {
+                sampleList.add(vectors.vectorValue(idx));
+            }
+            iterVectors = ClusterANNVectorValues.fromList(sampleList, dim);
+        }
+
+        // Sampled assignments (maps sample ordinal → cluster)
+        int[] iterAssignments = sampled ? new int[sampleSize] : assignments;
+        if (sampled) Arrays.fill(iterAssignments, -1);
+
         boolean converged = false;
         int iter;
         for (iter = 0; iter < config.maxIterations && !converged; iter++) {
-            // Assignment step (parallel)
-            int moved = assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config);
-
-            // Update centroids from sums/counts
+            int moved = assignmentStep(iterVectors, centroids, iterAssignments, clusterSums, clusterCounts, k, config);
             updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
 
-            // Rebalance empty clusters
             if (config.rebalanceEmpty) {
-                rebalanceEmptyClusters(vectors, centroids, clusterCounts, assignments, k, config);
+                rebalanceEmptyClusters(vectors, centroids, clusterCounts, iterAssignments, k, config);
             }
 
-            // Convergence check
-            converged = (moved == 0) || ((float) moved / n < config.convergenceThreshold);
+            converged = (moved == 0) || ((float) moved / iterVectors.size() < config.convergenceThreshold);
+        }
+
+        // Final full pass: assign all vectors to converged centroids
+        if (sampled) {
+            assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
         }
 
         // Post-process: split oversized clusters
@@ -78,18 +102,16 @@ public final class KMeans {
 
     // ========== Initialization ==========
 
-    private static float[] initCentroids(VectorData vectors, int k, Config config) {
-        int n = vectors.numVectors();
+    private static float[] initCentroids(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
-        float[] data = vectors.data();
+        // vectors accessed via vectorValue(ord)
         float[] centroids = new float[k * dim];
         Random rng = new Random(config.seed);
 
-        // #2: Sample for large datasets to speed up init
-        int sampleSize = Math.min(n, 50000);
         // First centroid: random
         int first = rng.nextInt(n);
-        System.arraycopy(data, first * dim, centroids, 0, dim);
+        System.arraycopy(vectors.vectorValue(first), 0, centroids, 0, dim);
 
         if (k == 1) return centroids;
 
@@ -102,7 +124,7 @@ public final class KMeans {
             int prevOffset = (c - 1) * dim;
             float totalWeight = 0f;
             for (int i = 0; i < n; i++) {
-                float d = config.metric.distance(data, i * dim, centroids, prevOffset, dim);
+                float d = config.metric.distance(vectors.vectorValue(i), 0, centroids, prevOffset, dim);
                 if (d < minDistSq[i]) {
                     minDistSq[i] = d;
                 }
@@ -121,7 +143,7 @@ public final class KMeans {
                 }
             }
 
-            System.arraycopy(data, chosen * dim, centroids, c * dim, dim);
+            System.arraycopy(vectors.vectorValue(chosen), 0, centroids, c * dim, dim);
         }
 
         return centroids;
@@ -130,17 +152,17 @@ public final class KMeans {
     // ========== Assignment Step ==========
 
     private static int assignmentStep(
-        VectorData vectors,
+        ClusterANNVectorValues vectors,
         float[] centroids,
         int[] assignments,
         float[] clusterSums,
         int[] clusterCounts,
         int k,
         Config config
-    ) {
-        int n = vectors.numVectors();
+    ) throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
-        float[] data = vectors.data();
+        // vectors accessed via vectorValue(ord)
 
         // Reset sums and counts
         Arrays.fill(clusterSums, 0f);
@@ -155,19 +177,22 @@ public final class KMeans {
 
             IntStream.range(0, n).parallel().forEach(i -> {
                 int tid = (int) (Thread.currentThread().threadId() % numThreads);
-                int offset = i * dim;
+                float[] vec;
+                try {
+                    vec = vectors.vectorValue(i);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
                 float bestDist = Float.MAX_VALUE;
                 int bestCluster = 0;
 
-                // #9 fix: triangle inequality pruning
                 int prevCluster = assignments[i];
                 for (int c = 0; c < k; c++) {
                     if (prevCluster >= 0 && c != prevCluster) {
-                        // Skip if inter-centroid distance > 2 * dist to current centroid
                         float interDist = config.metric.distance(centroids, prevCluster * dim, centroids, c * dim, dim);
                         if (interDist > 4 * bestDist) continue;
                     }
-                    float dist = config.metric.distance(data, offset, centroids, c * dim, dim);
+                    float dist = config.metric.distance(vec, 0, centroids, c * dim, dim);
                     if (dist < bestDist) {
                         bestDist = dist;
                         bestCluster = c;
@@ -182,7 +207,7 @@ public final class KMeans {
                 threadCounts[tid][bestCluster]++;
                 int sumOffset = bestCluster * dim;
                 for (int d = 0; d < dim; d++) {
-                    threadSums[tid][sumOffset + d] += data[offset + d];
+                    threadSums[tid][sumOffset + d] += vec[d];
                 }
             });
 
@@ -199,12 +224,12 @@ public final class KMeans {
         } else {
             int moved = 0;
             for (int i = 0; i < n; i++) {
-                int offset = i * dim;
+                float[] vec = vectors.vectorValue(i);
                 float bestDist = Float.MAX_VALUE;
                 int bestCluster = 0;
 
                 for (int c = 0; c < k; c++) {
-                    float dist = config.metric.distance(data, offset, centroids, c * dim, dim);
+                    float dist = config.metric.distance(vec, 0, centroids, c * dim, dim);
                     if (dist < bestDist) {
                         bestDist = dist;
                         bestCluster = c;
@@ -219,7 +244,7 @@ public final class KMeans {
                 clusterCounts[bestCluster]++;
                 int sumOffset = bestCluster * dim;
                 for (int d = 0; d < dim; d++) {
-                    clusterSums[sumOffset + d] += data[offset + d];
+                    clusterSums[sumOffset + d] += vec[d];
                 }
             }
             return moved;
@@ -243,7 +268,7 @@ public final class KMeans {
     // ========== Empty Cluster Rebalancing ==========
 
     private static void rebalanceEmptyClusters(
-        VectorData vectors,
+        ClusterANNVectorValues vectors,
         float[] centroids,
         int[] clusterCounts,
         int[] assignments,
@@ -251,7 +276,7 @@ public final class KMeans {
         Config config
     ) {
         int dim = vectors.dimension();
-        float[] data = vectors.data();
+        // vectors accessed via vectorValue(ord)
         Random rng = new Random(config.seed + 7);
 
         // Find the largest cluster
@@ -277,7 +302,22 @@ public final class KMeans {
 
     // ========== Post-Processing ==========
 
-    private static Result postProcess(VectorData vectors, float[] centroids, int[] assignments, int k, Config config) {
+    /** Fisher-Yates partial shuffle to select sampleSize random indices from [0, n). */
+    private static int[] createRandomSample(int n, int sampleSize, long seed) {
+        int[] indices = new int[n];
+        for (int i = 0; i < n; i++)
+            indices[i] = i;
+        Random rng = new Random(seed + 13);
+        for (int i = 0; i < sampleSize; i++) {
+            int j = i + rng.nextInt(n - i);
+            int tmp = indices[i];
+            indices[i] = indices[j];
+            indices[j] = tmp;
+        }
+        return Arrays.copyOf(indices, sampleSize);
+    }
+
+    private static Result postProcess(ClusterANNVectorValues vectors, float[] centroids, int[] assignments, int k, Config config) {
         int dim = vectors.dimension();
         int[] clusterCounts = new int[k];
         for (int a : assignments) {
@@ -376,6 +416,7 @@ public final class KMeans {
         final boolean rebalanceEmpty;
         final float perturbation;
         final int maxClusterSize;
+        final float samplePercentage;
 
         private Config(Builder b) {
             this.metric = b.metric;
@@ -386,6 +427,7 @@ public final class KMeans {
             this.rebalanceEmpty = b.rebalanceEmpty;
             this.perturbation = b.perturbation;
             this.maxClusterSize = b.maxClusterSize;
+            this.samplePercentage = b.samplePercentage;
         }
 
         public static Builder builder() {
@@ -406,6 +448,7 @@ public final class KMeans {
             private boolean rebalanceEmpty = true;
             private float perturbation = 0.01f;
             private int maxClusterSize = Integer.MAX_VALUE;
+            private float samplePercentage = 0.1f;
 
             public Builder metric(DistanceMetric m) {
                 this.metric = m;
@@ -444,6 +487,11 @@ public final class KMeans {
 
             public Builder maxClusterSize(int m) {
                 this.maxClusterSize = m;
+                return this;
+            }
+
+            public Builder samplePercentage(float p) {
+                this.samplePercentage = p;
                 return this;
             }
 

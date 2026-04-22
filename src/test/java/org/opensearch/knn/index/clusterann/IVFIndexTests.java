@@ -7,7 +7,9 @@ package org.opensearch.knn.index.clusterann;
 
 import org.opensearch.knn.KNNTestCase;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
@@ -21,8 +23,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Build ==========
 
-    public void testBuildSmallDataset() {
-        VectorData vectors = makeGaussianBlobs(3, 30, DIM, SEED);
+    public void testBuildSmallDataset() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(3, 30, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder().numCentroids(10).metric(DistanceMetric.L2).seed(SEED).parallel(false).build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
@@ -32,8 +34,8 @@ public class IVFIndexTests extends KNNTestCase {
         assertEquals(DIM, index.dimension());
     }
 
-    public void testBuildLargeDataset() {
-        VectorData vectors = makeGaussianBlobs(5, 200, DIM, SEED);
+    public void testBuildLargeDataset() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(5, 200, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(50)
             .targetClusterSize(100)
@@ -56,9 +58,9 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Search ==========
 
-    public void testSearchFindsExactMatch() {
+    public void testSearchFindsExactMatch() throws Exception {
         int n = 500;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(20)
             .metric(DistanceMetric.L2)
@@ -70,7 +72,7 @@ public class IVFIndexTests extends KNNTestCase {
         IVFIndex index = IVFIndex.build(vectors, config);
 
         // Query with an existing vector — should find itself at distance 0
-        float[] query = vectors.getVectorCopy(42);
+        float[] query = vectors.vectorValueCopy(42);
         IVFIndex.SearchResult[] results = index.search(query, 1, 20, vectors);
 
         assertTrue(results.length > 0);
@@ -78,8 +80,8 @@ public class IVFIndexTests extends KNNTestCase {
         assertEquals(0f, results[0].distance, 1e-5f);
     }
 
-    public void testSearchReturnsKResults() {
-        VectorData vectors = makeRandom(1000, DIM, SEED);
+    public void testSearchReturnsKResults() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(1000, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(20)
             .metric(DistanceMetric.L2)
@@ -89,7 +91,7 @@ public class IVFIndexTests extends KNNTestCase {
             .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
-        float[] query = vectors.getVectorCopy(0);
+        float[] query = vectors.vectorValueCopy(0);
 
         IVFIndex.SearchResult[] results = index.search(query, 10, 20, vectors);
 
@@ -100,8 +102,8 @@ public class IVFIndexTests extends KNNTestCase {
         }
     }
 
-    public void testSearchNprobeAffectsRecall() {
-        VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
+    public void testSearchNprobeAffectsRecall() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(10, 100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(50)
             .targetClusterSize(50)
@@ -114,7 +116,7 @@ public class IVFIndexTests extends KNNTestCase {
         IVFIndex index = IVFIndex.build(vectors, config);
 
         // Compute ground truth (brute force)
-        float[] query = vectors.getVectorCopy(500);
+        float[] query = vectors.vectorValueCopy(500);
         int[] groundTruth = bruteForceKNN(vectors, query, 10, DistanceMetric.L2);
 
         // Low nprobe
@@ -131,8 +133,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== SOAR ==========
 
-    public void testSOARImprovesRecall() {
-        VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
+    public void testSOARImprovesRecall() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(10, 100, DIM, SEED);
 
         IVFIndex.Config noSoar = IVFIndex.Config.builder()
             .numCentroids(30)
@@ -159,8 +161,8 @@ public class IVFIndexTests extends KNNTestCase {
         int numQueries = 20;
         Random rng = new Random(SEED);
         for (int q = 0; q < numQueries; q++) {
-            int queryIdx = rng.nextInt(vectors.numVectors());
-            float[] query = vectors.getVectorCopy(queryIdx);
+            int queryIdx = rng.nextInt(vectors.size());
+            float[] query = vectors.vectorValueCopy(queryIdx);
             int[] gt = bruteForceKNN(vectors, query, 10, DistanceMetric.L2);
 
             IVFIndex.SearchResult[] rNoSoar = indexNoSoar.search(query, 10, 3, vectors);
@@ -178,8 +180,8 @@ public class IVFIndexTests extends KNNTestCase {
         );
     }
 
-    public void testSOARPostingListsPopulated() {
-        VectorData vectors = makeRandom(1000, DIM, SEED);
+    public void testSOARPostingListsPopulated() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(1000, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(10)
             .targetClusterSize(100)
@@ -198,8 +200,8 @@ public class IVFIndexTests extends KNNTestCase {
         assertTrue("SOAR posting lists should be populated", totalSoar > 0);
     }
 
-    public void testNoSOARWhenLambdaZero() {
-        VectorData vectors = makeRandom(500, DIM, SEED);
+    public void testNoSOARWhenLambdaZero() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(10)
             .metric(DistanceMetric.L2)
@@ -217,8 +219,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Distance Metrics ==========
 
-    public void testSearchWithInnerProduct() {
-        VectorData vectors = makeRandom(500, DIM, SEED);
+    public void testSearchWithInnerProduct() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(10)
             .targetClusterSize(100)
@@ -229,7 +231,7 @@ public class IVFIndexTests extends KNNTestCase {
             .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
-        float[] query = vectors.getVectorCopy(0);
+        float[] query = vectors.vectorValueCopy(0);
 
         // Use full probe to ensure we find the self-match
         IVFIndex.SearchResult[] results = index.search(query, 5, index.numCentroids(), vectors);
@@ -245,8 +247,8 @@ public class IVFIndexTests extends KNNTestCase {
         assertTrue("Self should be in top-5 with full probe", foundSelf);
     }
 
-    public void testSearchWithCosine() {
-        VectorData vectors = makeRandom(500, DIM, SEED);
+    public void testSearchWithCosine() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(10)
             .metric(DistanceMetric.COSINE)
@@ -256,7 +258,7 @@ public class IVFIndexTests extends KNNTestCase {
             .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
-        float[] query = vectors.getVectorCopy(0);
+        float[] query = vectors.vectorValueCopy(0);
 
         IVFIndex.SearchResult[] results = index.search(query, 5, 10, vectors);
         assertEquals(5, results.length);
@@ -266,8 +268,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Edge Cases ==========
 
-    public void testSearchEmptyIndex() {
-        VectorData vectors = makeRandom(10, DIM, SEED);
+    public void testSearchEmptyIndex() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(10, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(5)
             .metric(DistanceMetric.L2)
@@ -283,8 +285,8 @@ public class IVFIndexTests extends KNNTestCase {
         assertTrue(results.length <= 3);
     }
 
-    public void testNprobeGreaterThanCentroids() {
-        VectorData vectors = makeRandom(100, DIM, SEED);
+    public void testNprobeGreaterThanCentroids() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(5)
             .metric(DistanceMetric.L2)
@@ -294,7 +296,7 @@ public class IVFIndexTests extends KNNTestCase {
             .build();
 
         IVFIndex index = IVFIndex.build(vectors, config);
-        float[] query = vectors.getVectorCopy(0);
+        float[] query = vectors.vectorValueCopy(0);
 
         // nprobe > numCentroids should not crash
         IVFIndex.SearchResult[] results = index.search(query, 10, 1000, vectors);
@@ -303,8 +305,8 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Recall Validation ==========
 
-    public void testRecallAbove90PercentWithFullProbe() {
-        VectorData vectors = makeGaussianBlobs(10, 100, DIM, SEED);
+    public void testRecallAbove90PercentWithFullProbe() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(10, 100, DIM, SEED);
         IVFIndex.Config config = IVFIndex.Config.builder()
             .numCentroids(30)
             .targetClusterSize(100)
@@ -320,7 +322,7 @@ public class IVFIndexTests extends KNNTestCase {
         int numQueries = 50;
         Random rng = new Random(SEED + 1);
         for (int q = 0; q < numQueries; q++) {
-            float[] query = vectors.getVectorCopy(rng.nextInt(vectors.numVectors()));
+            float[] query = vectors.vectorValueCopy(rng.nextInt(vectors.size()));
             int[] gt = bruteForceKNN(vectors, query, 10, DistanceMetric.L2);
             IVFIndex.SearchResult[] results = index.search(query, 10, index.numCentroids(), vectors);
             totalRecall += computeRecall(results, gt);
@@ -332,40 +334,41 @@ public class IVFIndexTests extends KNNTestCase {
 
     // ========== Helpers ==========
 
-    private static VectorData makeRandom(int n, int dim, long seed) {
+    private static ClusterANNVectorValues makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
-        float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++)
-            data[i] = rng.nextFloat();
-        return new VectorData(data, n, dim);
+        List<float[]> vecs = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] v = new float[dim];
+            for (int d = 0; d < dim; d++)
+                v[d] = rng.nextFloat();
+            vecs.add(v);
+        }
+        return ClusterANNVectorValues.fromList(vecs, dim);
     }
 
-    private static VectorData makeGaussianBlobs(int numBlobs, int perBlob, int dim, long seed) {
+    private static ClusterANNVectorValues makeGaussianBlobs(int numBlobs, int perBlob, int dim, long seed) {
         Random rng = new Random(seed);
-        int n = numBlobs * perBlob;
-        float[] data = new float[n * dim];
+        List<float[]> vecs = new ArrayList<>(numBlobs * perBlob);
         for (int b = 0; b < numBlobs; b++) {
             float[] center = new float[dim];
             for (int d = 0; d < dim; d++)
                 center[d] = rng.nextFloat() * 30f;
             for (int i = 0; i < perBlob; i++) {
-                int idx = b * perBlob + i;
-                for (int d = 0; d < dim; d++) {
-                    data[idx * dim + d] = center[d] + (float) rng.nextGaussian() * 0.5f;
-                }
+                float[] v = new float[dim];
+                for (int d = 0; d < dim; d++)
+                    v[d] = center[d] + (float) rng.nextGaussian() * 0.5f;
+                vecs.add(v);
             }
         }
-        return new VectorData(data, n, dim);
+        return ClusterANNVectorValues.fromList(vecs, dim);
     }
 
-    private static int[] bruteForceKNN(VectorData vectors, float[] query, int k, DistanceMetric metric) {
-        int n = vectors.numVectors();
-        int dim = vectors.dimension();
-        float[] data = vectors.data();
+    private static int[] bruteForceKNN(ClusterANNVectorValues vectors, float[] query, int k, DistanceMetric metric) throws Exception {
+        int n = vectors.size();
 
         float[] dists = new float[n];
         for (int i = 0; i < n; i++) {
-            dists[i] = metric.distance(query, 0, data, i * dim, dim);
+            dists[i] = metric.distance(query, vectors.vectorValue(i));
         }
 
         // Find top-k smallest

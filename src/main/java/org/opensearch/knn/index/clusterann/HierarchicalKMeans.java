@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.clusterann;
 
+import java.io.IOException;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -37,8 +39,8 @@ public final class HierarchicalKMeans {
      * @param config     hierarchical clustering configuration
      * @return flat list of centroids (as contiguous float array) and vector assignments
      */
-    public static Result cluster(VectorData vectors, Config config) {
-        int n = vectors.numVectors();
+    public static Result cluster(ClusterANNVectorValues vectors, Config config) throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
 
         if (n == 0) {
@@ -58,13 +60,12 @@ public final class HierarchicalKMeans {
 
         // Assign all vectors to nearest centroid
         int[] assignments = new int[n];
-        float[] data = vectors.data();
         for (int i = 0; i < n; i++) {
-            int offset = i * dim;
+            float[] vec = vectors.vectorValue(i);
             float bestDist = Float.MAX_VALUE;
             int bestCentroid = 0;
             for (int c = 0; c < numCentroids; c++) {
-                float dist = config.kmeansConfig.metric.distance(data, offset, centroids, c * dim, dim);
+                float dist = config.kmeansConfig.metric.distance(vec, 0, centroids, c * dim, dim);
                 if (dist < bestDist) {
                     bestDist = dist;
                     bestCentroid = c;
@@ -78,7 +79,13 @@ public final class HierarchicalKMeans {
 
     // ========== Recursive Splitting ==========
 
-    private static void clusterRecursive(VectorData allVectors, int[] subset, List<float[]> centroidList, Config config, int depth) {
+    private static void clusterRecursive(
+        ClusterANNVectorValues allVectors,
+        int[] subset,
+        List<float[]> centroidList,
+        Config config,
+        int depth
+    ) throws IOException {
         int n = subset.length;
         int dim = allVectors.dimension();
 
@@ -94,8 +101,8 @@ public final class HierarchicalKMeans {
         // k = clamp(ceil(sqrt(n / targetSize)) * 2, 2, maxK)
         int k = Math.max(2, Math.min(config.maxK, (int) Math.ceil(Math.sqrt((double) n / config.targetSize) * 2)));
 
-        // Extract subset into contiguous VectorData for k-means
-        VectorData subsetData = extractSubset(allVectors, subset);
+        // Extract subset into contiguous ClusterANNVectorValues for k-means
+        ClusterANNVectorValues subsetData = extractSubset(allVectors, subset);
 
         // Run k-means on subset
         KMeans.Result kmeansResult = KMeans.cluster(subsetData, k, config.kmeansConfig);
@@ -127,14 +134,13 @@ public final class HierarchicalKMeans {
 
     // ========== Helpers ==========
 
-    private static float[] computeMean(VectorData vectors, int[] subset) {
+    private static float[] computeMean(ClusterANNVectorValues vectors, int[] subset) throws IOException {
         int dim = vectors.dimension();
-        float[] data = vectors.data();
         float[] mean = new float[dim];
         for (int idx : subset) {
-            int offset = idx * dim;
+            float[] vec = vectors.vectorValue(idx);
             for (int d = 0; d < dim; d++) {
-                mean[d] += data[offset + d];
+                mean[d] += vec[d];
             }
         }
         float invN = 1f / subset.length;
@@ -144,18 +150,15 @@ public final class HierarchicalKMeans {
         return mean;
     }
 
-    private static VectorData extractSubset(VectorData allVectors, int[] subset) {
-        int dim = allVectors.dimension();
-        float[] data = allVectors.data();
-        // #10 fix: only copy if subset is significantly smaller than full data
-        if (subset.length == allVectors.numVectors()) {
-            return allVectors; // no copy needed
+    private static ClusterANNVectorValues extractSubset(ClusterANNVectorValues allVectors, int[] subset) throws IOException {
+        if (subset.length == allVectors.size()) {
+            return allVectors;
         }
-        float[] subData = new float[subset.length * dim];
-        for (int i = 0; i < subset.length; i++) {
-            System.arraycopy(data, subset[i] * dim, subData, i * dim, dim);
+        List<float[]> subList = new ArrayList<>(subset.length);
+        for (int idx : subset) {
+            subList.add(allVectors.vectorValue(idx));
         }
-        return new VectorData(subData, subset.length, dim);
+        return ClusterANNVectorValues.fromList(subList, allVectors.dimension());
     }
 
     private static int[] indices(int n) {

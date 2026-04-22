@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.clusterann;
 
+import java.io.IOException;
+
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.PriorityQueue;
@@ -72,8 +74,8 @@ public final class IVFIndex {
      * @param config  index configuration
      * @return built IVF index ready for search
      */
-    public static IVFIndex build(VectorData vectors, Config config) {
-        int n = vectors.numVectors();
+    public static IVFIndex build(ClusterANNVectorValues vectors, Config config) throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
 
         // Clustering
@@ -133,7 +135,7 @@ public final class IVFIndex {
      * @param vectors original vectors for distance computation
      * @return top-k results sorted by distance (ascending)
      */
-    public SearchResult[] search(float[] query, int k, int nprobe, VectorData vectors) {
+    public SearchResult[] search(float[] query, int k, int nprobe, ClusterANNVectorValues vectors) throws IOException {
         nprobe = Math.min(nprobe, numCentroids);
 
         // Find nprobe nearest centroids
@@ -144,13 +146,11 @@ public final class IVFIndex {
 
         // Track seen docIds to avoid duplicate distance computations
         Set<Integer> seen = new HashSet<>();
-        float[] data = vectors.data();
-
         for (int centId : probeCentroids) {
             // Scan primary posting list
             for (int docId : primaryPostings[centId]) {
                 if (seen.add(docId)) {
-                    float dist = metric.distance(query, 0, data, docId * dimension, dimension);
+                    float dist = metric.distance(query, vectors.vectorValue(docId));
                     insertResult(topK, k, docId, dist);
                 }
             }
@@ -158,7 +158,7 @@ public final class IVFIndex {
             // Scan SOAR posting list
             for (int docId : soarPostings[centId]) {
                 if (seen.add(docId)) {
-                    float dist = metric.distance(query, 0, data, docId * dimension, dimension);
+                    float dist = metric.distance(query, vectors.vectorValue(docId));
                     insertResult(topK, k, docId, dist);
                 }
             }
@@ -172,10 +172,10 @@ public final class IVFIndex {
 
     // ========== SOAR Computation ==========
 
-    private static int[] computeSOAR(VectorData vectors, float[] centroids, int[] assignments, int numCentroids, Config config) {
-        int n = vectors.numVectors();
+    private static int[] computeSOAR(ClusterANNVectorValues vectors, float[] centroids, int[] assignments, int numCentroids, Config config)
+        throws IOException {
+        int n = vectors.size();
         int dim = vectors.dimension();
-        float[] data = vectors.data();
         int[] soarAssignments = new int[n];
         Arrays.fill(soarAssignments, -1);
 
@@ -183,14 +183,13 @@ public final class IVFIndex {
         if (numCentroids <= 1) return soarAssignments;
 
         for (int i = 0; i < n; i++) {
-            int offset = i * dim;
+            float[] vec = vectors.vectorValue(i);
             int primaryCent = assignments[i];
-            int primaryOffset = primaryCent * dim;
+            float[] primaryCentroid = getCentroid(centroids, primaryCent, dim);
 
-            // Compute residual and its norm
             float residualNormSq = 0f;
             for (int d = 0; d < dim; d++) {
-                float r = data[offset + d] - centroids[primaryOffset + d];
+                float r = vec[d] - primaryCentroid[d];
                 residualNormSq += r * r;
             }
             float residualNorm = (float) Math.sqrt(residualNormSq);
@@ -206,16 +205,13 @@ public final class IVFIndex {
             for (int c = 0; c < numCentroids; c++) {
                 if (c == primaryCent) continue;
 
-                int centOffset = c * dim;
+                float[] cent = getCentroid(centroids, c, dim);
                 float dsq = 0f;
                 float proj = 0f;
                 for (int d = 0; d < dim; d++) {
-                    float vi = data[offset + d];
-                    float ci = centroids[centOffset + d];
-                    float diff = vi - ci;
+                    float diff = vec[d] - cent[d];
                     dsq += diff * diff;
-                    // Project diff onto normalized residual
-                    float residualD = (data[offset + d] - centroids[primaryOffset + d]) * invNorm;
+                    float residualD = (vec[d] - primaryCentroid[d]) * invNorm;
                     proj += residualD * diff;
                 }
 
@@ -316,6 +312,12 @@ public final class IVFIndex {
 
     public int[][] soarPostings() {
         return soarPostings;
+    }
+
+    private static float[] getCentroid(float[] centroids, int index, int dim) {
+        float[] c = new float[dim];
+        System.arraycopy(centroids, index * dim, c, 0, dim);
+        return c;
     }
 
     // ========== Search Result ==========

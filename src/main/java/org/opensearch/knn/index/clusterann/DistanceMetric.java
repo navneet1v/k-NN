@@ -8,11 +8,13 @@ package org.opensearch.knn.index.clusterann;
 /**
  * Distance metrics for vector similarity computation.
  *
- * <p>Each metric operates directly on the flat backing array of {@link VectorData}
- * to avoid allocation and enable SIMD-friendly sequential access patterns.
+ * <p>Single-pair {@link #distance(float[], float[])} delegates to {@link ClusterANNVectorUtil}
+ * which uses Lucene's SIMD-accelerated {@code VectorUtil} under the hood.
+ *
+ * <p>Offset-based overloads operate on flat centroid arrays where vectors are packed contiguously.
  *
  * <p>All metrics return a value where <b>lower is more similar</b> (distance semantics).
- * For inner product and cosine, the raw similarity is negated to maintain this invariant.
+ * For inner product and cosine, the raw similarity is negated/inverted to maintain this invariant.
  */
 public enum DistanceMetric {
 
@@ -22,11 +24,16 @@ public enum DistanceMetric {
      */
     L2 {
         @Override
+        public float distance(float[] a, float[] b) {
+            return ClusterANNVectorUtil.squareDistance(a, b);
+        }
+
+        @Override
         public float distance(float[] data, int offsetA, int offsetB, int dimension) {
             float sum = 0f;
             for (int i = 0; i < dimension; i++) {
                 float diff = data[offsetA + i] - data[offsetB + i];
-                sum += diff * diff;
+                sum = Math.fma(diff, diff, sum);
             }
             return sum;
         }
@@ -36,7 +43,7 @@ public enum DistanceMetric {
             float sum = 0f;
             for (int i = 0; i < dimension; i++) {
                 float diff = a[offsetA + i] - b[offsetB + i];
-                sum += diff * diff;
+                sum = Math.fma(diff, diff, sum);
             }
             return sum;
         }
@@ -48,10 +55,15 @@ public enum DistanceMetric {
      */
     INNER_PRODUCT {
         @Override
+        public float distance(float[] a, float[] b) {
+            return -ClusterANNVectorUtil.dotProduct(a, b);
+        }
+
+        @Override
         public float distance(float[] data, int offsetA, int offsetB, int dimension) {
             float dot = 0f;
             for (int i = 0; i < dimension; i++) {
-                dot += data[offsetA + i] * data[offsetB + i];
+                dot = Math.fma(data[offsetA + i], data[offsetB + i], dot);
             }
             return -dot;
         }
@@ -60,7 +72,7 @@ public enum DistanceMetric {
         public float distance(float[] a, int offsetA, float[] b, int offsetB, int dimension) {
             float dot = 0f;
             for (int i = 0; i < dimension; i++) {
-                dot += a[offsetA + i] * b[offsetB + i];
+                dot = Math.fma(a[offsetA + i], b[offsetB + i], dot);
             }
             return -dot;
         }
@@ -72,14 +84,19 @@ public enum DistanceMetric {
      */
     COSINE {
         @Override
+        public float distance(float[] a, float[] b) {
+            return 1f - ClusterANNVectorUtil.cosine(a, b);
+        }
+
+        @Override
         public float distance(float[] data, int offsetA, int offsetB, int dimension) {
             float dot = 0f, normA = 0f, normB = 0f;
             for (int i = 0; i < dimension; i++) {
                 float ai = data[offsetA + i];
                 float bi = data[offsetB + i];
-                dot += ai * bi;
-                normA += ai * ai;
-                normB += bi * bi;
+                dot = Math.fma(ai, bi, dot);
+                normA = Math.fma(ai, ai, normA);
+                normB = Math.fma(bi, bi, normB);
             }
             float denom = (float) (Math.sqrt(normA) * Math.sqrt(normB));
             return denom < 1e-10f ? 1f : 1f - dot / denom;
@@ -91,35 +108,30 @@ public enum DistanceMetric {
             for (int i = 0; i < dimension; i++) {
                 float ai = a[offsetA + i];
                 float bi = b[offsetB + i];
-                dot += ai * bi;
-                normA += ai * ai;
-                normB += bi * bi;
+                dot = Math.fma(ai, bi, dot);
+                normA = Math.fma(ai, ai, normA);
+                normB = Math.fma(bi, bi, normB);
             }
             float denom = (float) (Math.sqrt(normA) * Math.sqrt(normB));
             return denom < 1e-10f ? 1f : 1f - dot / denom;
         }
     };
 
+    /** Compute distance between two vectors. Lower = more similar. SIMD-accelerated. */
+    public abstract float distance(float[] a, float[] b);
+
     /**
-     * Compute distance between two vectors in the same backing array.
+     * Compute distance between two vectors in the same flat array.
      *
-     * @param data      flat backing array
-     * @param offsetA   byte offset of first vector
-     * @param offsetB   byte offset of second vector
+     * @param data      flat backing array (packed centroids)
+     * @param offsetA   offset of first vector
+     * @param offsetB   offset of second vector
      * @param dimension vector dimensionality
-     * @return distance (lower = more similar)
      */
     public abstract float distance(float[] data, int offsetA, int offsetB, int dimension);
 
     /**
-     * Compute distance between vectors in different arrays.
-     *
-     * @param a         first array
-     * @param offsetA   offset into first array
-     * @param b         second array
-     * @param offsetB   offset into second array
-     * @param dimension vector dimensionality
-     * @return distance (lower = more similar)
+     * Compute distance between vectors in different arrays at given offsets.
      */
     public abstract float distance(float[] a, int offsetA, float[] b, int offsetB, int dimension);
 }

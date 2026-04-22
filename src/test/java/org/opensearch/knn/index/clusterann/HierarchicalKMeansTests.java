@@ -7,6 +7,8 @@ package org.opensearch.knn.index.clusterann;
 
 import org.opensearch.knn.KNNTestCase;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
 /**
@@ -19,10 +21,10 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Basic Splitting ==========
 
-    public void testSplitsLargeClusters() {
+    public void testSplitsLargeClusters() throws Exception {
         int n = 2000;
         int targetSize = 200;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(targetSize)
@@ -38,10 +40,10 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         assertTrue("Expected ~10 centroids, got " + result.numCentroids(), result.numCentroids() >= 5 && result.numCentroids() <= 30);
     }
 
-    public void testSmallDatasetSingleCentroid() {
+    public void testSmallDatasetSingleCentroid() throws Exception {
         int n = 50;
         int targetSize = 100;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(targetSize)
@@ -53,8 +55,8 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         assertEquals("Small dataset should produce 1 centroid", 1, result.numCentroids());
     }
 
-    public void testEmptyInput() {
-        VectorData vectors = new VectorData(new float[0], 0, DIM);
+    public void testEmptyInput() throws Exception {
+        ClusterANNVectorValues vectors = ClusterANNVectorValues.fromList(new ArrayList<>(), DIM);
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder().build();
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
@@ -64,9 +66,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Depth Limit ==========
 
-    public void testMaxDepthRespected() {
+    public void testMaxDepthRespected() throws Exception {
         int n = 10000;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         // Very small targetSize + depth=1 should limit splitting
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
@@ -82,9 +84,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         assertTrue("Depth limit should cap centroids, got " + result.numCentroids(), result.numCentroids() <= 128);
     }
 
-    public void testDeepRecursion() {
+    public void testDeepRecursion() throws Exception {
         int n = 5000;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(50)
@@ -101,9 +103,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Assignment Quality ==========
 
-    public void testAllVectorsAssigned() {
+    public void testAllVectorsAssigned() throws Exception {
         int n = 1000;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(100)
@@ -119,9 +121,9 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         }
     }
 
-    public void testCentroidDimensionCorrect() {
+    public void testCentroidDimensionCorrect() throws Exception {
         int n = 500;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(100)
@@ -136,10 +138,10 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Adaptive K ==========
 
-    public void testAdaptiveKFormula() {
+    public void testAdaptiveKFormula() throws Exception {
         // With targetSize=500 and 2000 vectors: k = min(maxK, (2000+250)/500) = min(128, 4) = 4
         int n = 2000;
-        VectorData vectors = makeRandom(n, DIM, SEED);
+        ClusterANNVectorValues vectors = makeRandom(n, DIM, SEED);
 
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(500)
@@ -156,8 +158,8 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Determinism ==========
 
-    public void testDeterministic() {
-        VectorData vectors = makeRandom(1000, DIM, SEED);
+    public void testDeterministic() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(1000, DIM, SEED);
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(100)
             .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
@@ -172,8 +174,8 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== GetCentroid ==========
 
-    public void testGetCentroid() {
-        VectorData vectors = makeRandom(500, DIM, SEED);
+    public void testGetCentroid() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
         HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
             .targetSize(100)
             .kmeansConfig(KMeans.Config.builder().seed(SEED).parallel(false).build())
@@ -193,11 +195,15 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
     // ========== Helpers ==========
 
-    private static VectorData makeRandom(int n, int dim, long seed) {
+    private static ClusterANNVectorValues makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
-        float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++)
-            data[i] = rng.nextFloat() * 10f;
-        return new VectorData(data, n, dim);
+        List<float[]> vecs = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] v = new float[dim];
+            for (int d = 0; d < dim; d++)
+                v[d] = rng.nextFloat() * 10f;
+            vecs.add(v);
+        }
+        return ClusterANNVectorValues.fromList(vecs, dim);
     }
 }

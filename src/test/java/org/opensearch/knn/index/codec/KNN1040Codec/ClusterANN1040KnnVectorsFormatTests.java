@@ -67,8 +67,7 @@ public class ClusterANN1040KnnVectorsFormatTests extends KNNTestCase {
         ClusterANN1040KnnVectorsFormat format = new ClusterANN1040KnnVectorsFormat();
 
         try (MockedStatic<CodecUtil> mockedCodecUtil = Mockito.mockStatic(CodecUtil.class)) {
-            mockedCodecUtil.when(() -> CodecUtil.retrieveChecksum(any(IndexInput.class)))
-                .thenAnswer((Answer<Void>) invocation -> null);
+            mockedCodecUtil.when(() -> CodecUtil.retrieveChecksum(any(IndexInput.class))).thenAnswer((Answer<Void>) invocation -> null);
 
             KnnVectorsReader reader = format.fieldsReader(readState);
             assertTrue(reader instanceof ClusterANN1040KnnVectorsReader);
@@ -82,8 +81,7 @@ public class ClusterANN1040KnnVectorsFormatTests extends KNNTestCase {
         ClusterANN1040KnnVectorsFormat format = new ClusterANN1040KnnVectorsFormat();
 
         try (MockedStatic<CodecUtil> mockedCodecUtil = Mockito.mockStatic(CodecUtil.class)) {
-            mockedCodecUtil.when(() -> CodecUtil.retrieveChecksum(any(IndexInput.class)))
-                .thenAnswer((Answer<Void>) invocation -> null);
+            mockedCodecUtil.when(() -> CodecUtil.retrieveChecksum(any(IndexInput.class))).thenAnswer((Answer<Void>) invocation -> null);
 
             KnnVectorsReader reader = format.fieldsReader(readState);
             assertTrue(reader instanceof WarmableReader);
@@ -111,14 +109,7 @@ public class ClusterANN1040KnnVectorsFormatTests extends KNNTestCase {
             mock(Sort.class)
         );
 
-        return new SegmentWriteState(
-            mock(InfoStream.class),
-            directory,
-            segmentInfo,
-            mock(FieldInfos.class),
-            null,
-            mock(IOContext.class)
-        );
+        return new SegmentWriteState(mock(InfoStream.class), directory, segmentInfo, mock(FieldInfos.class), null, mock(IOContext.class));
     }
 
     @SneakyThrows
@@ -155,12 +146,6 @@ public class ClusterANN1040KnnVectorsFormatTests extends KNNTestCase {
             mock(Sort.class)
         );
 
-        return new SegmentReadState(
-            directory,
-            segmentInfo,
-            fieldInfos,
-            mock(IOContext.class),
-            "test-segment-suffix"
-        );
+        return new SegmentReadState(directory, segmentInfo, fieldInfos, mock(IOContext.class), "test-segment-suffix");
     }
 }

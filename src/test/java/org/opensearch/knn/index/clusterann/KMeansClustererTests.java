@@ -7,6 +7,8 @@ package org.opensearch.knn.index.clusterann;
 
 import org.opensearch.knn.KNNTestCase;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
 /**
@@ -19,7 +21,7 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Basic Clustering ==========
 
-    public void testClustersTwoBlobs() {
+    public void testClustersTwoBlobs() throws Exception {
         // Two well-separated clusters at (0,0,...) and (10,10,...)
         int n = 200;
         float[] data = new float[n * DIM];
@@ -33,7 +35,7 @@ public class KMeansClustererTests extends KNNTestCase {
                 data[i * DIM + d] = 10f + rng.nextFloat();
         }
 
-        VectorData vectors = new VectorData(data, n, DIM);
+        ClusterANNVectorValues vectors = ClusterANNVectorValues.fromList(toVectorList(data, n, DIM), DIM);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 2, config);
 
@@ -53,8 +55,8 @@ public class KMeansClustererTests extends KNNTestCase {
         }
     }
 
-    public void testConvergence() {
-        VectorData vectors = makeGaussianBlobs(4, 50, DIM, SEED);
+    public void testConvergence() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(4, 50, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).maxIterations(100).build();
         KMeans.Result result = KMeans.cluster(vectors, 4, config);
 
@@ -62,17 +64,17 @@ public class KMeansClustererTests extends KNNTestCase {
         assertTrue("Should take > 1 iteration", result.iterations() > 1);
     }
 
-    public void testSingleVector() {
+    public void testSingleVector() throws Exception {
         float[] data = new float[DIM];
-        VectorData vectors = new VectorData(data, 1, DIM);
+        ClusterANNVectorValues vectors = ClusterANNVectorValues.fromList(List.of(data), DIM);
         KMeans.Result result = KMeans.cluster(vectors, 5, KMeans.Config.defaults());
 
         assertEquals(1, result.k()); // clamped to n
         assertEquals(0, result.assignments()[0]);
     }
 
-    public void testKGreaterThanN() {
-        VectorData vectors = makeRandom(10, DIM, SEED);
+    public void testKGreaterThanN() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(10, DIM, SEED);
         KMeans.Result result = KMeans.cluster(vectors, 100, KMeans.Config.builder().parallel(false).build());
 
         assertEquals(10, result.k()); // clamped
@@ -80,7 +82,7 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Rebalancing ==========
 
-    public void testEmptyClusterRebalancing() {
+    public void testEmptyClusterRebalancing() throws Exception {
         // Create data where k-means might produce empty clusters
         // All vectors near origin except one outlier
         int n = 50;
@@ -94,7 +96,7 @@ public class KMeansClustererTests extends KNNTestCase {
         for (int d = 0; d < DIM; d++)
             data[(n - 1) * DIM + d] = 100f;
 
-        VectorData vectors = new VectorData(data, n, DIM);
+        ClusterANNVectorValues vectors = ClusterANNVectorValues.fromList(toVectorList(data, n, DIM), DIM);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).rebalanceEmpty(true).build();
         KMeans.Result result = KMeans.cluster(vectors, 3, config);
 
@@ -107,8 +109,8 @@ public class KMeansClustererTests extends KNNTestCase {
         }
     }
 
-    public void testNoRebalancing() {
-        VectorData vectors = makeRandom(50, DIM, SEED);
+    public void testNoRebalancing() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(50, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).rebalanceEmpty(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 5, config);
 
@@ -120,8 +122,8 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Distance Metrics ==========
 
-    public void testL2Metric() {
-        VectorData vectors = makeGaussianBlobs(3, 100, DIM, SEED);
+    public void testL2Metric() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(3, 100, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().metric(DistanceMetric.L2).seed(SEED).parallel(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 3, config);
 
@@ -129,8 +131,8 @@ public class KMeansClustererTests extends KNNTestCase {
         assertTrue(result.converged());
     }
 
-    public void testInnerProductMetric() {
-        VectorData vectors = makeGaussianBlobs(3, 100, DIM, SEED);
+    public void testInnerProductMetric() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(3, 100, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().metric(DistanceMetric.INNER_PRODUCT).seed(SEED).parallel(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 3, config);
 
@@ -139,8 +141,8 @@ public class KMeansClustererTests extends KNNTestCase {
         assertNotNull(result.assignments());
     }
 
-    public void testCosineMetric() {
-        VectorData vectors = makeGaussianBlobs(3, 100, DIM, SEED);
+    public void testCosineMetric() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(3, 100, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().metric(DistanceMetric.COSINE).seed(SEED).parallel(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 3, config);
 
@@ -149,8 +151,8 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Determinism ==========
 
-    public void testDeterministicWithSameSeed() {
-        VectorData vectors = makeRandom(200, DIM, SEED);
+    public void testDeterministicWithSameSeed() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(200, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().seed(42L).parallel(false).build();
 
         KMeans.Result r1 = KMeans.cluster(vectors, 5, config);
@@ -160,8 +162,8 @@ public class KMeansClustererTests extends KNNTestCase {
         assertFloatArrayEquals(r1.centroids(), r2.centroids(), 1e-6f);
     }
 
-    public void testDifferentSeedsDifferentResults() {
-        VectorData vectors = makeRandom(200, DIM, SEED);
+    public void testDifferentSeedsDifferentResults() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(200, DIM, SEED);
         KMeans.Config c1 = KMeans.Config.builder().seed(1L).parallel(false).build();
         KMeans.Config c2 = KMeans.Config.builder().seed(999L).parallel(false).build();
 
@@ -181,8 +183,8 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Parallel ==========
 
-    public void testParallelProducesSameAssignmentQuality() {
-        VectorData vectors = makeGaussianBlobs(4, 200, DIM, SEED);
+    public void testParallelProducesSameAssignmentQuality() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(4, 200, DIM, SEED);
         KMeans.Config seqConfig = KMeans.Config.builder().seed(SEED).parallel(false).build();
         KMeans.Config parConfig = KMeans.Config.builder().seed(SEED).parallel(true).build();
 
@@ -198,16 +200,16 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Config ==========
 
-    public void testMaxIterationsRespected() {
-        VectorData vectors = makeRandom(500, DIM, SEED);
+    public void testMaxIterationsRespected() throws Exception {
+        ClusterANNVectorValues vectors = makeRandom(500, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).maxIterations(2).build();
         KMeans.Result result = KMeans.cluster(vectors, 10, config);
 
         assertTrue(result.iterations() <= 2);
     }
 
-    public void testConvergenceThreshold() {
-        VectorData vectors = makeGaussianBlobs(4, 200, DIM, SEED);
+    public void testConvergenceThreshold() throws Exception {
+        ClusterANNVectorValues vectors = makeGaussianBlobs(4, 200, DIM, SEED);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).convergenceThreshold(0.05f).maxIterations(100).build();
         KMeans.Result result = KMeans.cluster(vectors, 4, config);
 
@@ -217,7 +219,7 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Centroid Quality ==========
 
-    public void testCentroidsNearClusterCenters() {
+    public void testCentroidsNearClusterCenters() throws Exception {
         // 4 blobs centered at known positions
         int perCluster = 100;
         float[][] centers = {
@@ -237,7 +239,7 @@ public class KMeansClustererTests extends KNNTestCase {
             }
         }
 
-        VectorData vectors = new VectorData(data, n, DIM);
+        ClusterANNVectorValues vectors = ClusterANNVectorValues.fromList(toVectorList(data, n, DIM), DIM);
         KMeans.Config config = KMeans.Config.builder().seed(SEED).parallel(false).build();
         KMeans.Result result = KMeans.cluster(vectors, 4, config);
 
@@ -262,30 +264,43 @@ public class KMeansClustererTests extends KNNTestCase {
 
     // ========== Helpers ==========
 
-    private static VectorData makeRandom(int n, int dim, long seed) {
-        Random rng = new Random(seed);
-        float[] data = new float[n * dim];
-        for (int i = 0; i < data.length; i++)
-            data[i] = rng.nextFloat();
-        return new VectorData(data, n, dim);
+    private static List<float[]> toVectorList(float[] data, int n, int dim) {
+        List<float[]> vecs = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] v = new float[dim];
+            System.arraycopy(data, i * dim, v, 0, dim);
+            vecs.add(v);
+        }
+        return vecs;
     }
 
-    private static VectorData makeGaussianBlobs(int numBlobs, int perBlob, int dim, long seed) {
+    private static ClusterANNVectorValues makeRandom(int n, int dim, long seed) {
         Random rng = new Random(seed);
-        int n = numBlobs * perBlob;
-        float[] data = new float[n * dim];
+        List<float[]> vecs = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] v = new float[dim];
+            for (int d = 0; d < dim; d++)
+                v[d] = rng.nextFloat();
+            vecs.add(v);
+        }
+        return ClusterANNVectorValues.fromList(vecs, dim);
+    }
+
+    private static ClusterANNVectorValues makeGaussianBlobs(int numBlobs, int perBlob, int dim, long seed) {
+        Random rng = new Random(seed);
+        List<float[]> vecs = new ArrayList<>(numBlobs * perBlob);
         for (int b = 0; b < numBlobs; b++) {
             float[] center = new float[dim];
             for (int d = 0; d < dim; d++)
                 center[d] = rng.nextFloat() * 20f;
             for (int i = 0; i < perBlob; i++) {
-                int idx = b * perBlob + i;
-                for (int d = 0; d < dim; d++) {
-                    data[idx * dim + d] = center[d] + (float) rng.nextGaussian() * 0.5f;
-                }
+                float[] v = new float[dim];
+                for (int d = 0; d < dim; d++)
+                    v[d] = center[d] + (float) rng.nextGaussian() * 0.5f;
+                vecs.add(v);
             }
         }
-        return new VectorData(data, n, dim);
+        return ClusterANNVectorValues.fromList(vecs, dim);
     }
 
     private static void assertFloatArrayEquals(float[] a, float[] b, float delta) {
