@@ -380,6 +380,23 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         byte[] scratch = new byte[dimension];
         byte[] bitsArray = new byte[] { docBits };
 
+        // Pre-normalize centroids for cosine (once per centroid, not per vector)
+        float[][] normalizedCentroids = centroids;
+        if (simFunc == VectorSimilarityFunction.COSINE) {
+            normalizedCentroids = new float[centroids.length][];
+            for (int c = 0; c < centroids.length; c++) {
+                normalizedCentroids[c] = centroids[c].clone();
+                float cNorm = 0f;
+                for (float v : normalizedCentroids[c])
+                    cNorm += v * v;
+                cNorm = (float) Math.sqrt(cNorm);
+                if (cNorm > 0f) {
+                    for (int d = 0; d < dimension; d++)
+                        normalizedCentroids[c][d] /= cNorm;
+                }
+            }
+        }
+
         for (int i = 0; i < numVectors; i++) {
             float[] vector = vectors.get(i).clone();
 
@@ -395,19 +412,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 }
             }
 
-            float[] centroid = centroids[assignments[i]].clone();
-
-            // For cosine, normalize centroid too (Lucene OSQ expects both normalized)
-            if (simFunc == VectorSimilarityFunction.COSINE) {
-                float cNorm = 0f;
-                for (float v : centroid)
-                    cNorm += v * v;
-                cNorm = (float) Math.sqrt(cNorm);
-                if (cNorm > 0f) {
-                    for (int d = 0; d < dimension; d++)
-                        centroid[d] /= cNorm;
-                }
-            }
+            float[] centroid = normalizedCentroids[assignments[i]];
 
             // Quantize relative to centroid
             byte[][] destinations = new byte[][] { scratch };

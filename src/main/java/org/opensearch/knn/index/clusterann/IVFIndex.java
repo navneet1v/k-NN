@@ -8,9 +8,8 @@ package org.opensearch.knn.index.clusterann;
 import java.io.IOException;
 
 import java.util.Arrays;
-import java.util.HashSet;
+import java.util.BitSet;
 import java.util.PriorityQueue;
-import java.util.Set;
 
 /**
  * Inverted File (IVF) index with SOAR (Spilling with Orthogonal Augmented Residuals)
@@ -145,11 +144,12 @@ public final class IVFIndex {
         PriorityQueue<SearchResult> topK = new PriorityQueue<>(k + 1, (a, b) -> Float.compare(b.distance, a.distance));
 
         // Track seen docIds to avoid duplicate distance computations
-        Set<Integer> seen = new HashSet<>();
+        BitSet seen = new BitSet(vectors.size());
         for (int centId : probeCentroids) {
             // Scan primary posting list
             for (int docId : primaryPostings[centId]) {
-                if (seen.add(docId)) {
+                if (!seen.get(docId)) {
+                    seen.set(docId);
                     float dist = metric.distance(query, vectors.vectorValue(docId));
                     insertResult(topK, k, docId, dist);
                 }
@@ -157,7 +157,8 @@ public final class IVFIndex {
 
             // Scan SOAR posting list
             for (int docId : soarPostings[centId]) {
-                if (seen.add(docId)) {
+                if (!seen.get(docId)) {
+                    seen.set(docId);
                     float dist = metric.distance(query, vectors.vectorValue(docId));
                     insertResult(topK, k, docId, dist);
                 }
@@ -187,6 +188,28 @@ public final class IVFIndex {
         // #8 fix: skip SOAR if only 1 centroid
         if (numCentroids <= 1) return soarAssignments;
 
+        // Precompute nearest centroids per centroid for SOAR candidate selection
+        int candidateLimit = Math.min(numCentroids - 1, SOAR_CANDIDATE_LIMIT);
+        int[][] nearestCentroids = new int[numCentroids][candidateLimit];
+        for (int c = 0; c < numCentroids; c++) {
+            float[] dists = new float[numCentroids];
+            int[] idx = new int[numCentroids];
+            for (int j = 0; j < numCentroids; j++) {
+                dists[j] = (j == c) ? Float.MAX_VALUE : config.metric.distance(centroids[c], centroids[j]);
+                idx[j] = j;
+            }
+            for (int i = 0; i < candidateLimit; i++) {
+                int minIdx = i;
+                for (int j = i + 1; j < numCentroids; j++) {
+                    if (dists[idx[j]] < dists[idx[minIdx]]) minIdx = j;
+                }
+                int tmp = idx[i];
+                idx[i] = idx[minIdx];
+                idx[minIdx] = tmp;
+            }
+            System.arraycopy(idx, 0, nearestCentroids[c], 0, candidateLimit);
+        }
+
         for (int i = 0; i < n; i++) {
             float[] vec = vectors.vectorValue(i);
             int primaryCent = assignments[i];
@@ -201,16 +224,13 @@ public final class IVFIndex {
             if (residualNorm < 1e-10f) continue;
             float invNorm = 1f / residualNorm;
 
-            // Find best SOAR centroid (only check nearest ~10 centroids, not all C)
+            // Only check nearest centroids to primary (not all C)
             float bestDist = Float.MAX_VALUE;
             int bestCent = -1;
-            int soarCandidateLimit = Math.min(numCentroids, SOAR_CANDIDATE_LIMIT);
 
-            // Pre-compute distances to all centroids, pick top candidates
-            for (int c = 0; c < numCentroids; c++) {
-                if (c == primaryCent) continue;
+            for (int nc : nearestCentroids[primaryCent]) {
 
-                float[] cent = centroids[c];
+                float[] cent = centroids[nc];
                 float dsq = 0f;
                 float proj = 0f;
                 for (int d = 0; d < dim; d++) {
@@ -223,7 +243,7 @@ public final class IVFIndex {
                 float soarDist = dsq + config.soarLambda * (proj * proj);
                 if (soarDist < bestDist) {
                     bestDist = soarDist;
-                    bestCent = c;
+                    bestCent = nc;
                 }
             }
 

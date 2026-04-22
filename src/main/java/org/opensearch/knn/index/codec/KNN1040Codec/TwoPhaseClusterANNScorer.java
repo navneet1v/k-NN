@@ -64,6 +64,7 @@ final class TwoPhaseClusterANNScorer {
     // Reusable scratch for quantization and per-vector reads
     private final QueryQuantizationState qState;
     private final byte[] packedBuffer;
+    private final byte[] transposedBuffer;
 
     /** Reusable scratch arrays for per-centroid query quantization. */
     private static final class QueryQuantizationState {
@@ -105,6 +106,7 @@ final class TwoPhaseClusterANNScorer {
         this.nativeBatchOrds = new int[256];
         this.nativeBatchScores = new float[256];
         this.packedBuffer = new byte[encoding.docPackedBytes(fieldState.dimension)];
+        this.transposedBuffer = new byte[((fieldState.dimension + 7) / 8) * 4];
         this.qState = new QueryQuantizationState(simFunc, fieldState.dimension);
 
         // Try to extract mmap address for native SIMD scoring
@@ -274,16 +276,30 @@ final class TwoPhaseClusterANNScorer {
      * Phase 2: rescore top ADC candidates with exact scorer and collect results.
      */
     public void finish(KnnCollector collector) throws IOException {
-        // Sort by ADC score descending using index sort
-        Integer[] sortedIndices = new Integer[candidateCount];
-        for (int i = 0; i < candidateCount; i++)
-            sortedIndices[i] = i;
-        Arrays.sort(sortedIndices, (a, b) -> Float.compare(candidateScores[b], candidateScores[a]));
-
         int rescoreCount = Math.min((int) (k * RESCORE_OVERSAMPLE), candidateCount);
+        if (rescoreCount == 0) return;
+
+        // Partial select: find top rescoreCount by ADC score using min-heap selection
+        // For small counts, just sort the indices directly with primitive array
+        int[] idx = new int[candidateCount];
+        for (int i = 0; i < candidateCount; i++)
+            idx[i] = i;
+
+        // Partial sort: move top rescoreCount to front via selection
         for (int i = 0; i < rescoreCount; i++) {
-            int idx = sortedIndices[i];
-            int ord = candidateOrdinals[idx];
+            int bestIdx = i;
+            for (int j = i + 1; j < candidateCount; j++) {
+                if (candidateScores[idx[j]] > candidateScores[idx[bestIdx]]) {
+                    bestIdx = j;
+                }
+            }
+            int tmp = idx[i];
+            idx[i] = idx[bestIdx];
+            idx[bestIdx] = tmp;
+        }
+
+        for (int i = 0; i < rescoreCount; i++) {
+            int ord = candidateOrdinals[idx[i]];
             int doc = exactScorer.ordToDoc(ord);
             float exactScore = exactScorer.score(ord);
             collector.collect(doc, exactScore);
@@ -296,8 +312,6 @@ final class TwoPhaseClusterANNScorer {
      */
     QueryQuantization quantizeQuery(float[] centroid) {
         Arrays.fill(qState.scratch, (byte) 0);
-        // reuse qState.destinations
-        // reuse qState.bitsArray
 
         System.arraycopy(queryVector, 0, qState.queryCopy, 0, queryVector.length);
         float[] queryCopy = qState.queryCopy;
@@ -308,15 +322,14 @@ final class TwoPhaseClusterANNScorer {
             centroid
         )[0];
 
-        int stripeSize = (fieldState.dimension + 7) / 8;
-        byte[] transposed = new byte[stripeSize * 4];
-        transposeHalfByte(qState.scratch, transposed);
+        Arrays.fill(transposedBuffer, (byte) 0);
+        transposeHalfByte(qState.scratch, transposedBuffer);
 
         float queryLower = result.lowerInterval();
         float queryScale = (result.upperInterval() - queryLower) * FOUR_BIT_SCALE;
 
         return new QueryQuantization(
-            transposed,
+            transposedBuffer,
             queryLower,
             queryScale,
             (float) result.quantizedComponentSum(),

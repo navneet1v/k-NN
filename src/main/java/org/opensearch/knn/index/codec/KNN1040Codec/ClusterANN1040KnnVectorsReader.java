@@ -21,6 +21,7 @@ import org.apache.lucene.search.AcceptDocs;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.util.WarmupUtil;
@@ -293,26 +294,22 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         if (useADC && adcScorer != null) {
             System.arraycopy(fieldState.centroids[centroidIdx], 0, centroidBuffer, 0, fieldState.dimension);
 
-            int[] validOrds = new int[ordinals.length];
             int validCount = 0;
             for (int ord : ordinals) {
                 int doc = exactScorer.ordToDoc(ord);
                 if (visited.get(doc)) continue;
                 visited.set(doc);
                 if (acceptBits != null && !acceptBits.get(doc)) continue;
-                validOrds[validCount++] = ord;
+                batchOrds[validCount++] = ord;
             }
 
             if (validCount > 0) {
-                adcScorer.prefetch(validOrds, validCount);
-                // Compute centroid dot product for IP/cosine scoring
+                adcScorer.prefetch(batchOrds, validCount);
                 float centroidDp = 0f;
                 if (adcScorer.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
-                    for (int d = 0; d < fieldState.dimension; d++) {
-                        centroidDp += target[d] * centroidBuffer[d];
-                    }
+                    centroidDp = VectorUtil.dotProduct(target, centroidBuffer);
                 }
-                adcScorer.scoreADCBatch(validOrds, validCount, centroidIdx, centroidBuffer, centroidDp);
+                adcScorer.scoreADCBatch(batchOrds, validCount, centroidIdx, centroidBuffer, centroidDp);
                 knnCollector.incVisitedCount(validCount);
             }
         } else {
@@ -371,24 +368,14 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         int[] nprobeOut
     ) {
         float[] dists = new float[numCentroids];
-        int[] indices = new int[numCentroids];
+        Integer[] indices = new Integer[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
             dists[c] = metric.distance(query, centroids[c]);
             indices[c] = c;
         }
 
-        // Full sort by distance for adaptive cutoff
-        for (int i = 0; i < numCentroids - 1; i++) {
-            int minIdx = i;
-            for (int j = i + 1; j < numCentroids; j++) {
-                if (dists[indices[j]] < dists[indices[minIdx]]) minIdx = j;
-            }
-            int tmp = indices[i];
-            indices[i] = indices[minIdx];
-            indices[minIdx] = tmp;
-        }
+        Arrays.sort(indices, (a, b) -> Float.compare(dists[a], dists[b]));
 
-        // Build sorted distances for adaptive nprobe
         float[] sortedDists = new float[numCentroids];
         for (int i = 0; i < numCentroids; i++) {
             sortedDists[i] = dists[indices[i]];
@@ -396,7 +383,11 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
         int nprobe = calculateNprobe(sortedDists, numCentroids, k);
         nprobeOut[0] = nprobe;
-        return Arrays.copyOf(indices, nprobe);
+        int[] result = new int[nprobe];
+        for (int i = 0; i < nprobe; i++) {
+            result[i] = indices[i];
+        }
+        return result;
     }
 
     // ========== Private: Brute Force Fallback ==========
@@ -405,11 +396,29 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         RandomVectorScorer scorer = flatVectorsReader.getRandomVectorScorer(field, target);
         if (scorer == null) return;
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
-        for (int ord = 0; ord < scorer.maxOrd(); ord++) {
+        int maxOrd = scorer.maxOrd();
+        int[] ords = new int[Math.min(maxOrd, 256)];
+        float[] scores = new float[ords.length];
+        int count = 0;
+        for (int ord = 0; ord < maxOrd; ord++) {
             int docId = scorer.ordToDoc(ord);
             if (acceptBits != null && !acceptBits.get(docId)) continue;
-            knnCollector.collect(docId, scorer.score(ord));
-            knnCollector.incVisitedCount(1);
+            ords[count++] = ord;
+            if (count == ords.length) {
+                scorer.bulkScore(ords, scores, count);
+                for (int i = 0; i < count; i++) {
+                    knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
+                }
+                knnCollector.incVisitedCount(count);
+                count = 0;
+            }
+        }
+        if (count > 0) {
+            scorer.bulkScore(ords, scores, count);
+            for (int i = 0; i < count; i++) {
+                knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
+            }
+            knnCollector.incVisitedCount(count);
         }
     }
 
