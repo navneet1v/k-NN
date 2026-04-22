@@ -28,6 +28,7 @@ import static org.opensearch.knn.common.KNNConstants.VECTOR_DATA_TYPE_FIELD;
 public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
 
     private final VectorValidator vectorValidator;
+    private final VectorTransformer vectorTransformer;
 
     public static ClusterANNVectorFieldMapper createFieldMapper(
         String fullname,
@@ -41,7 +42,8 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
         boolean hasDocValues,
         OriginalMappingParameters originalMappingParameters
     ) {
-        final SpaceType spaceType = originalMappingParameters.getKnnMethodContext().getSpaceType();
+        final SpaceType spaceType = originalMappingParameters.getResolvedKnnMethodContext().getSpaceType();
+        final KNNMethodContext resolvedMethodContext = originalMappingParameters.getResolvedKnnMethodContext();
         final KNNVectorFieldType mappedFieldType = new KNNVectorFieldType(
             fullname,
             metaValue,
@@ -49,12 +51,17 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
             new KNNMappingConfig() {
                 @Override
                 public Optional<KNNMethodContext> getKnnMethodContext() {
-                    return Optional.of(originalMappingParameters.getKnnMethodContext());
+                    return Optional.of(resolvedMethodContext);
                 }
 
                 @Override
                 public int getDimension() {
                     return knnMethodConfigContext.getDimension();
+                }
+
+                @Override
+                public CompressionLevel getCompressionLevel() {
+                    return knnMethodConfigContext.getCompressionLevel();
                 }
 
                 @Override
@@ -106,8 +113,9 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
         );
         this.useLuceneBasedVectorField = true;
         this.vectorValidator = new SpaceVectorValidator(spaceType);
+        this.vectorTransformer = VectorTransformerFactory.getVectorTransformer(spaceType);
 
-        String methodName = originalMappingParameters.getKnnMethodContext().getMethodComponentContext().getName();
+        String methodName = originalMappingParameters.getResolvedKnnMethodContext().getMethodComponentContext().getName();
         this.fieldType = new FieldType(KNNVectorFieldMapper.Defaults.FIELD_TYPE);
         this.fieldType.putAttribute(KNN_METHOD, methodName);
         this.fieldType.putAttribute(SPACE_TYPE, spaceType.getValue());
@@ -134,5 +142,10 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
     @Override
     protected PerDimensionProcessor getPerDimensionProcessor() {
         return PerDimensionProcessor.NOOP_PROCESSOR;
+    }
+
+    @Override
+    protected VectorTransformer getVectorTransformer() {
+        return vectorTransformer;
     }
 }

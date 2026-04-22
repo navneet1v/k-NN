@@ -323,3 +323,64 @@ New format writes `isEngineConfigured` boolean before engine string. Old format 
 - **Query layer**: How cluster-based search is executed
 - **Algorithm parameters**: `method.parameters` (e.g., `num_clusters`, `sample_size`) — follow-up
 - **Encoder support**: Future quantization via `encoder` in `method.parameters` — follow-up
+
+## 11. Compression Support
+
+### Mapping API
+
+Cluster ANN accepts the `compression_level` top-level parameter with restricted values:
+
+```json
+{
+  "my_vector": {
+    "type": "knn_vector",
+    "dimension": 128,
+    "compression_level": "32x",
+    "method": { "name": "cluster", "space_type": "l2" }
+  }
+}
+```
+
+### Validation in `validateFromEngineLessAlgorithm()`
+
+The validation splits the original `mode/compression` rejection into two separate checks:
+
+```java
+// mode is always rejected — cluster ANN has no in_memory/on_disk distinction
+if (builder.mode.isConfigured()) {
+    throw MapperParsingException("mode cannot be used with algorithm 'cluster'");
+}
+
+// compression is accepted for 8x, 16x, 32x only
+if (builder.compressionLevel.isConfigured()) {
+    CompressionLevel level = CompressionLevel.fromName(builder.compressionLevel.get());
+    if (level != x8 && level != x16 && level != x32) {
+        throw MapperParsingException("Algorithm 'cluster' only supports 8x, 16x, and 32x compression");
+    }
+}
+```
+
+### Compression to docBits Mapping
+
+| `compression_level` | `CompressionLevel` enum | `docBits` | Quantization |
+|---|---|---|---|
+| `"8x"` | `CompressionLevel.x8` | 4 | 4-bit scalar quantization |
+| `"16x"` | `CompressionLevel.x16` | 2 | 2-bit scalar quantization |
+| `"32x"` | `CompressionLevel.x32` | 1 | 1-bit scalar quantization |
+| not configured | `NOT_CONFIGURED` | 1 (default) | 1-bit scalar quantization |
+
+### Rejected Values
+
+| `compression_level` | Reason |
+|---|---|
+| `"1x"` | No quantization path — cluster ANN always uses quantized ADC |
+| `"2x"` | Not a supported quantization width |
+| `"4x"` | Not a supported quantization width |
+
+### Wiring (TODO)
+
+The compression level is accepted at the mapping layer but not yet wired to the codec format. The remaining steps:
+
+1. `validateFromEngineLessAlgorithm()` stores the resolved `docBits` on `KNNMethodConfigContext`
+2. `EngineLessCodecFormatResolver.resolve()` reads `docBits` from context
+3. `EngineLessMethod.getFormat(docBits)` passes it to `ClusterANN1040KnnVectorsFormat(docBits)`

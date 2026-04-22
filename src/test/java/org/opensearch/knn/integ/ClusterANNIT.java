@@ -15,6 +15,7 @@ import org.opensearch.client.Request;
 import org.opensearch.client.Response;
 import org.opensearch.client.ResponseException;
 import org.opensearch.common.xcontent.XContentFactory;
+import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.knn.KNNJsonQueryBuilder;
 import org.opensearch.knn.KNNRestTestCase;
 import org.opensearch.knn.KNNResult;
@@ -106,6 +107,97 @@ public class ClusterANNIT extends KNNRestTestCase {
             .endObject()
             .toString();
         expectThrows(ResponseException.class, () -> createKnnIndex(INDEX_NAME, mappingWithBinary));
+
+        // Reject unsupported compression (1x)
+        String mappingWith1x = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("properties")
+            .startObject(FIELD_NAME)
+            .field("type", "knn_vector")
+            .field("dimension", DIMENSION)
+            .field("compression_level", "1x")
+            .startObject("method")
+            .field("name", METHOD_CLUSTER)
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject()
+            .toString();
+        expectThrows(ResponseException.class, () -> createKnnIndex(INDEX_NAME, mappingWith1x));
+
+        // Reject unsupported compression (4x)
+        String mappingWith4x = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("properties")
+            .startObject(FIELD_NAME)
+            .field("type", "knn_vector")
+            .field("dimension", DIMENSION)
+            .field("compression_level", "4x")
+            .startObject("method")
+            .field("name", METHOD_CLUSTER)
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject()
+            .toString();
+        expectThrows(ResponseException.class, () -> createKnnIndex(INDEX_NAME, mappingWith4x));
+
+        // Accept 8x compression (should not throw)
+        String mappingWith8x = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("properties")
+            .startObject(FIELD_NAME)
+            .field("type", "knn_vector")
+            .field("dimension", DIMENSION)
+            .field("compression_level", "8x")
+            .startObject("method")
+            .field("name", METHOD_CLUSTER)
+            .field("space_type", "l2")
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject()
+            .toString();
+        createKnnIndex(INDEX_NAME, mappingWith8x);
+        deleteIndex(INDEX_NAME);
+
+        // Accept 16x compression (should not throw)
+        String mappingWith16x = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("properties")
+            .startObject(FIELD_NAME)
+            .field("type", "knn_vector")
+            .field("dimension", DIMENSION)
+            .field("compression_level", "16x")
+            .startObject("method")
+            .field("name", METHOD_CLUSTER)
+            .field("space_type", "l2")
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject()
+            .toString();
+        createKnnIndex(INDEX_NAME, mappingWith16x);
+        deleteIndex(INDEX_NAME);
+
+        // Accept 32x compression (should not throw)
+        String mappingWith32x = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("properties")
+            .startObject(FIELD_NAME)
+            .field("type", "knn_vector")
+            .field("dimension", DIMENSION)
+            .field("compression_level", "32x")
+            .startObject("method")
+            .field("name", METHOD_CLUSTER)
+            .field("space_type", "l2")
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject()
+            .toString();
+        createKnnIndex(INDEX_NAME, mappingWith32x);
+        deleteIndex(INDEX_NAME);
     }
 
     // ======================== Test 2: Basic Index and Search ========================
@@ -155,46 +247,13 @@ public class ClusterANNIT extends KNNRestTestCase {
     // ======================== Test 3: Recall ========================
 
     @SneakyThrows
-    public void testRecall_whenBruteForce_thenPerfectRecall() {
-        int dimension = 128;
-        URL testIndexVectors = ClusterANNIT.class.getClassLoader().getResource("data/test_vectors_1000x128.json");
-        URL testQueries = ClusterANNIT.class.getClassLoader().getResource("data/test_queries_100x128.csv");
-        URL groundTruthValues = ClusterANNIT.class.getClassLoader().getResource("data/test_ground_truth_l2_100.csv");
-        assertNotNull(testIndexVectors);
-        assertNotNull(testQueries);
-        assertNotNull(groundTruthValues);
-        TestUtils.TestData testData = new TestUtils.TestData(
-            testIndexVectors.getPath(),
-            testQueries.getPath(),
-            groundTruthValues.getPath()
-        );
+    public void testRecall_defaultCompression() {
+        TestUtils.TestData testData = loadTestData();
+        createClusterANNIndex(INDEX_NAME, FIELD_NAME, 128, SpaceType.L2);
+        ingestTestData(INDEX_NAME, FIELD_NAME, testData);
 
-        createClusterANNIndex(INDEX_NAME, FIELD_NAME, dimension, SpaceType.L2);
-
-        // Ingest test data
-        for (int i = 0; i < testData.indexData.docs.length; i++) {
-            addKnnDoc(
-                INDEX_NAME,
-                Integer.toString(testData.indexData.docs[i]),
-                FIELD_NAME,
-                Floats.asList(testData.indexData.vectors[i]).toArray()
-            );
-        }
-        refreshAllIndices();
-        assertEquals(testData.indexData.docs.length, getDocCount(INDEX_NAME));
-
-        forceMergeKnnIndex(INDEX_NAME);
-
-        // Query and check recall
-        int k = 100;
-        for (int i = 0; i < testData.queries.length; i++) {
-            List<KNNResult> knnResults = runKnnQuery(INDEX_NAME, FIELD_NAME, testData.queries[i], k);
-            float recall = getRecall(
-                Set.of(Arrays.copyOf(testData.groundTruthValues[i], k)),
-                knnResults.stream().map(KNNResult::getDocId).collect(Collectors.toSet())
-            );
-            assertTrue("Recall should be > 0.9, got: " + recall, recall > 0.9);
-        }
+        float avgRecall = computeRecall(testData, 100);
+        assertTrue("Average recall should be > 0.9, got: " + avgRecall, avgRecall > 0.9);
     }
 
     // ======================== Test 4: Filtered Search ========================
@@ -401,24 +460,90 @@ public class ClusterANNIT extends KNNRestTestCase {
         assertEquals("k > doc count should return all docs", 3, results.size());
     }
 
+    // ======================== Test 8: Compression Recall ========================
+
+    @SneakyThrows
+    public void testCompression_recallAcrossLevels() {
+        TestUtils.TestData testData = loadTestData();
+        String[] compressionLevels = { "8x", "16x", "32x" };
+        // Quantized search has lower recall than exact — threshold per level
+        float[] minRecall = { 0.5f, 0.3f, 0.2f };
+
+        for (int c = 0; c < compressionLevels.length; c++) {
+            String indexName = INDEX_NAME + "_" + compressionLevels[c];
+            createClusterANNIndex(indexName, FIELD_NAME, 128, SpaceType.L2, compressionLevels[c]);
+            ingestTestData(indexName, FIELD_NAME, testData);
+
+            float totalRecall = 0;
+            int k = 10;
+            for (int i = 0; i < testData.queries.length; i++) {
+                List<KNNResult> results = runKnnQuery(indexName, FIELD_NAME, testData.queries[i], k);
+                totalRecall += getRecall(
+                    Set.of(Arrays.copyOf(testData.groundTruthValues[i], k)),
+                    results.stream().map(KNNResult::getDocId).collect(Collectors.toSet())
+                );
+            }
+            float avgRecall = totalRecall / testData.queries.length;
+            assertTrue(
+                "Compression " + compressionLevels[c] + " recall should be > " + minRecall[c] + ", got: " + avgRecall,
+                avgRecall > minRecall[c]
+            );
+
+            deleteIndex(indexName);
+        }
+    }
+
     // ======================== Helpers ========================
 
     private void createClusterANNIndex(String indexName, String fieldName, int dimension, SpaceType spaceType) throws IOException {
-        String mapping = XContentFactory.jsonBuilder()
+        createClusterANNIndex(indexName, fieldName, dimension, spaceType, null);
+    }
+
+    private void createClusterANNIndex(String indexName, String fieldName, int dimension, SpaceType spaceType, String compressionLevel)
+        throws IOException {
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
             .startObject()
             .startObject("properties")
             .startObject(fieldName)
             .field("type", "knn_vector")
-            .field("dimension", dimension)
-            .startObject("method")
+            .field("dimension", dimension);
+        if (compressionLevel != null) {
+            xContentBuilder.field("compression_level", compressionLevel);
+        }
+        xContentBuilder.startObject("method")
             .field("name", METHOD_CLUSTER)
             .field("space_type", spaceType.getValue())
             .endObject()
             .endObject()
             .endObject()
-            .endObject()
-            .toString();
-        createKnnIndex(indexName, mapping);
+            .endObject();
+        createKnnIndex(indexName, xContentBuilder.toString());
+    }
+
+    private void ingestTestData(String indexName, String fieldName, TestUtils.TestData testData) throws Exception {
+        for (int i = 0; i < testData.indexData.docs.length; i++) {
+            addKnnDoc(
+                indexName,
+                Integer.toString(testData.indexData.docs[i]),
+                fieldName,
+                Floats.asList(testData.indexData.vectors[i]).toArray()
+            );
+        }
+        refreshAllIndices();
+        assertEquals(testData.indexData.docs.length, getDocCount(indexName));
+        forceMergeKnnIndex(indexName);
+    }
+
+    private float computeRecall(TestUtils.TestData testData, int k) throws Exception {
+        float totalRecall = 0;
+        for (int i = 0; i < testData.queries.length; i++) {
+            List<KNNResult> knnResults = runKnnQuery(INDEX_NAME, FIELD_NAME, testData.queries[i], k);
+            totalRecall += getRecall(
+                Set.of(Arrays.copyOf(testData.groundTruthValues[i], k)),
+                knnResults.stream().map(KNNResult::getDocId).collect(Collectors.toSet())
+            );
+        }
+        return totalRecall / testData.queries.length;
     }
 
     private List<KNNResult> runKnnQuery(String indexName, String fieldName, float[] queryVector, int k) throws Exception {
@@ -435,5 +560,16 @@ public class ClusterANNIT extends KNNRestTestCase {
     private float getRecall(Set<String> truth, Set<String> result) {
         result.retainAll(truth);
         return (float) result.size() / truth.size();
+    }
+
+    @SneakyThrows
+    private TestUtils.TestData loadTestData() {
+        URL testIndexVectors = ClusterANNIT.class.getClassLoader().getResource("data/test_vectors_1000x128.json");
+        URL testQueries = ClusterANNIT.class.getClassLoader().getResource("data/test_queries_100x128.csv");
+        URL groundTruthValues = ClusterANNIT.class.getClassLoader().getResource("data/test_ground_truth_l2_100.csv");
+        assertNotNull(testIndexVectors);
+        assertNotNull(testQueries);
+        assertNotNull(groundTruthValues);
+        return new TestUtils.TestData(testIndexVectors.getPath(), testQueries.getPath(), groundTruthValues.getPath());
     }
 }

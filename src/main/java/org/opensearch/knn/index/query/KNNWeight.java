@@ -497,7 +497,8 @@ public abstract class KNNWeight extends Weight {
         );
 
         List<String> engineFiles = KNNCodecUtil.getEngineFiles(knnEngine.getExtension(), knnQuery.getField(), reader.getSegmentInfo().info);
-        // TODO: This is a temporary fix to support indices created before 2.10. Once we have a better way to handle this, we should remove this check.
+        // TODO: This is a temporary fix to support indices created before 2.10. Once we have a better way to handle this, we should remove
+        // this check.
         if (engineFiles.isEmpty() && !EngineLessMethod.isEngineLess(fieldInfo.getAttribute(KNN_METHOD))) {
             log.debug("[KNN] No native engine files found for field {} for segment {}", knnQuery.getField(), reader.getSegmentName());
             return EMPTY_TOPDOCS;

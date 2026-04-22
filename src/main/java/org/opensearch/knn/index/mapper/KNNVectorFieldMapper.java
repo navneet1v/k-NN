@@ -543,10 +543,22 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 throw new MapperParsingException(String.format(Locale.ROOT, "Engine cannot be specified for algorithm '%s'", methodName));
             }
 
-            if (builder.mode.isConfigured() || builder.compressionLevel.isConfigured()) {
-                throw new MapperParsingException(
-                    String.format(Locale.ROOT, "mode/compression cannot be used with algorithm '%s'", methodName)
-                );
+            if (builder.mode.isConfigured()) {
+                throw new MapperParsingException(String.format(Locale.ROOT, "mode cannot be used with algorithm '%s'", methodName));
+            }
+
+            if (builder.compressionLevel.isConfigured()) {
+                CompressionLevel level = CompressionLevel.fromName(builder.compressionLevel.get());
+                if (level != CompressionLevel.x8 && level != CompressionLevel.x16 && level != CompressionLevel.x32) {
+                    throw new MapperParsingException(
+                        String.format(
+                            Locale.ROOT,
+                            "Algorithm '%s' only supports 8x, 16x, and 32x compression, but got '%s'",
+                            methodName,
+                            builder.compressionLevel.get()
+                        )
+                    );
+                }
             }
 
             if (builder.vectorDataType.getValue() != VectorDataType.FLOAT) {
@@ -575,8 +587,16 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                     .vectorDataType(builder.originalParameters.getVectorDataType())
                     .versionCreated(builder.indexCreatedVersion)
                     .dimension(builder.originalParameters.getDimension())
+                    .compressionLevel(CompressionLevel.fromName(builder.originalParameters.getCompressionLevel()))
                     .build()
             );
+
+            // Resolve method: reconcile compression_level and encoder, validate conflicts
+            EngineLessMethod method = EngineLessMethod.fromName(methodName);
+            ResolvedMethodContext resolvedMethodContext = method.getMethodResolver()
+                .resolveMethod(builder.originalParameters.getKnnMethodContext(), builder.knnMethodConfigContext, false, resolvedSpaceType);
+            builder.originalParameters.setResolvedKnnMethodContext(resolvedMethodContext.getKnnMethodContext());
+            builder.knnMethodConfigContext.setCompressionLevel(resolvedMethodContext.getCompressionLevel());
         }
 
         private void validateFromFlat(KNNVectorFieldMapper.Builder builder) {

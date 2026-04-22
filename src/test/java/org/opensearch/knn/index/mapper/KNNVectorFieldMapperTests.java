@@ -2886,4 +2886,132 @@ public class KNNVectorFieldMapperTests extends KNNTestCase {
         KNNVectorFieldType fieldType = (KNNVectorFieldType) mapper.fieldType();
         assertTrue("Cluster ANN fields must always use memory optimized search", fieldType.isAlwaysUseMemoryOptimizedSearch());
     }
+
+    public void testTypeParser_clusterMethod_acceptsSupportedCompression() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        for (String compression : new String[] { "8x", "16x", "32x" }) {
+            XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+                .startObject()
+                .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+                .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+                .field(KNNConstants.COMPRESSION_LEVEL_PARAMETER, compression)
+                .startObject(KNN_METHOD)
+                .field(NAME, KNNConstants.METHOD_CLUSTER)
+                .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+                .endObject()
+                .endObject();
+
+            // Should not throw
+            typeParser.parse(TEST_FIELD_NAME, xContentBuilderToMap(xContentBuilder), buildParserContext(TEST_INDEX_NAME, settings));
+        }
+    }
+
+    public void testTypeParser_clusterMethod_rejectsUnsupportedCompression() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        for (String compression : new String[] { "1x", "2x", "4x" }) {
+            XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+                .startObject()
+                .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+                .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+                .field(KNNConstants.COMPRESSION_LEVEL_PARAMETER, compression)
+                .startObject(KNN_METHOD)
+                .field(NAME, KNNConstants.METHOD_CLUSTER)
+                .endObject()
+                .endObject();
+
+            expectThrows(
+                MapperParsingException.class,
+                () -> typeParser.parse(
+                    TEST_FIELD_NAME,
+                    xContentBuilderToMap(xContentBuilder),
+                    buildParserContext(TEST_INDEX_NAME, settings)
+                )
+            );
+        }
+    }
+
+    public void testTypeParser_clusterMethod_compressionWiredToFieldType() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        String[] compressions = { "8x", "16x", "32x" };
+        CompressionLevel[] expected = { CompressionLevel.x8, CompressionLevel.x16, CompressionLevel.x32 };
+
+        for (int i = 0; i < compressions.length; i++) {
+            XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+                .startObject()
+                .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+                .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+                .field(KNNConstants.COMPRESSION_LEVEL_PARAMETER, compressions[i])
+                .startObject(KNN_METHOD)
+                .field(NAME, KNNConstants.METHOD_CLUSTER)
+                .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+                .endObject()
+                .endObject();
+
+            KNNVectorFieldMapper.Builder builder = (KNNVectorFieldMapper.Builder) typeParser.parse(
+                TEST_FIELD_NAME,
+                xContentBuilderToMap(xContentBuilder),
+                buildParserContext(TEST_INDEX_NAME, settings)
+            );
+
+            Mapper.BuilderContext builderContext = new Mapper.BuilderContext(settings, new ContentPath());
+            KNNVectorFieldMapper mapper = builder.build(builderContext);
+            KNNVectorFieldType fieldType = (KNNVectorFieldType) mapper.fieldType();
+
+            assertEquals(
+                "Compression " + compressions[i] + " should be wired to field type",
+                expected[i],
+                fieldType.getKnnMappingConfig().getCompressionLevel()
+            );
+        }
+    }
+
+    public void testClusterMethod_cosineUsesNormalizeTransformer() throws IOException {
+        ModelDao modelDao = mock(ModelDao.class);
+        KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> modelDao);
+        Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
+
+        // Cosine should get NormalizeVectorTransformer
+        KNNVectorFieldMapper cosineMapper = buildClusterMapper(typeParser, settings, SpaceType.COSINESIMIL);
+        assertTrue(
+            "Cosine should use NormalizeVectorTransformer",
+            cosineMapper.getVectorTransformer() instanceof NormalizeVectorTransformer
+        );
+
+        // L2 should get NOOP
+        KNNVectorFieldMapper l2Mapper = buildClusterMapper(typeParser, settings, SpaceType.L2);
+        assertSame(VectorTransformerFactory.NOOP_VECTOR_TRANSFORMER, l2Mapper.getVectorTransformer());
+
+        // Inner product should get NOOP
+        KNNVectorFieldMapper ipMapper = buildClusterMapper(typeParser, settings, SpaceType.INNER_PRODUCT);
+        assertSame(VectorTransformerFactory.NOOP_VECTOR_TRANSFORMER, ipMapper.getVectorTransformer());
+    }
+
+    private KNNVectorFieldMapper buildClusterMapper(KNNVectorFieldMapper.TypeParser typeParser, Settings settings, SpaceType spaceType)
+        throws IOException {
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(TYPE_FIELD_NAME, KNN_VECTOR_TYPE)
+            .field(DIMENSION_FIELD_NAME, TEST_DIMENSION)
+            .startObject(KNN_METHOD)
+            .field(NAME, KNNConstants.METHOD_CLUSTER)
+            .field(METHOD_PARAMETER_SPACE_TYPE, spaceType.getValue())
+            .endObject()
+            .endObject();
+
+        KNNVectorFieldMapper.Builder builder = (KNNVectorFieldMapper.Builder) typeParser.parse(
+            TEST_FIELD_NAME,
+            xContentBuilderToMap(xContentBuilder),
+            buildParserContext(TEST_INDEX_NAME, settings)
+        );
+        return builder.build(new Mapper.BuilderContext(settings, new ContentPath()));
+    }
 }

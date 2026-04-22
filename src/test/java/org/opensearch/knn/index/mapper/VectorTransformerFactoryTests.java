@@ -98,4 +98,20 @@ public class VectorTransformerFactoryTests extends KNNTestCase {
             );
         }
     }
+
+    public void testGetVectorTransformer_spaceTypeOnly_cosine() {
+        VectorTransformer transformer = VectorTransformerFactory.getVectorTransformer(SpaceType.COSINESIMIL);
+        assertTrue(transformer instanceof NormalizeVectorTransformer);
+    }
+
+    public void testGetVectorTransformer_spaceTypeOnly_l2() {
+        assertSame(VectorTransformerFactory.NOOP_VECTOR_TRANSFORMER, VectorTransformerFactory.getVectorTransformer(SpaceType.L2));
+    }
+
+    public void testGetVectorTransformer_spaceTypeOnly_innerProduct() {
+        assertSame(
+            VectorTransformerFactory.NOOP_VECTOR_TRANSFORMER,
+            VectorTransformerFactory.getVectorTransformer(SpaceType.INNER_PRODUCT)
+        );
+    }
 }

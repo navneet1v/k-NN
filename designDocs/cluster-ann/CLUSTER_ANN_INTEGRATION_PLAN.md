@@ -389,3 +389,42 @@ The mapper layer is index-time setup code and not performance-sensitive. The cod
 - [ ] **Fix**: Add algorithm-specific search parameter validation for engine-less methods in `KNNQueryBuilder.doToQuery()`. Currently skipped with `knnEngine != KNNEngine.UNDEFINED` guard to avoid NPE on null `knnLibrary`. Engine-less algorithms need their own validation path for method parameters.
 - [ ] **Fix**: Support radial search (`min_score` / `max_distance`) for engine-less methods. Currently blocked by "Engine [UNDEFINED] does not support radial search" check in the query path.
 - [ ] **Follow-up**: Design and add `method.parameters` for cluster algorithm (e.g., `num_clusters`, `sample_size`, `encoder`)
+- [ ] **Future**: Refactor query path with composition-based `SearchCapabilities`, `SearchStrategyProvider`, and `SearchParameterValidator` interfaces on `KNNVectorFieldType` to cleanly support multiple engine-less algorithms. See `designDocs/cluster-ann/QUERY_PATH_REFACTORING.md`.
+
+## 6. Compression Support
+
+### Mapping API
+
+Cluster ANN supports `compression_level` as a top-level mapping parameter:
+
+```json
+{
+  "my_vector": {
+    "type": "knn_vector",
+    "dimension": 128,
+    "compression_level": "32x",
+    "method": { "name": "cluster", "space_type": "l2" }
+  }
+}
+```
+
+### Supported Levels
+
+| Compression | docBits | Bits per dimension | Status |
+|---|---|---|---|
+| `8x` | 4 | 4-bit scalar quantization | ✅ Mapping accepted |
+| `16x` | 2 | 2-bit scalar quantization | ✅ Mapping accepted |
+| `32x` | 1 | 1-bit scalar quantization | ✅ Mapping accepted |
+| `1x` | — | No quantization (exact only) | ❌ Rejected |
+| `2x` | — | — | ❌ Rejected |
+| `4x` | — | — | ❌ Rejected |
+
+`mode` parameter is always rejected for cluster ANN (no in_memory/on_disk distinction).
+
+### Implementation Status
+
+- [x] Mapping validation: accept 8x/16x/32x, reject 1x/2x/4x and mode
+- [x] Unit tests: `testTypeParser_clusterMethod_acceptsSupportedCompression`, `testTypeParser_clusterMethod_rejectsUnsupportedCompression`
+- [x] Integration test: compression validation in `testClusterMethod_invalidMappings`
+- [ ] Wire compression level from mapping → `EngineLessCodecFormatResolver` → `ClusterANN1040KnnVectorsFormat(docBits)`
+- [ ] Integration test: index + search with each compression level, verify recall

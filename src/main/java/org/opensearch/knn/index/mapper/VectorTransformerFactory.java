@@ -34,6 +34,17 @@ public final class VectorTransformerFactory {
     private final static NormalizeVectorTransformer DEFAULT_VECTOR_TRANSFORMER = new NormalizeVectorTransformer();
 
     /**
+     * Returns a NormalizeVectorTransformer for cosine similarity, NOOP otherwise.
+     * Use for engine-less algorithms where the only factor is space type.
+     *
+     * @param spaceType The space type
+     * @return VectorTransformer An appropriate vector transformer instance
+     */
+    public static VectorTransformer getVectorTransformer(final SpaceType spaceType) {
+        return spaceType == SpaceType.COSINESIMIL ? DEFAULT_VECTOR_TRANSFORMER : NOOP_VECTOR_TRANSFORMER;
+    }
+
+    /**
      * Returns a vector transformer based on the provided KNN engine, space type, and method component context.
      * Returns a NormalizeVectorTransformer for:
      * <ul>
