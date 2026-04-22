@@ -40,6 +40,13 @@ public class ClusterANNIT extends KNNRestTestCase {
 
     @SneakyThrows
     public void testClusterMethod_invalidMappings() {
+        // Clean up any leftover index from other tests
+        try {
+            deleteIndex(INDEX_NAME);
+        } catch (Exception e) {
+            // ignore if doesn't exist
+        }
+
         // Reject engine specified
         String mappingWithEngine = XContentFactory.jsonBuilder()
             .startObject()
@@ -141,6 +148,13 @@ public class ClusterANNIT extends KNNRestTestCase {
             .endObject()
             .toString();
         expectThrows(ResponseException.class, () -> createKnnIndex(INDEX_NAME, mappingWith4x));
+
+        // Clean up in case any invalid mapping partially created the index
+        try {
+            deleteIndex(INDEX_NAME);
+        } catch (Exception e) {
+            // ignore
+        }
 
         // Accept 8x compression (should not throw)
         String mappingWith8x = XContentFactory.jsonBuilder()

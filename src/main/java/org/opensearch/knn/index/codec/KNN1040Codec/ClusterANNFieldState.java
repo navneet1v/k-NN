@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
@@ -131,14 +130,7 @@ final class ClusterANNFieldState {
      * @return map from field number to field state
      */
     static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
-        CodecUtil.checkIndexHeader(
-            metaInput,
-            ClusterANN1040KnnVectorsWriter.CODEC_NAME,
-            ClusterANN1040KnnVectorsWriter.VERSION_START,
-            ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
-            state.segmentInfo.getId(),
-            state.segmentSuffix
-        );
+        // Note: codec header already consumed by reader's openInput()
 
         Map<Integer, ClusterANNFieldState> fields = new HashMap<>();
         while (true) {

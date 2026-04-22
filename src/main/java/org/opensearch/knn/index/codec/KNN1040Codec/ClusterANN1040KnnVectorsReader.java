@@ -155,7 +155,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         if (exactScorer == null) return;
 
         VectorSimilarityFunction simFunc = getSimFunc(field);
-        boolean useADC = fieldState.docBits > 0 && quantizedInput != null;
+        boolean useADC = fieldState.docBits > 0 && quantizedInput != null && fieldState.numVectors > 32;
 
         TwoPhaseClusterANNScorer adcScorer = null;
         if (useADC) {
@@ -180,9 +180,10 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
             nativeScoring
         );
 
-        // Reusable batch buffers for exact bulk scoring
-        int[] batchOrds = new int[256];
-        float[] batchScores = new float[256];
+        // Reusable batch buffers — sized to max posting list
+        int maxPostingSize = 256;
+        int[] batchOrds = new int[maxPostingSize];
+        float[] batchScores = new float[maxPostingSize];
         float[] centroidBuffer = new float[fieldState.dimension];
 
         for (int i = 0; i < nprobe; i++) {
@@ -191,6 +192,11 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
             postingsClone.seek(fieldState.primaryPostingOffsets[centId]);
             int[] primaryDocIds = PostingListCodec.read(postingsClone);
+            if (primaryDocIds.length > maxPostingSize) {
+                maxPostingSize = primaryDocIds.length;
+                batchOrds = new int[maxPostingSize];
+                batchScores = new float[maxPostingSize];
+            }
             scanPostingList(
                 primaryDocIds,
                 exactScorer,
@@ -212,6 +218,11 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
             postingsClone.seek(fieldState.soarPostingOffsets[centId]);
             int[] soarDocIds = PostingListCodec.read(postingsClone);
+            if (soarDocIds.length > maxPostingSize) {
+                maxPostingSize = soarDocIds.length;
+                batchOrds = new int[maxPostingSize];
+                batchScores = new float[maxPostingSize];
+            }
             scanPostingList(
                 soarDocIds,
                 exactScorer,

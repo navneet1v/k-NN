@@ -110,18 +110,22 @@ final class PipelinedPrefetcher {
     }
 
     private void prefetchCentroid(int centId) throws IOException {
-        // Posting lists (.clap)
-        postingsInput.prefetch(primaryOffsets[centId], avgPostingBytes);
-        postingsInput.prefetch(soarOffsets[centId], avgPostingBytes);
+        // Posting lists (.clap) — clamp to avoid out-of-bounds
+        long fileLength = postingsInput.length();
+        long primaryLen = Math.min(avgPostingBytes, fileLength - primaryOffsets[centId]);
+        if (primaryLen > 0) postingsInput.prefetch(primaryOffsets[centId], primaryLen);
+        long soarLen = Math.min(avgPostingBytes, fileLength - soarOffsets[centId]);
+        if (soarLen > 0) postingsInput.prefetch(soarOffsets[centId], soarLen);
 
         // Quantized vectors (.claq) — skip if native SIMD uses mmap
         if (!skipQuantizedPrefetch) {
-            // Prefetch the quantized region for this centroid's expected vectors.
-            // We don't know exact ordinals yet, but the posting list offset gives locality hint.
-            // Prefetch a window around the expected region.
-            long estimatedStart = quantizedBaseOffset + (primaryOffsets[centId] / avgPostingBytes) * recordSize;
-            long windowSize = (long) avgPostingBytes / 5 * recordSize; // rough: avgVectors * recordSize
-            quantizedInput.prefetch(estimatedStart, Math.max(windowSize, 4096));
+            long qFileLength = quantizedInput.length();
+            long estimatedStart = quantizedBaseOffset + (primaryOffsets[centId] / Math.max(1, avgPostingBytes)) * recordSize;
+            long windowSize = Math.max((long) avgPostingBytes / 5 * recordSize, 4096);
+            long clampedSize = Math.min(windowSize, qFileLength - Math.min(estimatedStart, qFileLength));
+            if (clampedSize > 0 && estimatedStart < qFileLength) {
+                quantizedInput.prefetch(estimatedStart, clampedSize);
+            }
         }
     }
 }

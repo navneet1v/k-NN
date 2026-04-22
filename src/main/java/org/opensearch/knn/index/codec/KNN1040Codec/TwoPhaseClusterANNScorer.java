@@ -111,12 +111,14 @@ final class TwoPhaseClusterANNScorer {
         this.qState = new QueryQuantizationState(simFunc, fieldState.dimension);
 
         // Try to extract mmap address for native SIMD scoring
-        long totalQuantizedBytes = (long) fieldState.numVectors * recordSize;
-        this.quantizedAddressAndSize = MemorySegmentAddressExtractorUtil.tryExtractAddressAndSize(
-            quantizedInput,
-            fieldState.quantizedOffset,
-            totalQuantizedBytes
-        );
+        long[] extractedAddress = null;
+        try {
+            long totalQuantizedBytes = (long) fieldState.numVectors * recordSize;
+            extractedAddress = extractMmapAddress(quantizedInput, fieldState.quantizedOffset, totalQuantizedBytes);
+        } catch (Throwable t) {
+            // Native scoring not available
+        }
+        this.quantizedAddressAndSize = extractedAddress;
         this.useNativeScoring = quantizedAddressAndSize != null && fieldState.docBits == 1;
     }
 
@@ -342,6 +344,10 @@ final class TwoPhaseClusterANNScorer {
         }
     }
 
+    /** Isolate MemorySegmentAddressExtractorUtil class loading to catch NoClassDefFoundError. */
+    private static long[] extractMmapAddress(IndexInput input, long offset, long length) {
+        return MemorySegmentAddressExtractorUtil.tryExtractAddressAndSize(input, offset, length);
+    }
     // ========== Min-Heap for Bounded Candidate Buffer ==========
 
     private void addCandidate(int ordinal, float score) {
