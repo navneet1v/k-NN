@@ -30,6 +30,7 @@ import org.opensearch.knn.index.clusterann.ClusterANNVectorValues;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -132,11 +133,14 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         if (mergedValues == null) return;
 
         int dimension = fieldInfo.getVectorDimension();
+        int vectorBytes = dimension * Float.BYTES;
 
-        // Write vectors to temp file for off-heap access during clustering
+        // Write vectors to temp file, collect docIds in a compact int array
+        // Vectors go off-heap via temp file; docIds are small (4 bytes each)
         IndexOutput tempOut = state.directory.createTempOutput(state.segmentInfo.name, "clann_merge", state.context);
-        List<Integer> docIdList = new ArrayList<>();
         int count = 0;
+        int docIdCapacity = 1024;
+        int[] docIds = new int[docIdCapacity];
         try {
             var iterator = mergedValues.iterator();
             for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
@@ -144,7 +148,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 for (int d = 0; d < dimension; d++) {
                     tempOut.writeInt(Float.floatToIntBits(vec[d]));
                 }
-                docIdList.add(doc);
+                if (count == docIdCapacity) {
+                    docIdCapacity = docIdCapacity * 2;
+                    docIds = Arrays.copyOf(docIds, docIdCapacity);
+                }
+                docIds[count] = doc;
                 count++;
             }
         } finally {
@@ -152,16 +160,17 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         if (count > 0) {
+            docIds = Arrays.copyOf(docIds, count);
             IndexInput tempIn = state.directory.openInput(tempOut.getName(), state.context);
             try {
-                int[] docIds = docIdList.stream().mapToInt(Integer::intValue).toArray();
-                // Off-heap: cluster directly from disk
                 ClusterANNVectorValues vectorValues = ClusterANNVectorValues.fromIndexInput(tempIn, docIds, count, dimension);
                 writeMergedField(fieldInfo, vectorValues, count, dimension);
             } finally {
                 tempIn.close();
                 state.directory.deleteFile(tempOut.getName());
             }
+        } else {
+            state.directory.deleteFile(tempOut.getName());
         }
     }
 
