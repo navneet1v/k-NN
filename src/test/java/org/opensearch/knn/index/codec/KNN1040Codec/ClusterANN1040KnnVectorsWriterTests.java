@@ -256,10 +256,9 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                 // Primary postings
                 int totalPrimary = 0;
                 for (int c = 0; c < numCentroids; c++) {
-                    int size = postIn.readVInt();
-                    totalPrimary += size;
-                    for (int i = 0; i < size; i++) {
-                        int docId = postIn.readVInt();
+                    int[] posting = PostingListCodec.read(postIn);
+                    totalPrimary += posting.length;
+                    for (int docId : posting) {
                         assertTrue("DocId should be in range", docId >= 0 && docId < numVectors);
                     }
                 }
@@ -268,11 +267,8 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                 // SOAR postings (just verify readable, count may vary)
                 int totalSoar = 0;
                 for (int c = 0; c < numCentroids; c++) {
-                    int size = postIn.readVInt();
-                    totalSoar += size;
-                    for (int i = 0; i < size; i++) {
-                        postIn.readVInt();
-                    }
+                    int[] posting = PostingListCodec.read(postIn);
+                    totalSoar += posting.length;
                 }
                 assertTrue("SOAR should assign some vectors", totalSoar > 0);
             }

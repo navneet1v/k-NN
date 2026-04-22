@@ -6,10 +6,12 @@
 package org.opensearch.knn.index.clusterann;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.PriorityQueue;
+import java.util.stream.IntStream;
 
 /**
  * Inverted File (IVF) index with SOAR (Spilling with Orthogonal Augmented Residuals)
@@ -210,8 +212,13 @@ public final class IVFIndex {
             System.arraycopy(idx, 0, nearestCentroids[c], 0, candidateLimit);
         }
 
-        for (int i = 0; i < n; i++) {
-            float[] vec = vectors.vectorValue(i);
+        IntStream.range(0, n).parallel().forEach(i -> {
+            float[] vec;
+            try {
+                vec = vectors.vectorValue(i);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
             int primaryCent = assignments[i];
             float[] primaryCentroid = centroids[primaryCent];
 
@@ -221,15 +228,13 @@ public final class IVFIndex {
                 residualNormSq += r * r;
             }
             float residualNorm = (float) Math.sqrt(residualNormSq);
-            if (residualNorm < 1e-10f) continue;
+            if (residualNorm < 1e-10f) return;
             float invNorm = 1f / residualNorm;
 
-            // Only check nearest centroids to primary (not all C)
             float bestDist = Float.MAX_VALUE;
             int bestCent = -1;
 
             for (int nc : nearestCentroids[primaryCent]) {
-
                 float[] cent = centroids[nc];
                 float dsq = 0f;
                 float proj = 0f;
@@ -248,7 +253,7 @@ public final class IVFIndex {
             }
 
             soarAssignments[i] = bestCent;
-        }
+        });
 
         return soarAssignments;
     }

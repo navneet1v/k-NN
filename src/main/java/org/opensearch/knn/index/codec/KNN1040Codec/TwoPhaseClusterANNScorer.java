@@ -11,7 +11,6 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.knn.index.codec.scorer.PrefetchHelper;
 import org.opensearch.knn.jni.SimdVectorComputeService;
 import org.opensearch.knn.memoryoptsearch.MemorySegmentAddressExtractorUtil;
 
@@ -52,10 +51,11 @@ final class TwoPhaseClusterANNScorer {
     private final long[] quantizedAddressAndSize;
     private final boolean useNativeScoring;
 
-    // Candidate buffer for ADC results (ordinals + scores collected across posting lists)
+    // Candidate buffer for ADC results — bounded min-heap (evicts worst when full)
     private int[] candidateOrdinals;
     private float[] candidateScores;
     private int candidateCount;
+    private final int maxCandidates;
 
     // Temp buffer for native bulk scoring
     private int[] nativeBatchOrds;
@@ -100,8 +100,9 @@ final class TwoPhaseClusterANNScorer {
         this.encoding = ScalarBitEncoding.fromDocBits(fieldState.docBits);
         this.recordSize = encoding.recordBytes(fieldState.dimension);
         int maxCandidates = k * ADC_MULTIPLIER;
-        this.candidateOrdinals = new int[maxCandidates + 1];
-        this.candidateScores = new float[maxCandidates + 1];
+        this.maxCandidates = maxCandidates;
+        this.candidateOrdinals = new int[maxCandidates];
+        this.candidateScores = new float[maxCandidates];
         this.candidateCount = 0;
         this.nativeBatchOrds = new int[256];
         this.nativeBatchScores = new float[256];
@@ -119,20 +120,8 @@ final class TwoPhaseClusterANNScorer {
         this.useNativeScoring = quantizedAddressAndSize != null && fieldState.docBits == 1;
     }
 
-    public void prefetch(int[] ordinals, int count) throws IOException {
-        if (!useNativeScoring) {
-            PrefetchHelper.prefetch(quantizedInput, fieldState.quantizedOffset, recordSize, ordinals, count);
-        }
-    }
-
-    /**
-     * ADC score: reads quantized data and computes approximate similarity.
-     * The query is quantized per-centroid at call time by the reader.
-     */
-    public float score(int ordinal) throws IOException {
-        // This is called per-ordinal during posting list scan.
-        // We buffer candidates and defer exact scoring to finish().
-        return Float.NaN; // Not used directly — see scoreADC()
+    public int ordToDoc(int ordinal) {
+        return exactScorer.ordToDoc(ordinal);
     }
 
     /**
@@ -188,12 +177,19 @@ final class TwoPhaseClusterANNScorer {
             adcSimilarity = Math.max((1.0f + score) / 2.0f, 0);
         }
 
-        if (candidateCount < candidateOrdinals.length) {
+        if (candidateCount < maxCandidates) {
             candidateOrdinals[candidateCount] = ordinal;
             candidateScores[candidateCount] = adcSimilarity;
             candidateCount++;
+            if (candidateCount == maxCandidates) {
+                buildMinHeap();
+            }
+        } else if (adcSimilarity > candidateScores[0]) {
+            // Evict worst (heap root) and sift down
+            candidateOrdinals[0] = ordinal;
+            candidateScores[0] = adcSimilarity;
+            siftDown(0);
         }
-        // Evict worst if over capacity (keep as simple list, sort at finish)
     }
 
     /**
@@ -237,11 +233,7 @@ final class TwoPhaseClusterANNScorer {
             SimdVectorComputeService.scoreSimilarityInBulk(nativeBatchOrds, nativeBatchScores, count);
 
             for (int i = 0; i < count; i++) {
-                if (candidateCount < candidateOrdinals.length) {
-                    candidateOrdinals[candidateCount] = ordinals[i];
-                    candidateScores[candidateCount] = nativeBatchScores[i];
-                    candidateCount++;
-                }
+                addCandidate(ordinals[i], nativeBatchScores[i]);
             }
         } else {
             // Java fallback: per-ordinal scoring
@@ -256,10 +248,6 @@ final class TwoPhaseClusterANNScorer {
                 );
             }
         }
-    }
-
-    public int ordToDoc(int ordinal) {
-        return exactScorer.ordToDoc(ordinal);
     }
 
     /** Similarity function used by this scorer. */
@@ -352,6 +340,51 @@ final class TwoPhaseClusterANNScorer {
             this.queryComponentSum = queryComponentSum;
             this.additionalCorrection = additionalCorrection;
         }
+    }
+
+    // ========== Min-Heap for Bounded Candidate Buffer ==========
+
+    private void addCandidate(int ordinal, float score) {
+        if (candidateCount < maxCandidates) {
+            candidateOrdinals[candidateCount] = ordinal;
+            candidateScores[candidateCount] = score;
+            candidateCount++;
+            if (candidateCount == maxCandidates) {
+                buildMinHeap();
+            }
+        } else if (score > candidateScores[0]) {
+            candidateOrdinals[0] = ordinal;
+            candidateScores[0] = score;
+            siftDown(0);
+        }
+    }
+
+    private void buildMinHeap() {
+        for (int i = candidateCount / 2 - 1; i >= 0; i--) {
+            siftDown(i);
+        }
+    }
+
+    private void siftDown(int i) {
+        while (true) {
+            int left = 2 * i + 1;
+            int right = 2 * i + 2;
+            int smallest = i;
+            if (left < candidateCount && candidateScores[left] < candidateScores[smallest]) smallest = left;
+            if (right < candidateCount && candidateScores[right] < candidateScores[smallest]) smallest = right;
+            if (smallest == i) break;
+            swap(i, smallest);
+            i = smallest;
+        }
+    }
+
+    private void swap(int a, int b) {
+        int tmpOrd = candidateOrdinals[a];
+        candidateOrdinals[a] = candidateOrdinals[b];
+        candidateOrdinals[b] = tmpOrd;
+        float tmpScore = candidateScores[a];
+        candidateScores[a] = candidateScores[b];
+        candidateScores[b] = tmpScore;
     }
 
     // ========== Bit Manipulation ==========

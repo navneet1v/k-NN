@@ -195,6 +195,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
                 primaryDocIds,
                 exactScorer,
                 adcScorer,
+                prefetcher,
                 fieldState,
                 centId,
                 target,
@@ -215,6 +216,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
                 soarDocIds,
                 exactScorer,
                 adcScorer,
+                prefetcher,
                 fieldState,
                 centId,
                 target,
@@ -278,6 +280,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         int[] ordinals,
         RandomVectorScorer exactScorer,
         TwoPhaseClusterANNScorer adcScorer,
+        PipelinedPrefetcher prefetcher,
         ClusterANNFieldState fieldState,
         int centroidIdx,
         float[] target,
@@ -304,7 +307,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
             }
 
             if (validCount > 0) {
-                adcScorer.prefetch(batchOrds, validCount);
+                prefetcher.prefetchQuantized(batchOrds, validCount);
                 float centroidDp = 0f;
                 if (adcScorer.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
                     centroidDp = VectorUtil.dotProduct(target, centroidBuffer);

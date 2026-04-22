@@ -97,6 +97,18 @@ final class PipelinedPrefetcher {
         prefetchedUpTo = target;
     }
 
+    /**
+     * Prefetch quantized data for specific ordinals after reading a posting list.
+     * More precise than the estimated region in advanceTo().
+     */
+    void prefetchQuantized(int[] ordinals, int count) throws IOException {
+        if (skipQuantizedPrefetch || count == 0) return;
+        for (int i = 0; i < count; i++) {
+            long offset = quantizedBaseOffset + (long) ordinals[i] * recordSize;
+            quantizedInput.prefetch(offset, recordSize);
+        }
+    }
+
     private void prefetchCentroid(int centId) throws IOException {
         // Posting lists (.clap)
         postingsInput.prefetch(primaryOffsets[centId], avgPostingBytes);

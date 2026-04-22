@@ -234,7 +234,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         writeCentroids(index);
         writePostings(index);
-        writeQuantizedVectors(info.fieldInfo, info.flatFieldWriter.getVectors(), index, dimension);
+        writeQuantizedVectors(info.fieldInfo, i -> info.flatFieldWriter.getVectors().get(i).clone(), vectors.size(), index, dimension);
         writeFieldMeta(
             info.fieldInfo,
             numVectors,
@@ -279,19 +279,13 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         IVFIndex index = IVFIndex.build(vectorValues, config);
 
-        // Materialize vectors for quantization (off-heap can't random-access efficiently for quantization)
-        List<float[]> materializedVectors = new ArrayList<>(numVectors);
-        for (int i = 0; i < numVectors; i++) {
-            materializedVectors.add(vectorValues.vectorValueCopy(i));
-        }
-
         long centroidsOffset = centroidsOutput.getFilePointer();
         long postingsOffset = postingsOutput.getFilePointer();
         long quantizedOffset = quantizedOutput.getFilePointer();
 
         writeCentroids(index);
         writePostings(index);
-        writeQuantizedVectors(fieldInfo, materializedVectors, index, dimension);
+        writeQuantizedVectors(fieldInfo, i -> vectorValues.vectorValueCopy(i), numVectors, index, dimension);
         writeFieldMeta(fieldInfo, numVectors, dimension, index.numCentroids(), metric, centroidsOffset, postingsOffset, quantizedOffset);
 
         log.info(
@@ -315,26 +309,16 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     private void writePostings(IVFIndex index) throws IOException {
         int numCentroids = index.numCentroids();
 
-        // Write primary posting lists, record offsets
         long[] primaryOffsets = new long[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
             primaryOffsets[c] = postingsOutput.getFilePointer();
-            int[] posting = index.primaryPostings()[c];
-            postingsOutput.writeVInt(posting.length);
-            for (int docId : posting) {
-                postingsOutput.writeVInt(docId);
-            }
+            PostingListCodec.write(index.primaryPostings()[c], postingsOutput);
         }
 
-        // Write SOAR posting lists, record offsets
         long[] soarOffsets = new long[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
             soarOffsets[c] = postingsOutput.getFilePointer();
-            int[] posting = index.soarPostings()[c];
-            postingsOutput.writeVInt(posting.length);
-            for (int docId : posting) {
-                postingsOutput.writeVInt(docId);
-            }
+            PostingListCodec.write(index.soarPostings()[c], postingsOutput);
         }
 
         // Write offset table at the end of postings (for direct seek + prefetch)
@@ -362,12 +346,16 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
      *   <li>quantizedComponentSum: int</li>
      * </ul>
      */
-    private void writeQuantizedVectors(FieldInfo fieldInfo, List<float[]> vectors, IVFIndex index, int dimension) throws IOException {
+    @FunctionalInterface
+    private interface VectorSupplier {
+        float[] get(int ordinal) throws IOException;
+    }
+
+    private void writeQuantizedVectors(FieldInfo fieldInfo, VectorSupplier vectors, int numVectors, IVFIndex index, int dimension)
+        throws IOException {
         VectorSimilarityFunction simFunc = fieldInfo.getVectorSimilarityFunction();
         OptimizedScalarQuantizer osq = new OptimizedScalarQuantizer(simFunc);
 
-        // Build ordinal-to-centroid mapping from posting lists
-        int numVectors = vectors.size();
         int[] assignments = new int[numVectors];
         int numCentroids = index.numCentroids();
         for (int c = 0; c < numCentroids; c++) {
@@ -398,7 +386,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         for (int i = 0; i < numVectors; i++) {
-            float[] vector = vectors.get(i).clone();
+            float[] vector = vectors.get(i);
 
             // For cosine, normalize the vector (Lucene OSQ expects normalized input for cosine)
             if (simFunc == VectorSimilarityFunction.COSINE) {
