@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
+import org.apache.lucene.search.KnnCollector;
+
 import java.io.IOException;
 
 /**
@@ -51,16 +53,8 @@ interface ClusterANNScorer {
      * Called after all posting lists have been scanned.
      * For exact scorers this is a no-op.
      *
-     * @param collector callback to collect final scored results
+     * @param collector the KnnCollector to collect final scored results into
      * @throws IOException if an I/O error occurs
      */
-    void finish(ResultCollector collector) throws IOException;
-
-    /**
-     * Callback for collecting scored results during the finish phase.
-     */
-    @FunctionalInterface
-    interface ResultCollector {
-        void collect(int docId, float score) throws IOException;
-    }
+    void finish(KnnCollector collector) throws IOException;
 }

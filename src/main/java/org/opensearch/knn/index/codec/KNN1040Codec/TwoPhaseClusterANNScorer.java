@@ -6,6 +6,7 @@
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.VectorUtil;
@@ -276,7 +277,7 @@ final class TwoPhaseClusterANNScorer implements ClusterANNScorer {
      * Phase 2: rescore top ADC candidates with exact scorer and collect results.
      */
     @Override
-    public void finish(ResultCollector collector) throws IOException {
+    public void finish(KnnCollector collector) throws IOException {
         // Sort by ADC score descending using index sort
         Integer[] sortedIndices = new Integer[candidateCount];
         for (int i = 0; i < candidateCount; i++)

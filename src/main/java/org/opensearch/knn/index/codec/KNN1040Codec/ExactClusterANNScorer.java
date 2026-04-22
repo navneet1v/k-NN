@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
+import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 
 import java.io.IOException;
@@ -83,7 +84,7 @@ final class ExactClusterANNScorer implements ClusterANNScorer {
     }
 
     @Override
-    public void finish(ResultCollector collector) throws IOException {
+    public void finish(KnnCollector collector) throws IOException {
         // No-op: exact scorer collects results inline
     }
 }

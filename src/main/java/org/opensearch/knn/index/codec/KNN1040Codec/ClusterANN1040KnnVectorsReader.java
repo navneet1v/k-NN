@@ -231,7 +231,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         }
 
         // Finish: for two-phase, rescore top ADC candidates
-        scorer.finish((docId, score) -> { knnCollector.collect(docId, score); });
+        scorer.finish(knnCollector);
     }
 
     @Override
