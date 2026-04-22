@@ -574,11 +574,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     }
 
     /**
-     * Estimate number of centroids: √n clamped to [2, 4096].
-     * Matches FAISS/ScaNN heuristic for optimal IVF search complexity.
+     * Estimate number of centroids targeting ~512 vectors per cluster.
+     * Keeps cluster sizes balanced for consistent quantization quality and scan cost.
      */
     private static int estimateCentroids(int numVectors) {
-        return Math.max(2, Math.min(4096, (int) Math.sqrt(numVectors)));
+        return Math.max(2, Math.min(4096, (numVectors + 256) / 512));
     }
 
     private static DistanceMetric toDistanceMetric(VectorSimilarityFunction simFunc) {

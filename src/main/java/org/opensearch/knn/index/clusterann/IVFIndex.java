@@ -35,7 +35,6 @@ import java.util.stream.IntStream;
 public final class IVFIndex {
 
     /** Threshold below which flat k-means is used instead of hierarchical. */
-    private static final int FLAT_KMEANS_THRESHOLD = 256;
     /** Maximum sub-clusters per hierarchical level. */
     private static final int HIERARCHICAL_MAX_K = 128;
     /** Maximum SOAR candidate centroids to evaluate per vector. */
@@ -97,17 +96,19 @@ public final class IVFIndex {
             .parallel(config.parallel)
             .build();
 
-        if (n <= FLAT_KMEANS_THRESHOLD) {
-            int k = Math.max(1, Math.min(config.numCentroids, n));
+        int k = Math.max(1, Math.min(config.numCentroids, n));
+
+        if (k <= HIERARCHICAL_MAX_K) {
+            // Flat k-means: centroid count fits in one level
             KMeans.Result result = KMeans.cluster(vectors, k, kmeansConfig, initialCentroids);
             centroids = result.centroids();
             assignments = result.assignments();
             numCentroids = result.k();
         } else {
-            // Large dataset: hierarchical k-means
+            // Hierarchical: too many centroids for flat, need recursive splitting
             HierarchicalKMeans.Config hConfig = HierarchicalKMeans.Config.builder()
                 .targetSize(config.targetClusterSize)
-                .maxK(Math.min(config.numCentroids, HIERARCHICAL_MAX_K))
+                .maxK(HIERARCHICAL_MAX_K)
                 .maxDepth(config.maxDepth)
                 .kmeansConfig(kmeansConfig)
                 .build();
