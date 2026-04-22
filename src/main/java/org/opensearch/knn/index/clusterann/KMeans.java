@@ -47,10 +47,10 @@ public final class KMeans {
         k = Math.max(1, Math.min(k, n));
 
         // Initialize centroids
-        float[] centroids = initCentroids(vectors, k, config);
+        float[][] centroids = initCentroids(vectors, k, config);
 
         // Cluster sums and counts for incremental updates
-        float[] clusterSums = new float[k * dim];
+        float[][] clusterSums = new float[k][dim];
         int[] clusterCounts = new int[k];
         int[] assignments = new int[n];
         Arrays.fill(assignments, -1);
@@ -102,16 +102,15 @@ public final class KMeans {
 
     // ========== Initialization ==========
 
-    private static float[] initCentroids(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
+    private static float[][] initCentroids(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
-        // vectors accessed via vectorValue(ord)
-        float[] centroids = new float[k * dim];
+        float[][] centroids = new float[k][dim];
         Random rng = new Random(config.seed);
 
         // First centroid: random
         int first = rng.nextInt(n);
-        System.arraycopy(vectors.vectorValue(first), 0, centroids, 0, dim);
+        System.arraycopy(vectors.vectorValue(first), 0, centroids[0], 0, dim);
 
         if (k == 1) return centroids;
 
@@ -120,11 +119,10 @@ public final class KMeans {
         Arrays.fill(minDistSq, Float.MAX_VALUE);
 
         for (int c = 1; c < k; c++) {
-            // Update min distances to nearest centroid so far
-            int prevOffset = (c - 1) * dim;
+            float[] prevCentroid = centroids[c - 1];
             float totalWeight = 0f;
             for (int i = 0; i < n; i++) {
-                float d = config.metric.distance(vectors.vectorValue(i), 0, centroids, prevOffset, dim);
+                float d = config.metric.distance(vectors.vectorValue(i), prevCentroid);
                 if (d < minDistSq[i]) {
                     minDistSq[i] = d;
                 }
@@ -134,7 +132,7 @@ public final class KMeans {
             // Weighted random selection (D^2 sampling)
             float target = rng.nextFloat() * totalWeight;
             float cumulative = 0f;
-            int chosen = n - 1; // fallback
+            int chosen = n - 1;
             for (int i = 0; i < n; i++) {
                 cumulative += minDistSq[i];
                 if (cumulative >= target) {
@@ -143,7 +141,7 @@ public final class KMeans {
                 }
             }
 
-            System.arraycopy(vectors.vectorValue(chosen), 0, centroids, c * dim, dim);
+            System.arraycopy(vectors.vectorValue(chosen), 0, centroids[c], 0, dim);
         }
 
         return centroids;
@@ -153,25 +151,27 @@ public final class KMeans {
 
     private static int assignmentStep(
         ClusterANNVectorValues vectors,
-        float[] centroids,
+        float[][] centroids,
         int[] assignments,
-        float[] clusterSums,
+        float[][] clusterSums,
         int[] clusterCounts,
         int k,
         Config config
     ) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
-        // vectors accessed via vectorValue(ord)
+
+        // Create centroid views for SIMD-accelerated distance (avoids offset-based overload)
+        float[][] centroidViews = centroids;
 
         // Reset sums and counts
-        Arrays.fill(clusterSums, 0f);
+        for (float[] s : clusterSums)
+            Arrays.fill(s, 0f);
         Arrays.fill(clusterCounts, 0);
 
         if (config.parallel) {
-            // #1 fix: per-thread accumulators to avoid synchronized block
             int numThreads = Runtime.getRuntime().availableProcessors();
-            float[][] threadSums = new float[numThreads][k * dim];
+            float[][][] threadSums = new float[numThreads][k][dim];
             int[][] threadCounts = new int[numThreads][k];
             AtomicInteger movedCount = new AtomicInteger(0);
 
@@ -189,10 +189,10 @@ public final class KMeans {
                 int prevCluster = assignments[i];
                 for (int c = 0; c < k; c++) {
                     if (prevCluster >= 0 && c != prevCluster) {
-                        float interDist = config.metric.distance(centroids, prevCluster * dim, centroids, c * dim, dim);
+                        float interDist = config.metric.distance(centroidViews[prevCluster], centroidViews[c]);
                         if (interDist > 4 * bestDist) continue;
                     }
-                    float dist = config.metric.distance(vec, 0, centroids, c * dim, dim);
+                    float dist = config.metric.distance(vec, centroidViews[c]);
                     if (dist < bestDist) {
                         bestDist = dist;
                         bestCluster = c;
@@ -205,9 +205,8 @@ public final class KMeans {
                 }
 
                 threadCounts[tid][bestCluster]++;
-                int sumOffset = bestCluster * dim;
                 for (int d = 0; d < dim; d++) {
-                    threadSums[tid][sumOffset + d] += vec[d];
+                    threadSums[tid][bestCluster][d] += vec[d];
                 }
             });
 
@@ -215,9 +214,9 @@ public final class KMeans {
             for (int t = 0; t < numThreads; t++) {
                 for (int c = 0; c < k; c++) {
                     clusterCounts[c] += threadCounts[t][c];
-                }
-                for (int j = 0; j < k * dim; j++) {
-                    clusterSums[j] += threadSums[t][j];
+                    for (int d = 0; d < dim; d++) {
+                        clusterSums[c][d] += threadSums[t][c][d];
+                    }
                 }
             }
             return movedCount.get();
@@ -229,7 +228,7 @@ public final class KMeans {
                 int bestCluster = 0;
 
                 for (int c = 0; c < k; c++) {
-                    float dist = config.metric.distance(vec, 0, centroids, c * dim, dim);
+                    float dist = config.metric.distance(vec, centroidViews[c]);
                     if (dist < bestDist) {
                         bestDist = dist;
                         bestCluster = c;
@@ -242,9 +241,8 @@ public final class KMeans {
                 }
 
                 clusterCounts[bestCluster]++;
-                int sumOffset = bestCluster * dim;
                 for (int d = 0; d < dim; d++) {
-                    clusterSums[sumOffset + d] += vec[d];
+                    clusterSums[bestCluster][d] += vec[d];
                 }
             }
             return moved;
@@ -253,13 +251,12 @@ public final class KMeans {
 
     // ========== Centroid Update ==========
 
-    private static void updateCentroids(float[] centroids, float[] clusterSums, int[] clusterCounts, int k, int dim) {
+    private static void updateCentroids(float[][] centroids, float[][] clusterSums, int[] clusterCounts, int k, int dim) {
         for (int c = 0; c < k; c++) {
             if (clusterCounts[c] > 0) {
-                int offset = c * dim;
                 float invCount = 1f / clusterCounts[c];
                 for (int d = 0; d < dim; d++) {
-                    centroids[offset + d] = clusterSums[offset + d] * invCount;
+                    centroids[c][d] = clusterSums[c][d] * invCount;
                 }
             }
         }
@@ -269,17 +266,15 @@ public final class KMeans {
 
     private static void rebalanceEmptyClusters(
         ClusterANNVectorValues vectors,
-        float[] centroids,
+        float[][] centroids,
         int[] clusterCounts,
         int[] assignments,
         int k,
         Config config
     ) {
         int dim = vectors.dimension();
-        // vectors accessed via vectorValue(ord)
         Random rng = new Random(config.seed + 7);
 
-        // Find the largest cluster
         int largestCluster = 0;
         for (int c = 1; c < k; c++) {
             if (clusterCounts[c] > clusterCounts[largestCluster]) {
@@ -289,12 +284,9 @@ public final class KMeans {
 
         for (int c = 0; c < k; c++) {
             if (clusterCounts[c] == 0) {
-                // Split largest cluster: perturb its centroid
-                int srcOffset = largestCluster * dim;
-                int dstOffset = c * dim;
                 for (int d = 0; d < dim; d++) {
                     float perturbation = (rng.nextFloat() - 0.5f) * config.perturbation;
-                    centroids[dstOffset + d] = centroids[srcOffset + d] + perturbation;
+                    centroids[c][d] = centroids[largestCluster][d] + perturbation;
                 }
             }
         }
@@ -317,7 +309,7 @@ public final class KMeans {
         return Arrays.copyOf(indices, sampleSize);
     }
 
-    private static Result postProcess(ClusterANNVectorValues vectors, float[] centroids, int[] assignments, int k, Config config) {
+    private static Result postProcess(ClusterANNVectorValues vectors, float[][] centroids, int[] assignments, int k, Config config) {
         int dim = vectors.dimension();
         int[] clusterCounts = new int[k];
         for (int a : assignments) {
@@ -348,14 +340,14 @@ public final class KMeans {
      * Immutable clustering result.
      */
     public static final class Result {
-        private final float[] centroids;
+        private final float[][] centroids;
         private final int[] assignments;
         private final int k;
         private final int dimension;
         private final int iterations;
         private final boolean converged;
 
-        Result(float[] centroids, int[] assignments, int k, int dimension, int iterations, boolean converged) {
+        Result(float[][] centroids, int[] assignments, int k, int dimension, int iterations, boolean converged) {
             this.centroids = centroids;
             this.assignments = assignments;
             this.k = k;
@@ -365,7 +357,7 @@ public final class KMeans {
         }
 
         /** Flat centroid array: centroids[c * dimension + d]. */
-        public float[] centroids() {
+        public float[][] centroids() {
             return centroids;
         }
 
@@ -396,9 +388,7 @@ public final class KMeans {
 
         /** Get centroid as a copy. */
         public float[] getCentroid(int clusterIndex) {
-            float[] c = new float[dimension];
-            System.arraycopy(centroids, clusterIndex * dimension, c, 0, dimension);
-            return c;
+            return centroids[clusterIndex];
         }
     }
 

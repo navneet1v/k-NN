@@ -40,7 +40,7 @@ public final class IVFIndex {
     /** Maximum SOAR candidate centroids to evaluate per vector. */
     private static final int SOAR_CANDIDATE_LIMIT = 10;
 
-    private final float[] centroids;       // flat: [c0d0..c0dD, c1d0..c1dD, ...]
+    private final float[][] centroids;
     private final int numCentroids;
     private final int dimension;
     private final DistanceMetric metric;
@@ -52,7 +52,7 @@ public final class IVFIndex {
     private final int[][] soarPostings;
 
     private IVFIndex(
-        float[] centroids,
+        float[][] centroids,
         int numCentroids,
         int dimension,
         DistanceMetric metric,
@@ -79,7 +79,7 @@ public final class IVFIndex {
         int dim = vectors.dimension();
 
         // Clustering
-        float[] centroids;
+        float[][] centroids;
         int[] assignments;
         int numCentroids;
 
@@ -172,8 +172,13 @@ public final class IVFIndex {
 
     // ========== SOAR Computation ==========
 
-    private static int[] computeSOAR(ClusterANNVectorValues vectors, float[] centroids, int[] assignments, int numCentroids, Config config)
-        throws IOException {
+    private static int[] computeSOAR(
+        ClusterANNVectorValues vectors,
+        float[][] centroids,
+        int[] assignments,
+        int numCentroids,
+        Config config
+    ) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
         int[] soarAssignments = new int[n];
@@ -185,7 +190,7 @@ public final class IVFIndex {
         for (int i = 0; i < n; i++) {
             float[] vec = vectors.vectorValue(i);
             int primaryCent = assignments[i];
-            float[] primaryCentroid = getCentroid(centroids, primaryCent, dim);
+            float[] primaryCentroid = centroids[primaryCent];
 
             float residualNormSq = 0f;
             for (int d = 0; d < dim; d++) {
@@ -205,7 +210,7 @@ public final class IVFIndex {
             for (int c = 0; c < numCentroids; c++) {
                 if (c == primaryCent) continue;
 
-                float[] cent = getCentroid(centroids, c, dim);
+                float[] cent = centroids[c];
                 float dsq = 0f;
                 float proj = 0f;
                 for (int d = 0; d < dim; d++) {
@@ -234,7 +239,7 @@ public final class IVFIndex {
         // Min-heap of (distance, centroidId)
         float[] dists = new float[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
-            dists[c] = metric.distance(query, 0, centroids, c * dimension, dimension);
+            dists[c] = metric.distance(query, centroids[c]);
         }
 
         // Partial sort: find top-nprobe smallest
@@ -294,7 +299,7 @@ public final class IVFIndex {
 
     // ========== Accessors ==========
 
-    public float[] centroids() {
+    public float[][] centroids() {
         return centroids;
     }
 
@@ -312,12 +317,6 @@ public final class IVFIndex {
 
     public int[][] soarPostings() {
         return soarPostings;
-    }
-
-    private static float[] getCentroid(float[] centroids, int index, int dim) {
-        float[] c = new float[dim];
-        System.arraycopy(centroids, index * dim, c, 0, dim);
-        return c;
     }
 
     // ========== Search Result ==========

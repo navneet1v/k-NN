@@ -44,28 +44,25 @@ public final class HierarchicalKMeans {
         int dim = vectors.dimension();
 
         if (n == 0) {
-            return new Result(new float[0], new int[0], 0, dim);
+            return new Result(new float[0][], new int[0], 0, dim);
         }
 
         // Recursive clustering to get flat centroid list
         List<float[]> centroidList = new ArrayList<>();
         clusterRecursive(vectors, indices(n), centroidList, config, 0);
 
-        // Build flat centroid array
+        // Build centroid array
         int numCentroids = centroidList.size();
-        float[] centroids = new float[numCentroids * dim];
-        for (int i = 0; i < numCentroids; i++) {
-            System.arraycopy(centroidList.get(i), 0, centroids, i * dim, dim);
-        }
+        float[][] centroids = centroidList.toArray(new float[0][]);
 
-        // Assign all vectors to nearest centroid
+        // Assign all vectors to nearest centroid (SIMD-accelerated)
         int[] assignments = new int[n];
         for (int i = 0; i < n; i++) {
             float[] vec = vectors.vectorValue(i);
             float bestDist = Float.MAX_VALUE;
             int bestCentroid = 0;
             for (int c = 0; c < numCentroids; c++) {
-                float dist = config.kmeansConfig.metric.distance(vec, 0, centroids, c * dim, dim);
+                float dist = config.kmeansConfig.metric.distance(vec, centroids[c]);
                 if (dist < bestDist) {
                     bestDist = dist;
                     bestCentroid = c;
@@ -174,12 +171,12 @@ public final class HierarchicalKMeans {
      * Hierarchical clustering result.
      */
     public static final class Result {
-        private final float[] centroids;
+        private final float[][] centroids;
         private final int[] assignments;
         private final int numCentroids;
         private final int dimension;
 
-        Result(float[] centroids, int[] assignments, int numCentroids, int dimension) {
+        Result(float[][] centroids, int[] assignments, int numCentroids, int dimension) {
             this.centroids = centroids;
             this.assignments = assignments;
             this.numCentroids = numCentroids;
@@ -187,7 +184,7 @@ public final class HierarchicalKMeans {
         }
 
         /** Flat centroid array. */
-        public float[] centroids() {
+        public float[][] centroids() {
             return centroids;
         }
 
@@ -208,9 +205,7 @@ public final class HierarchicalKMeans {
 
         /** Get a single centroid as a copy. */
         public float[] getCentroid(int index) {
-            float[] c = new float[dimension];
-            System.arraycopy(centroids, index * dimension, c, 0, dimension);
-            return c;
+            return centroids[index];
         }
     }
 

@@ -159,7 +159,12 @@ public class KMeansClustererTests extends KNNTestCase {
         KMeans.Result r2 = KMeans.cluster(vectors, 5, config);
 
         assertArrayEquals(r1.assignments(), r2.assignments());
-        assertFloatArrayEquals(r1.centroids(), r2.centroids(), 1e-6f);
+        float[][] c1Centroids = r1.centroids();
+        float[][] c2Centroids = r2.centroids();
+        assertEquals(c1Centroids.length, c2Centroids.length);
+        for (int i = 0; i < c1Centroids.length; i++) {
+            assertFloatArrayEquals(c1Centroids[i], c2Centroids[i], 1e-6f);
+        }
     }
 
     public void testDifferentSeedsDifferentResults() throws Exception {

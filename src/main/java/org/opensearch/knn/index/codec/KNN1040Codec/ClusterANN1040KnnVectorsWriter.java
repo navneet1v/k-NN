@@ -299,9 +299,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     }
 
     private void writeCentroids(IVFIndex index) throws IOException {
-        float[] centroids = index.centroids();
-        for (float v : centroids) {
-            centroidsOutput.writeInt(Float.floatToIntBits(v));
+        float[][] centroids = index.centroids();
+        for (float[] centroid : centroids) {
+            for (float v : centroid) {
+                centroidsOutput.writeInt(Float.floatToIntBits(v));
+            }
         }
     }
 
@@ -369,7 +371,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             }
         }
 
-        float[] centroids = index.centroids();
+        float[][] centroids = index.centroids();
         byte[] scratch = new byte[dimension];
         byte[] bitsArray = new byte[] { docBits };
 
@@ -388,11 +390,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 }
             }
 
-            int centroidOffset = assignments[i] * dimension;
-
-            // Extract centroid for this vector
-            float[] centroid = new float[dimension];
-            System.arraycopy(centroids, centroidOffset, centroid, 0, dimension);
+            float[] centroid = centroids[assignments[i]].clone();
 
             // For cosine, normalize centroid too (Lucene OSQ expects both normalized)
             if (simFunc == VectorSimilarityFunction.COSINE) {

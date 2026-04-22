@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
+import org.apache.lucene.util.VectorUtil;
 import org.opensearch.knn.KNNTestCase;
 
 import java.util.Random;
@@ -69,7 +70,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
 
         byte[] docPacked = new byte[] { (byte) 0xFF }; // all 1-bits
 
-        long dot = TwoPhaseClusterANNScorer.int4BitDotProduct(queryTransposed, docPacked);
+        long dot = VectorUtil.int4BitDotProduct(queryTransposed, docPacked);
         // Each of 8 positions: query=15, doc=1, contribution = 15
         // Total = 8 * 15 = 120
         // Formula: sum of bitCount(q_stripe & doc) * weight
@@ -80,7 +81,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testInt4BitDotProduct_zeros() {
         byte[] queryTransposed = new byte[4];
         byte[] docPacked = new byte[] { (byte) 0xFF };
-        long dot = TwoPhaseClusterANNScorer.int4BitDotProduct(queryTransposed, docPacked);
+        long dot = VectorUtil.int4BitDotProduct(queryTransposed, docPacked);
         assertEquals(0L, dot);
     }
 
@@ -119,7 +120,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         dibitPacked[0] = (byte) 0xFF; // lower all 1
         dibitPacked[1] = (byte) 0xFF; // upper all 1
 
-        long dot = TwoPhaseClusterANNScorer.int4DibitDotProduct(queryTransposed, dibitPacked);
+        long dot = VectorUtil.int4DibitDotProduct(queryTransposed, dibitPacked);
         // Each position: query=15, doc=3, contribution = 15*3 = 45
         // 8 positions: 8 * 45 = 360
         // Formula: sum of all cross-products
@@ -196,7 +197,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawQuery, queryTransposed, DIM);
 
         // Dot product via bit manipulation
-        long bitDot = TwoPhaseClusterANNScorer.int4BitDotProduct(queryTransposed, packedDoc);
+        long bitDot = VectorUtil.int4BitDotProduct(queryTransposed, packedDoc);
 
         // Brute force reference
         long expected = 0;
@@ -225,7 +226,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawQuery, queryTransposed, DIM);
 
         // Dot product via bit manipulation
-        long bitDot = TwoPhaseClusterANNScorer.int4DibitDotProduct(queryTransposed, packedDoc);
+        long bitDot = VectorUtil.int4DibitDotProduct(queryTransposed, packedDoc);
 
         // Brute force reference
         long expected = 0;

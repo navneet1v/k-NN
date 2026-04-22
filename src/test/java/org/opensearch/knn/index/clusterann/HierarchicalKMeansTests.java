@@ -132,7 +132,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
 
-        assertEquals(result.numCentroids() * DIM, result.centroids().length);
+        assertEquals(result.numCentroids(), result.centroids().length);
         assertEquals(DIM, result.dimension());
     }
 
@@ -188,7 +188,7 @@ public class HierarchicalKMeansTests extends KNNTestCase {
             assertEquals(DIM, centroid.length);
             // Verify matches flat array
             for (int d = 0; d < DIM; d++) {
-                assertEquals(result.centroids()[c * DIM + d], centroid[d], 0f);
+                assertEquals(result.centroids()[c][d], centroid[d], 0f);
             }
         }
     }
