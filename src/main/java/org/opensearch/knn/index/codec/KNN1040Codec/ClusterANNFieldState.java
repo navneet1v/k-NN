@@ -32,8 +32,8 @@ final class ClusterANNFieldState {
     final long postingsOffset;
     final long quantizedOffset;
 
-    // Lazily loaded centroids (flat float array: numCentroids * dimension)
-    volatile float[] centroids;
+    // Lazily loaded centroids (numCentroids × dimension)
+    volatile float[][] centroids;
 
     // Per-centroid posting list offsets (loaded from offset table in .clap)
     volatile long[] primaryPostingOffsets;
@@ -68,10 +68,12 @@ final class ClusterANNFieldState {
         if (centroids != null) return;
         synchronized (this) {
             if (centroids != null) return;
-            float[] c = new float[numCentroids * dimension];
+            float[][] c = new float[numCentroids][dimension];
             centroidsInput.seek(centroidsOffset);
-            for (int i = 0; i < c.length; i++) {
-                c[i] = Float.intBitsToFloat(centroidsInput.readInt());
+            for (int i = 0; i < numCentroids; i++) {
+                for (int d = 0; d < dimension; d++) {
+                    c[i][d] = Float.intBitsToFloat(centroidsInput.readInt());
+                }
             }
             centroids = c;
         }

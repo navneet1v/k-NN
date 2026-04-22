@@ -27,6 +27,7 @@ import org.opensearch.knn.index.util.WarmupUtil;
 import org.opensearch.knn.index.warmup.WarmableReader;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -137,15 +138,16 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         IndexInput quantizedClone = quantizedInput != null ? quantizedInput.clone() : null;
 
         int k = knnCollector.k();
-        int nprobe = calculateNprobe(fieldState.numCentroids, fieldState.numVectors, k);
+        int[] nprobeOut = new int[1];
         int[] nearestCentroids = findNearestCentroids(
             target,
             fieldState.centroids,
             fieldState.numCentroids,
-            fieldState.dimension,
             fieldState.metric,
-            nprobe
+            k,
+            nprobeOut
         );
+        int nprobe = nprobeOut[0];
 
         // Create scorer
         RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
@@ -288,7 +290,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         if (ordinals.length == 0) return;
 
         if (useADC && twoPhase != null) {
-            System.arraycopy(fieldState.centroids, centroidIdx * fieldState.dimension, centroidBuffer, 0, fieldState.dimension);
+            System.arraycopy(fieldState.centroids[centroidIdx], 0, centroidBuffer, 0, fieldState.dimension);
 
             int[] validOrds = new int[ordinals.length];
             int validCount = 0;
@@ -329,9 +331,12 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
             if (batchCount > 0) {
                 float[] batchScores = exactScorer.batchScores();
                 exactScorer.bulkScore(batchOrds, batchScores, batchCount);
+                float minCompetitive = knnCollector.minCompetitiveSimilarity();
                 for (int i = 0; i < batchCount; i++) {
-                    int doc = exactScorer.ordToDoc(batchOrds[i]);
-                    knnCollector.collect(doc, batchScores[i]);
+                    if (batchScores[i] > minCompetitive) {
+                        int doc = exactScorer.ordToDoc(batchOrds[i]);
+                        knnCollector.collect(doc, batchScores[i]);
+                    }
                 }
                 knnCollector.incVisitedCount(batchCount);
             }
@@ -340,43 +345,62 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
 
     // ========== Private: Centroid Selection ==========
 
-    private static int calculateNprobe(int numCentroids, int numVectors, int k) {
+    /**
+     * Adaptive nprobe: distance-based cutoff. Probes centroids until the distance gap
+     * between consecutive centroids exceeds a threshold, or min/max bounds are hit.
+     * More principled than a fixed heuristic — adapts to actual cluster geometry.
+     */
+    private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {
         if (numCentroids <= 10) return numCentroids;
-        int nprobe = Math.max(10, (int) Math.sqrt(numCentroids));
-        return Math.min(nprobe, numCentroids);
+        int minProbe = Math.max(1, (int) Math.sqrt(k));
+        int maxProbe = Math.min(numCentroids, Math.max(10, numCentroids / 4));
+
+        // Distance-based cutoff: stop when next centroid is >2x farther than the nearest
+        float nearestDist = sortedDists[0];
+        float cutoff = Math.max(nearestDist * 4f, 1e-6f);
+        int nprobe = minProbe;
+        for (int i = minProbe; i < maxProbe; i++) {
+            if (sortedDists[i] > cutoff) break;
+            nprobe = i + 1;
+        }
+        return nprobe;
     }
 
     private static int[] findNearestCentroids(
         float[] query,
-        float[] centroids,
+        float[][] centroids,
         int numCentroids,
-        int dimension,
         DistanceMetric metric,
-        int nprobe
+        int k,
+        int[] nprobeOut
     ) {
-        // Partial selection sort: find top-nprobe nearest
         float[] dists = new float[numCentroids];
         int[] indices = new int[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
-            dists[c] = metric.distance(query, 0, centroids, c * dimension, dimension);
+            dists[c] = metric.distance(query, centroids[c]);
             indices[c] = c;
         }
 
-        for (int i = 0; i < nprobe; i++) {
+        // Full sort by distance for adaptive cutoff
+        for (int i = 0; i < numCentroids - 1; i++) {
             int minIdx = i;
             for (int j = i + 1; j < numCentroids; j++) {
-                if (dists[indices[j]] < dists[indices[minIdx]]) {
-                    minIdx = j;
-                }
+                if (dists[indices[j]] < dists[indices[minIdx]]) minIdx = j;
             }
             int tmp = indices[i];
             indices[i] = indices[minIdx];
             indices[minIdx] = tmp;
         }
 
-        int[] result = new int[nprobe];
-        System.arraycopy(indices, 0, result, 0, nprobe);
-        return result;
+        // Build sorted distances for adaptive nprobe
+        float[] sortedDists = new float[numCentroids];
+        for (int i = 0; i < numCentroids; i++) {
+            sortedDists[i] = dists[indices[i]];
+        }
+
+        int nprobe = calculateNprobe(sortedDists, numCentroids, k);
+        nprobeOut[0] = nprobe;
+        return Arrays.copyOf(indices, nprobe);
     }
 
     // ========== Private: Brute Force Fallback ==========

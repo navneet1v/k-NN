@@ -15,8 +15,7 @@ import java.util.logging.Logger;
  * 4-at-a-time distance computation. Falls back to {@link DefaultBulkVectorOps} (scalar
  * with {@code Math.fma}) otherwise.
  *
- * <p>This mirrors the provider pattern used by Lucene's {@code VectorizationProvider}
- * and Elasticsearch's {@code ESVectorizationProvider}.
+ * <p>This mirrors the provider pattern used by Lucene's {@code VectorizationProvider}.
  */
 final class ClusterANNVectorizationProvider {
 

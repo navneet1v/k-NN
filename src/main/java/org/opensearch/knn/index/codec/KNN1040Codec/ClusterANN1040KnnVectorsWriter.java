@@ -187,6 +187,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     // ========== Private: Index Building & Serialization ==========
 
+    /** Below this threshold, store as flat (single centroid) — clustering overhead not worth it. */
+    private static final int FLAT_VECTOR_THRESHOLD = 128;
+
     private void writeField(FieldWriterInfo info) throws IOException {
         List<float[]> vectors = info.flatFieldWriter.getVectors();
         int numVectors = vectors.size();
@@ -207,12 +210,14 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             }
         }
 
-        // Zero-copy: wrap the flat writer's vector list directly
         ClusterANNVectorValues vectorValues = ClusterANNVectorValues.fromList(vectors, docIds, dimension);
         DistanceMetric metric = toDistanceMetric(info.fieldInfo.getVectorSimilarityFunction());
 
+        // Skip clustering for tiny segments — single centroid, all vectors in one posting list
+        int numCentroids = numVectors <= FLAT_VECTOR_THRESHOLD ? 1 : estimateCentroids(numVectors);
+
         IVFIndex.Config config = IVFIndex.Config.builder()
-            .numCentroids(estimateCentroids(numVectors))
+            .numCentroids(numCentroids)
             .targetClusterSize(512)
             .metric(metric)
             .soarLambda(1.0f)

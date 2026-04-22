@@ -41,15 +41,15 @@ public final class KMeans {
      * @param config     clustering configuration
      * @return clustering result with centroids and assignments
      */
+    private static final int PROXIMITY_MAP_SIZE = 8;
+
     public static Result cluster(ClusterANNVectorValues vectors, int k, Config config) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
         k = Math.max(1, Math.min(k, n));
 
-        // Initialize centroids
         float[][] centroids = initCentroids(vectors, k, config);
 
-        // Cluster sums and counts for incremental updates
         float[][] clusterSums = new float[k][dim];
         int[] clusterCounts = new int[k];
         int[] assignments = new int[n];
@@ -75,12 +75,27 @@ public final class KMeans {
 
         boolean converged = false;
         int iter;
+        // Neighborhood-aware: first 2 iterations check all centroids, then use centroidProximityMap
+        int[][] centroidProximityMap = null;
         for (iter = 0; iter < config.maxIterations && !converged; iter++) {
-            int moved = assignmentStep(iterVectors, centroids, iterAssignments, clusterSums, clusterCounts, k, config);
+            if (iter == 2 && k > PROXIMITY_MAP_SIZE * 2) {
+                centroidProximityMap = computeCentroidProximityMap(centroids, k, config.metric);
+            }
+            int moved = assignmentStep(
+                iterVectors,
+                centroids,
+                iterAssignments,
+                clusterSums,
+                clusterCounts,
+                k,
+                config,
+                centroidProximityMap
+            );
             updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
 
             if (config.rebalanceEmpty) {
                 rebalanceEmptyClusters(vectors, centroids, clusterCounts, iterAssignments, k, config);
+                centroidProximityMap = null; // invalidate after rebalance
             }
 
             converged = (moved == 0) || ((float) moved / iterVectors.size() < config.convergenceThreshold);
@@ -88,7 +103,7 @@ public final class KMeans {
 
         // Final full pass: assign all vectors to converged centroids
         if (sampled) {
-            assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config);
+            assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config, centroidProximityMap);
             updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
         }
 
@@ -147,6 +162,37 @@ public final class KMeans {
         return centroids;
     }
 
+    /**
+     * Precompute nearest neighbors for each centroid using bulk SIMD distance.
+     * Returns centroidProximityMap[c] = sorted array of nearest centroid indices for centroid c.
+     */
+    private static int[][] computeCentroidProximityMap(float[][] centroids, int k, DistanceMetric metric) {
+        int proximitySize = Math.min(PROXIMITY_MAP_SIZE, k - 1);
+        int[][] centroidProximityMap = new int[k][proximitySize];
+        for (int c = 0; c < k; c++) {
+            // Compute distances from centroid c to all others
+            float[] dists = new float[k];
+            for (int j = 0; j < k; j++) {
+                dists[j] = (j == c) ? Float.MAX_VALUE : metric.distance(centroids[c], centroids[j]);
+            }
+            // Partial sort: find top-proximitySize nearest
+            int[] indices = new int[k];
+            for (int i = 0; i < k; i++)
+                indices[i] = i;
+            for (int i = 0; i < proximitySize; i++) {
+                int minIdx = i;
+                for (int j = i + 1; j < k; j++) {
+                    if (dists[indices[j]] < dists[indices[minIdx]]) minIdx = j;
+                }
+                int tmp = indices[i];
+                indices[i] = indices[minIdx];
+                indices[minIdx] = tmp;
+            }
+            System.arraycopy(indices, 0, centroidProximityMap[c], 0, proximitySize);
+        }
+        return centroidProximityMap;
+    }
+
     // ========== Assignment Step ==========
 
     private static int assignmentStep(
@@ -156,7 +202,8 @@ public final class KMeans {
         float[][] clusterSums,
         int[] clusterCounts,
         int k,
-        Config config
+        Config config,
+        int[][] centroidProximityMap
     ) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
@@ -187,15 +234,26 @@ public final class KMeans {
                 int bestCluster = 0;
 
                 int prevCluster = assignments[i];
-                for (int c = 0; c < k; c++) {
-                    if (prevCluster >= 0 && c != prevCluster) {
-                        float interDist = config.metric.distance(centroidViews[prevCluster], centroidViews[c]);
-                        if (interDist > 4 * bestDist) continue;
+
+                if (centroidProximityMap != null && prevCluster >= 0) {
+                    // Neighborhood-aware: only check current centroid + its neighbors
+                    bestDist = config.metric.distance(vec, centroidViews[prevCluster]);
+                    bestCluster = prevCluster;
+                    for (int nc : centroidProximityMap[prevCluster]) {
+                        float dist = config.metric.distance(vec, centroidViews[nc]);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCluster = nc;
+                        }
                     }
-                    float dist = config.metric.distance(vec, centroidViews[c]);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestCluster = c;
+                } else {
+                    // Full scan: check all centroids (first iterations or unassigned)
+                    for (int c = 0; c < k; c++) {
+                        float dist = config.metric.distance(vec, centroidViews[c]);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCluster = c;
+                        }
                     }
                 }
 
@@ -227,11 +285,24 @@ public final class KMeans {
                 float bestDist = Float.MAX_VALUE;
                 int bestCluster = 0;
 
-                for (int c = 0; c < k; c++) {
-                    float dist = config.metric.distance(vec, centroidViews[c]);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestCluster = c;
+                int prevCluster = assignments[i];
+                if (centroidProximityMap != null && prevCluster >= 0) {
+                    bestDist = config.metric.distance(vec, centroidViews[prevCluster]);
+                    bestCluster = prevCluster;
+                    for (int nc : centroidProximityMap[prevCluster]) {
+                        float dist = config.metric.distance(vec, centroidViews[nc]);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCluster = nc;
+                        }
+                    }
+                } else {
+                    for (int c = 0; c < k; c++) {
+                        float dist = config.metric.distance(vec, centroidViews[c]);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCluster = c;
+                        }
                     }
                 }
 
