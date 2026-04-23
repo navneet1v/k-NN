@@ -223,14 +223,17 @@ builder.knnMethodConfigContext.setCompressionLevel(resolvedMethodContext.getComp
 ### How EngineLessMethod Provides the Resolver
 
 ```java
-public enum EngineLessMethod {
-    CLUSTER(METHOD_CLUSTER, ClusterANN1040KnnVectorsFormat::new, new ClusterANNMethodResolver());
+public interface EngineLessMethod {
+    String getName();
+    EngineLessMapperFactory getMapperFactory();
+    KnnVectorsFormat createFormat(int docBits);
+    MethodResolver getMethodResolver();
+}
 
-    private final MethodResolver methodResolver;
-
-    public MethodResolver getMethodResolver() {
-        return methodResolver;
-    }
+public class ClusterANNMethod implements EngineLessMethod {
+    public static final ClusterANNMethod INSTANCE = new ClusterANNMethod();
+    public MethodResolver getMethodResolver() { return new ClusterANNMethodResolver(); }
+    // ...
 }
 ```
 
@@ -267,7 +270,7 @@ validateFromEngineLessAlgorithm()
 | `MethodResolver` | Update javadocs — same |
 | `ClusterANNMethodResolver` | New class extending `AbstractMethodResolver` |
 | `ClusterANNSQEncoder` | New `Encoder` implementation for cluster ANN's SQ |
-| `EngineLessMethod` | Add `MethodResolver` field |
+| `EngineLessMethod` | Convert from enum to interface |
 | `validateFromEngineLessAlgorithm()` | Call `method.getMethodResolver().resolveMethod()` |
 | `EngineLessCodecFormatResolver` | Read resolved encoder from `KNNMethodContext.parameters` |
 

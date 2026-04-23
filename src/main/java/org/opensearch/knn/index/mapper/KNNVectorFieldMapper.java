@@ -74,10 +74,12 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
     public static final String CONTENT_TYPE = "knn_vector";
     public static final String KNN_FIELD = "knn_field";
 
-    private static final Map<EngineLessMethod, EngineLessMapperFactory> ENGINE_LESS_MAPPER_FACTORIES = Map.of(
-        EngineLessMethod.CLUSTER,
-        ClusterANNVectorFieldMapper::createFieldMapper
-    );
+    // Ensure ClusterANNMethod is registered
+    static {
+        // Trigger class loading which self-registers via ClusterANNMethod's static initializer
+        @SuppressWarnings("unused")
+        ClusterANNMethod unused = ClusterANNMethod.INSTANCE;
+    }
 
     private static KNNVectorFieldMapper toType(FieldMapper in) {
         return (KNNVectorFieldMapper) in;
@@ -311,7 +313,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 EngineLessMethod method = EngineLessMethod.fromName(
                     originalParameters.getKnnMethodContext().getMethodComponentContext().getName()
                 );
-                return ENGINE_LESS_MAPPER_FACTORIES.get(method)
+                return method.getMapperFactory()
                     .create(
                         buildFullName(context),
                         name,

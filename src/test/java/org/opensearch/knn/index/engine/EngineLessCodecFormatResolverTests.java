@@ -1,3 +1,4 @@
+
 /*
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
@@ -10,6 +11,8 @@ import org.opensearch.knn.KNNTestCase;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.codec.KNN1040Codec.ClusterANN1040KnnVectorsFormat;
 
+import org.opensearch.knn.index.mapper.ClusterANNMethod;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -17,6 +20,12 @@ import static org.opensearch.knn.common.KNNConstants.METHOD_CLUSTER;
 import static org.opensearch.knn.common.KNNConstants.METHOD_ENCODER_PARAMETER;
 
 public class EngineLessCodecFormatResolverTests extends KNNTestCase {
+
+    @Override
+    public void setUp() throws Exception {
+        super.setUp();
+        assertNotNull(ClusterANNMethod.INSTANCE);
+    }
 
     private final EngineLessCodecFormatResolver resolver = new EngineLessCodecFormatResolver();
 

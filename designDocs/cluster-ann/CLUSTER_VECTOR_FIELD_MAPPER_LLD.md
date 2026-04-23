@@ -17,8 +17,9 @@ This document covers the mapper layer changes needed to integrate the cluster-ba
 
 | File | Purpose |
 |---|---|
-| `EngineLessMethod.java` | Enum of engine-less algorithm names |
-| `EngineLessMapperFactory.java` | Factory interface for creating engine-less mappers |
+| `EngineLessMethod.java` | Interface for engine-less algorithms — name, mapper factory, format factory, method resolver |
+| `EngineLessMapperFactory.java` | Factory interface for creating engine-less mappers (folded into `EngineLessMethod`) |
+| `ClusterANNMethod.java` | Implementation of `EngineLessMethod` for the cluster algorithm |
 | `ClusterANNVectorFieldMapper.java` | New mapper for cluster algorithm |
 
 ## 2. Class Diagram — Mapper Hierarchy
@@ -63,11 +64,23 @@ classDiagram
     }
 
     class EngineLessMethod {
-        <<new>>
-        <<enum>>
-        CLUSTER
+        <<interface>>
+        +getName() String
+        +getMapperFactory() EngineLessMapperFactory
+        +createFormat(docBits) KnnVectorsFormat
+        +getMethodResolver() MethodResolver
         +fromName(name)$ EngineLessMethod
         +isEngineLess(name)$ boolean
+    }
+
+    class ClusterANNMethod {
+        <<singleton>>
+        implements EngineLessMethod
+        INSTANCE
+        +getName() "cluster"
+        +getMapperFactory() ClusterANNVectorFieldMapper::createFieldMapper
+        +createFormat(docBits) ClusterANN1040KnnVectorsFormat
+        +getMethodResolver() ClusterANNMethodResolver
     }
 
     class EngineLessMapperFactory {
@@ -119,8 +132,11 @@ classDiagram
     }
 
     class EngineLessMethod {
-        <<enum>>
-        CLUSTER
+        <<interface>>
+        +getName() String
+        +getMapperFactory() EngineLessMapperFactory
+        +createFormat(docBits) KnnVectorsFormat
+        +getMethodResolver() MethodResolver
         +fromName(name)$ EngineLessMethod
         +isEngineLess(name)$ boolean
     }
@@ -230,9 +246,9 @@ One mapper class for all engine-less algorithms. Differentiation in codec only.
 
 **Rejected because:** If a future algorithm needs different ingestion behavior (different validators, data types, field attributes), this forces conditionals inside a single mapper.
 
-#### Alternative C: Registry of EngineLessMethod → mapper factory (chosen)
+#### Alternative C: EngineLessMethod interface with registry (chosen)
 
-A static `Map<EngineLessMethod, EngineLessMapperFactory>`. `Builder.build()` does a single lookup.
+Each engine-less algorithm implements the `EngineLessMethod` interface, which provides the mapper factory, format factory, and method resolver. A static registry maps method names to implementations. `Builder.build()` does a single lookup.
 
 **Chosen because:**
 1. `Builder.build()` has one branch that never grows
@@ -382,5 +398,5 @@ if (builder.compressionLevel.isConfigured()) {
 The compression level is accepted at the mapping layer but not yet wired to the codec format. The remaining steps:
 
 1. `validateFromEngineLessAlgorithm()` stores the resolved `docBits` on `KNNMethodConfigContext`
-2. `EngineLessCodecFormatResolver.resolve()` reads `docBits` from context
-3. `EngineLessMethod.getFormat(docBits)` passes it to `ClusterANN1040KnnVectorsFormat(docBits)`
+2. `EngineLessCodecFormatResolver.resolve()` reads `docBits` from resolved encoder in method params
+3. `EngineLessMethod.createFormat(docBits)` passes it to the algorithm's format (e.g., `ClusterANN1040KnnVectorsFormat(docBits)`)

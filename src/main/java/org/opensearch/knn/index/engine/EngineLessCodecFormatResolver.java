@@ -41,7 +41,7 @@ public class EngineLessCodecFormatResolver implements CodecFormatResolver {
         }
 
         int docBits = resolveDocBits(field, params);
-        return method.getFormat(docBits);
+        return method.createFormat(docBits);
     }
 
     @Override

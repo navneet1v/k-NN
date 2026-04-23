@@ -5,78 +5,101 @@
 
 package org.opensearch.knn.index.mapper;
 
-import lombok.Getter;
 import org.apache.lucene.codecs.KnnVectorsFormat;
-import org.opensearch.knn.index.codec.KNN1040Codec.ClusterANN1040KnnVectorsFormat;
-import org.opensearch.knn.index.engine.ClusterANNMethodResolver;
 import org.opensearch.knn.index.engine.MethodResolver;
 
-import java.util.function.Supplier;
-
-import static org.opensearch.knn.common.KNNConstants.METHOD_CLUSTER;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * Enum representing engine-less ANN algorithms that bypass the KNNEngine layer.
- * Each value carries its mapper factory, codec format supplier, and method resolver.
+ * Interface for engine-less ANN algorithms that bypass the KNNEngine layer.
+ * Each implementation provides its own mapper factory, codec format factory, and method resolver.
+ *
+ * <p>To add a new engine-less algorithm:
+ * <ol>
+ *   <li>Implement this interface (see {@link ClusterANNMethod} for an example)</li>
+ *   <li>Self-register via {@link #register(EngineLessMethod)} in a static initializer</li>
+ *   <li>Ensure the class is loaded at startup (e.g., referenced from {@code KNNVectorFieldMapper})</li>
+ * </ol>
  */
-@Getter
-public enum EngineLessMethod {
-    CLUSTER(METHOD_CLUSTER, ClusterANN1040KnnVectorsFormat::new, new ClusterANNMethodResolver());
-
-    private final String name;
-    private final Supplier<KnnVectorsFormat> formatSupplier;
-    private final MethodResolver methodResolver;
-
-    EngineLessMethod(String name, Supplier<KnnVectorsFormat> formatSupplier, MethodResolver methodResolver) {
-        this.name = name;
-        this.formatSupplier = formatSupplier;
-        this.methodResolver = methodResolver;
-    }
+public interface EngineLessMethod {
 
     /**
-     * Returns a new instance of the {@link KnnVectorsFormat} for this algorithm with default quantization.
+     * Returns the method name as specified in the mapping's {@code method.name} field.
+     * This is the routing key used to identify the algorithm (e.g., "cluster").
      *
-     * @return the vectors format
+     * @return the method name, never null
      */
-    public KnnVectorsFormat getFormat() {
-        return formatSupplier.get();
-    }
+    String getName();
 
     /**
-     * Returns a new instance of the {@link KnnVectorsFormat} for this algorithm with specified quantization bits.
+     * Returns the factory for creating the field mapper for this algorithm.
+     * The mapper handles field type creation, validation, and vector ingestion.
      *
-     * @param docBits quantization bits (1, 2, or 4)
-     * @return the vectors format
+     * @return the mapper factory, never null
      */
-    public KnnVectorsFormat getFormat(int docBits) {
-        return new ClusterANN1040KnnVectorsFormat(docBits);
-    }
+    EngineLessMapperFactory getMapperFactory();
 
     /**
-     * Get the enum value from a method name string.
+     * Creates a new codec format instance for this algorithm with the specified quantization.
+     * The format produces the {@link org.apache.lucene.codecs.KnnVectorsWriter} and
+     * {@link org.apache.lucene.codecs.KnnVectorsReader} for indexing and search.
      *
-     * @param name the method name
-     * @return the enum value, or null if not an engine-less method
+     * @param docBits quantization bits per dimension (1, 2, or 4)
+     * @return a new format instance, never null
      */
-    public static EngineLessMethod fromName(String name) {
-        if (name == null) {
-            return null;
+    KnnVectorsFormat createFormat(int docBits);
+
+    /**
+     * Returns the method resolver that reconciles {@code compression_level} and {@code encoder}
+     * parameters, validates conflicts, and produces a {@link org.opensearch.knn.index.engine.ResolvedMethodContext}.
+     *
+     * @return the method resolver, never null
+     */
+    MethodResolver getMethodResolver();
+
+    // ======================== Static Registry ========================
+
+    /** Internal registry mapping method names to implementations. */
+    Map<String, EngineLessMethod> REGISTRY = new HashMap<>();
+
+    /**
+     * Registers an engine-less method implementation. Must be called during class initialization
+     * only (e.g., from a static initializer). The JVM guarantees that static initializers are
+     * thread-safe, so no synchronization is needed. Reads via {@link #fromName} are safe after
+     * class loading completes due to the happens-before relationship established by class
+     * initialization.
+     *
+     * @param method the method to register, must not be null
+     * @throws IllegalStateException if a method with the same name is already registered
+     */
+    static void register(EngineLessMethod method) {
+        if (REGISTRY.containsKey(method.getName())) {
+            throw new IllegalStateException(
+                "Engine-less method '" + method.getName() + "' is already registered by "
+                    + REGISTRY.get(method.getName()).getClass().getName()
+            );
         }
-        for (EngineLessMethod method : values()) {
-            if (method.name.equals(name)) {
-                return method;
-            }
-        }
-        return null;
+        REGISTRY.put(method.getName(), method);
     }
 
     /**
-     * Check if the given method name is an engine-less algorithm.
+     * Looks up an engine-less method by its name.
      *
-     * @param name the method name
-     * @return true if engine-less
+     * @param name the method name (e.g., "cluster"), may be null
+     * @return the registered method, or null if not found or name is null
      */
-    public static boolean isEngineLess(String name) {
+    static EngineLessMethod fromName(String name) {
+        return name == null ? null : REGISTRY.get(name);
+    }
+
+    /**
+     * Checks whether the given method name corresponds to a registered engine-less algorithm.
+     *
+     * @param name the method name, may be null
+     * @return true if the name is a registered engine-less method
+     */
+    static boolean isEngineLess(String name) {
         return fromName(name) != null;
     }
 }

@@ -10,8 +10,17 @@ import org.opensearch.knn.index.codec.KNN1040Codec.ClusterANN1040KnnVectorsForma
 
 public class EngineLessMethodTests extends KNNTestCase {
 
+    @Override
+    public void setUp() throws Exception {
+        super.setUp();
+        // Ensure ClusterANNMethod is registered
+        assertNotNull(ClusterANNMethod.INSTANCE);
+    }
+
     public void testFromName_cluster() {
-        assertEquals(EngineLessMethod.CLUSTER, EngineLessMethod.fromName("cluster"));
+        EngineLessMethod method = EngineLessMethod.fromName("cluster");
+        assertNotNull(method);
+        assertEquals("cluster", method.getName());
     }
 
     public void testFromName_null() {
@@ -34,7 +43,21 @@ public class EngineLessMethodTests extends KNNTestCase {
         assertFalse(EngineLessMethod.isEngineLess(null));
     }
 
-    public void testGetFormat_cluster() {
-        assertTrue(EngineLessMethod.CLUSTER.getFormat() instanceof ClusterANN1040KnnVectorsFormat);
+    public void testCreateFormat_cluster() {
+        EngineLessMethod method = EngineLessMethod.fromName("cluster");
+        assertNotNull(method);
+        assertTrue(method.createFormat(1) instanceof ClusterANN1040KnnVectorsFormat);
+    }
+
+    public void testGetMapperFactory_cluster() {
+        EngineLessMethod method = EngineLessMethod.fromName("cluster");
+        assertNotNull(method);
+        assertNotNull(method.getMapperFactory());
+    }
+
+    public void testGetMethodResolver_cluster() {
+        EngineLessMethod method = EngineLessMethod.fromName("cluster");
+        assertNotNull(method);
+        assertNotNull(method.getMethodResolver());
     }
 }
