@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
 import java.io.IOException;
 
@@ -16,7 +16,7 @@ import java.io.IOException;
  *
  * <p>Zero extra disk storage — uses doc counts already in .clam.
  */
-final class FilterAwareProbeIterator implements ProbeIterator {
+public final class FilterAwareProbeIterator implements ProbeIterator {
 
     private static final float SELECTIVITY_THRESHOLD = 0.10f;
 
@@ -32,7 +32,7 @@ final class FilterAwareProbeIterator implements ProbeIterator {
      * @param numVectors        total vectors in segment
      * @param filterCost        approximate number of docs passing the filter
      */
-    FilterAwareProbeIterator(ProbeIterator delegate, int[] centroidDocCounts, int numVectors, long filterCost) {
+    public FilterAwareProbeIterator(ProbeIterator delegate, int[] centroidDocCounts, int numVectors, long filterCost) {
         this.delegate = delegate;
         this.centroidDocCounts = centroidDocCounts;
         this.filterSelectivity = numVectors > 0 ? (float) filterCost / numVectors : 1.0f;

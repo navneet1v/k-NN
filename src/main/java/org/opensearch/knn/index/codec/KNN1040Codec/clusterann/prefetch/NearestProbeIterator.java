@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
+import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFieldState;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 
 import java.util.Arrays;
@@ -13,13 +14,13 @@ import java.util.Arrays;
  * Yields the nprobe nearest centroids with adaptive cutoff.
  * Computes distances once, sorts, and determines nprobe from the distance distribution.
  */
-final class NearestProbeIterator implements ProbeIterator {
+public final class NearestProbeIterator implements ProbeIterator {
 
     private final ProbedCentroid[] probes;
     private final int nprobe;
     private int cursor;
 
-    NearestProbeIterator(float[] query, ClusterANNFieldState fieldState, int k) {
+    public NearestProbeIterator(float[] query, ClusterANNFieldState fieldState, int k) {
         float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
         int numCentroids = fieldState.numCentroids;

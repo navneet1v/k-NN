@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
+import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.ProbedCentroid;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
@@ -15,13 +16,13 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import java.io.IOException;
 import java.util.BitSet;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.BLOCK_SIZE;
+import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.BLOCK_SIZE;
 
 /**
  * Reads one centroid's columnar posting data (primary + SOAR), filters, scores, collects.
  * Quantized section uses block-columnar layout (BLOCK_SIZE=32) for SIMD scoring.
  */
-final class ClusterANNPostingVisitor implements PostingVisitor {
+public final class ClusterANNPostingVisitor implements PostingVisitor {
 
     private final IndexInput postingsInput;
     private final ClusterANNFieldState fieldState;
@@ -42,7 +43,7 @@ final class ClusterANNPostingVisitor implements PostingVisitor {
     // State set by reset()
     private int centroidIdx;
 
-    ClusterANNPostingVisitor(
+    public ClusterANNPostingVisitor(
         IndexInput postingsInput,
         ClusterANNFieldState fieldState,
         RandomVectorScorer exactScorer,

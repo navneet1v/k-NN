@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
+import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.ProbedCentroid;
 import org.apache.lucene.search.KnnCollector;
 
 import java.io.IOException;
@@ -13,7 +14,7 @@ import java.io.IOException;
  * Visits one centroid's posting list: reads, filters, scores, collects.
  * Stateful per-query, reusable across centroids.
  */
-interface PostingVisitor {
+public interface PostingVisitor {
     /**
      * Seek to centroid and read posting metadata (docIds, ordinals).
      * Returns expected doc count (primary + SOAR).

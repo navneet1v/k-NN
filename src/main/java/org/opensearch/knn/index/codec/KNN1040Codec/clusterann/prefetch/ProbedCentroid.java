@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
 /**
  * Metadata about a centroid to probe, known before reading the posting list.
@@ -14,5 +14,5 @@ package org.opensearch.knn.index.codec.KNN1040Codec;
  * @param postingBytes  total bytes for this centroid (primary + SOAR)
  * @param centroidDist  distance from query to centroid
  */
-record ProbedCentroid(int centroidIdx, long fileOffset, long postingBytes, float centroidDist) {
+public record ProbedCentroid(int centroidIdx, long fileOffset, long postingBytes, float centroidDist) {
 }

@@ -33,7 +33,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.*;
+import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.*;
+import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.*;
+import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.*;
 
 /**
  * Writer for ClusterANN IVF format v2.

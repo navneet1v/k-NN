@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
@@ -15,7 +15,7 @@ import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import java.io.IOException;
 import java.util.Arrays;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.BLOCK_SIZE;
+import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.BLOCK_SIZE;
 
 /**
  * Reads block-columnar quantized vectors from .clap and performs ADC scoring.
@@ -29,7 +29,7 @@ import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConsta
  *   sum[0..BS-1]    ← bulk int read
  * </pre>
  */
-final class QuantizedVectorReader {
+public final class QuantizedVectorReader {
 
     private static final float RESCORE_OVERSAMPLE = 2.0f;
     private static final int ADC_MULTIPLIER = 20;
@@ -68,7 +68,7 @@ final class QuantizedVectorReader {
     private float currentQueryComponentSum;
     private float currentQueryAdditionalCorrection;
 
-    QuantizedVectorReader(
+    public QuantizedVectorReader(
         RandomVectorScorer exactScorer,
         IndexInput postingsInput,
         ClusterANNFieldState fieldState,
@@ -100,12 +100,12 @@ final class QuantizedVectorReader {
         this.blockScores = new float[BLOCK_SIZE];
     }
 
-    VectorSimilarityFunction getSimFunc() {
+    public VectorSimilarityFunction getSimFunc() {
         return simFunc;
     }
 
     /** Bytes for one block of given size. */
-    long blockBytes(int blockSize) {
+    public long blockBytes(int blockSize) {
         return (long) blockSize * packedBytes + (long) blockSize * Float.BYTES * 3 + (long) blockSize * Integer.BYTES;
     }
 
@@ -122,7 +122,7 @@ final class QuantizedVectorReader {
      * @param centroid   centroid for this posting
      * @param centroidDp dot product of query with centroid (for non-euclidean)
      */
-    void scoreBlock(
+    public void scoreBlock(
         IndexInput input,
         int blockStart,
         int blockSize,
@@ -192,7 +192,7 @@ final class QuantizedVectorReader {
     /**
      * Phase 2: rescore top ADC candidates with exact scorer.
      */
-    void finish(KnnCollector collector) throws IOException {
+    public void finish(KnnCollector collector) throws IOException {
         int rescoreCount = Math.min((int) (k * RESCORE_OVERSAMPLE), candidates.count());
         if (rescoreCount == 0) return;
 
@@ -221,7 +221,7 @@ final class QuantizedVectorReader {
     }
 
     /** 4-bit × 4-bit transposed dot product. */
-    static long int4NibbleDotProduct(byte[] queryTransposed, byte[] docTransposed) {
+    public static long int4NibbleDotProduct(byte[] queryTransposed, byte[] docTransposed) {
         int stripeSize = docTransposed.length / 4;
         long sum = 0;
         for (int i = 0; i < stripeSize; i++) {

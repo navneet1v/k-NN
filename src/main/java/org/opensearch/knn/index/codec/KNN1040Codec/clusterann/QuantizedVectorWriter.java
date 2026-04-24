@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexOutput;
@@ -13,7 +13,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.BLOCK_SIZE;
+import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.BLOCK_SIZE;
 
 /**
  * Writes quantized vectors in block-columnar format for SIMD-friendly scoring.
@@ -144,7 +144,7 @@ public final class QuantizedVectorWriter implements Closeable {
     public void close() {}
 
     @FunctionalInterface
-    interface VectorSupplier {
+    public interface VectorSupplier {
         float[] get(int ordinal) throws IOException;
     }
 
@@ -159,7 +159,7 @@ public final class QuantizedVectorWriter implements Closeable {
         }
     }
 
-    static int packedBytesPerVector(int dimension, int bits) {
+    public static int packedBytesPerVector(int dimension, int bits) {
         if (bits == 1) return (dimension + 7) / 8;
         if (bits == 2) return ((dimension + 7) / 8) * 2;
         return ((dimension + 7) / 8) * 4;

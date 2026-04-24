@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.IndexInput;

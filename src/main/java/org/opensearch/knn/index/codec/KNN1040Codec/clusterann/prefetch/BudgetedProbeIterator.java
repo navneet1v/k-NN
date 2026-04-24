@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
 import org.apache.lucene.search.KnnCollector;
 
@@ -18,7 +18,7 @@ import java.io.IOException;
  *   <li>If filtered, continue until at least k docs scored</li>
  * </ol>
  */
-final class BudgetedProbeIterator implements ProbeIterator {
+public final class BudgetedProbeIterator implements ProbeIterator {
 
     private final ProbeIterator delegate;
     private final KnnCollector collector;
@@ -27,7 +27,7 @@ final class BudgetedProbeIterator implements ProbeIterator {
     private long docsExpected;
     private long docsScored;
 
-    BudgetedProbeIterator(ProbeIterator delegate, KnnCollector collector, int numVectors, int k) {
+    public BudgetedProbeIterator(ProbeIterator delegate, KnnCollector collector, int numVectors, int k) {
         this.delegate = delegate;
         this.collector = collector;
         this.k = k;
@@ -56,7 +56,7 @@ final class BudgetedProbeIterator implements ProbeIterator {
     }
 
     /** Called by visitor after processing a centroid. */
-    void recordVisit(int expectedCount, int scoredCount) {
+    public void recordVisit(int expectedCount, int scoredCount) {
         docsExpected += expectedCount;
         docsScored += scoredCount;
     }

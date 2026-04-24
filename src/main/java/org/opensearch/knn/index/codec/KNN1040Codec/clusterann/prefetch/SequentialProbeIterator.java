@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -15,7 +15,7 @@ import java.util.Arrays;
  * Windows of W centroids give ~80% of sequential benefit with minimal recall impact.
  * Within each window, centroids are sorted by file offset.
  */
-final class SequentialProbeIterator implements ProbeIterator {
+public final class SequentialProbeIterator implements ProbeIterator {
 
     private static final int DEFAULT_WINDOW = 4;
 
@@ -24,11 +24,11 @@ final class SequentialProbeIterator implements ProbeIterator {
     private int windowSize;
     private int windowCursor;
 
-    SequentialProbeIterator(ProbeIterator delegate) {
+    public SequentialProbeIterator(ProbeIterator delegate) {
         this(delegate, DEFAULT_WINDOW);
     }
 
-    SequentialProbeIterator(ProbeIterator delegate, int windowSize) {
+    public SequentialProbeIterator(ProbeIterator delegate, int windowSize) {
         this.delegate = delegate;
         this.window = new ProbedCentroid[windowSize];
         this.windowSize = 0;

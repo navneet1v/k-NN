@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IndexInput;
@@ -13,7 +13,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.END_OF_FIELDS;
+import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.END_OF_FIELDS;
 
 /**
  * Per-field state read from .clam.
@@ -33,23 +33,23 @@ import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConsta
  * offsetTable:       numCentroids × long
  * </pre>
  */
-final class ClusterANNFieldState {
+public final class ClusterANNFieldState {
 
-    final int fieldNumber;
-    final int numVectors;
-    final int dimension;
-    final int numCentroids;
-    final DistanceMetric metric;
-    final byte docBits;
-    final long postingsOffset;
+    public final int fieldNumber;
+    public final int numVectors;
+    public final int dimension;
+    public final int numCentroids;
+    public final DistanceMetric metric;
+    public final byte docBits;
+    public final long postingsOffset;
 
     // Eager-loaded (small: one int + one float per centroid)
-    final int[] centroidDocCounts;
-    final float[] centroidNorms;
+    public final int[] centroidDocCounts;
+    public final float[] centroidNorms;
 
     // Lazy-loaded (large: dimension floats per centroid)
-    float[][] centroids;
-    long[] centroidOffsets;
+    public float[][] centroids;
+    public long[] centroidOffsets;
 
     private final long centroidsFilePos;
 
@@ -77,11 +77,11 @@ final class ClusterANNFieldState {
         this.centroidsFilePos = centroidsFilePos;
     }
 
-    boolean isEmpty() {
+    public boolean isEmpty() {
         return numVectors == 0;
     }
 
-    void ensureLoaded(IndexInput metaInput) throws IOException {
+    public void ensureLoaded(IndexInput metaInput) throws IOException {
         if (centroids != null) return;
 
         metaInput.seek(centroidsFilePos);
@@ -95,7 +95,7 @@ final class ClusterANNFieldState {
         metaInput.readLongs(centroidOffsets, 0, numCentroids);
     }
 
-    static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
+    public static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
         Map<Integer, ClusterANNFieldState> fields = new HashMap<>();
         while (true) {
             int fieldNumber = metaInput.readInt();

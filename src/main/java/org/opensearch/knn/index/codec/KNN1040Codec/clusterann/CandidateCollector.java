@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
 
 /**
  * Bounded min-heap for ADC candidate collection. Keeps top {@code maxCandidates}
  * by score, evicting the worst when full.
  */
-final class CandidateCollector {
+public final class CandidateCollector {
 
     private final int[] ordinals;
     private final float[] scores;

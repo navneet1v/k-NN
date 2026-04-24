@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec;
+package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
 
 import org.apache.lucene.store.IndexInput;
 
@@ -16,7 +16,7 @@ import java.io.IOException;
  *
  * <p>Uses Lucene's async prefetch API which triggers OS-level readahead (madvise/fadvise).
  */
-final class PrefetchingProbeIterator implements ProbeIterator {
+public final class PrefetchingProbeIterator implements ProbeIterator {
 
     private static final int DEFAULT_DEPTH = 2;
 
@@ -27,11 +27,11 @@ final class PrefetchingProbeIterator implements ProbeIterator {
     private int writeIdx;
     private int count;
 
-    PrefetchingProbeIterator(ProbeIterator delegate, IndexInput postingsInput) throws IOException {
+    public PrefetchingProbeIterator(ProbeIterator delegate, IndexInput postingsInput) throws IOException {
         this(delegate, postingsInput, DEFAULT_DEPTH);
     }
 
-    PrefetchingProbeIterator(ProbeIterator delegate, IndexInput postingsInput, int depth) throws IOException {
+    public PrefetchingProbeIterator(ProbeIterator delegate, IndexInput postingsInput, int depth) throws IOException {
         this.delegate = delegate;
         this.postingsInput = postingsInput;
         this.buffer = new ProbedCentroid[depth];
