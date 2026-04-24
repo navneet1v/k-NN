@@ -15,22 +15,22 @@ import java.util.Arrays;
  * Windows of W centroids give ~80% of sequential benefit with minimal recall impact.
  * Within each window, centroids are sorted by file offset.
  */
-public final class SequentialProbeIterator implements ProbeIterator {
+public final class SequentialProbeScheduler implements ProbeScheduler {
 
     private static final int DEFAULT_WINDOW = 4;
 
-    private final ProbeIterator delegate;
-    private final ProbedCentroid[] window;
+    private final ProbeScheduler delegate;
+    private final ProbeTarget[] window;
     private int windowSize;
     private int windowCursor;
 
-    public SequentialProbeIterator(ProbeIterator delegate) {
+    public SequentialProbeScheduler(ProbeScheduler delegate) {
         this(delegate, DEFAULT_WINDOW);
     }
 
-    public SequentialProbeIterator(ProbeIterator delegate, int windowSize) {
+    public SequentialProbeScheduler(ProbeScheduler delegate, int windowSize) {
         this.delegate = delegate;
-        this.window = new ProbedCentroid[windowSize];
+        this.window = new ProbeTarget[windowSize];
         this.windowSize = 0;
         this.windowCursor = 0;
     }
@@ -41,7 +41,7 @@ public final class SequentialProbeIterator implements ProbeIterator {
     }
 
     @Override
-    public ProbedCentroid next() throws IOException {
+    public ProbeTarget next() throws IOException {
         if (windowCursor >= windowSize) {
             fillWindow();
         }

@@ -18,16 +18,16 @@ import java.io.IOException;
  *   <li>If filtered, continue until at least k docs scored</li>
  * </ol>
  */
-public final class BudgetedProbeIterator implements ProbeIterator {
+public final class BudgetedProbeScheduler implements ProbeScheduler {
 
-    private final ProbeIterator delegate;
+    private final ProbeScheduler delegate;
     private final KnnCollector collector;
     private final long budget;
     private final int k;
     private long docsExpected;
     private long docsScored;
 
-    public BudgetedProbeIterator(ProbeIterator delegate, KnnCollector collector, int numVectors, int k) {
+    public BudgetedProbeScheduler(ProbeScheduler delegate, KnnCollector collector, int numVectors, int k) {
         this.delegate = delegate;
         this.collector = collector;
         this.k = k;
@@ -51,7 +51,7 @@ public final class BudgetedProbeIterator implements ProbeIterator {
     }
 
     @Override
-    public ProbedCentroid next() throws IOException {
+    public ProbeTarget next() throws IOException {
         return delegate.next();
     }
 

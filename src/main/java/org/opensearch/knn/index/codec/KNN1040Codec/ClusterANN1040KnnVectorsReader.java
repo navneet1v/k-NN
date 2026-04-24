@@ -36,8 +36,8 @@ import org.opensearch.knn.index.clusterann.prefetch.*;
  * Reader for ClusterANN IVF format v2.
  *
  * <p>Search uses a composable probe pipeline:
- * {@link NearestProbeIterator} → {@link SequentialProbeIterator} → {@link PrefetchingProbeIterator}
- * feeding a {@link ClusterANNPostingVisitor}.
+ * {@link NearestProbeScheduler} → {@link SequentialProbeScheduler} → {@link ReadAheadProbeScheduler}
+ * feeding a {@link ClusterANNCentroidScanner}.
  */
 @Log4j2
 public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
@@ -115,11 +115,11 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
 
         // Build probe pipeline: Nearest → Filter → Sequential → Prefetch → Budget
-        ProbeIterator probes = new NearestProbeIterator(target, fieldState, k);
-        probes = new FilterAwareProbeIterator(probes, fieldState.centroidDocCounts, fieldState.numVectors, filterCost);
-        probes = new SequentialProbeIterator(probes);
-        probes = new PrefetchingProbeIterator(probes, postingsClone);
-        BudgetedProbeIterator budgeted = new BudgetedProbeIterator(probes, knnCollector, fieldState.numVectors, k);
+        ProbeScheduler probes = new NearestProbeScheduler(target, fieldState, k);
+        probes = new FilterAwareProbeScheduler(probes, fieldState.centroidDocCounts, fieldState.numVectors, filterCost);
+        probes = new SequentialProbeScheduler(probes);
+        probes = new ReadAheadProbeScheduler(probes, postingsClone);
+        BudgetedProbeScheduler budgeted = new BudgetedProbeScheduler(probes, knnCollector, fieldState.numVectors, k);
 
         // Build scorers
         RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
@@ -135,7 +135,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         BitSet visited = new BitSet(fieldState.numVectors);
 
-        PostingVisitor visitor = new ClusterANNPostingVisitor(
+        CentroidScanner visitor = new ClusterANNCentroidScanner(
             postingsClone,
             fieldState,
             exactScorer,
@@ -148,9 +148,9 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         // Visit loop with budget tracking
         while (budgeted.hasNext()) {
-            ProbedCentroid probe = budgeted.next();
-            visitor.reset(probe);
-            int scored = visitor.visit(knnCollector);
+            ProbeTarget probe = budgeted.next();
+            visitor.prepare(probe);
+            int scored = visitor.scan(knnCollector);
             budgeted.recordVisit(fieldState.centroidDocCounts[probe.centroidIdx()], scored);
             if (knnCollector.earlyTerminated()) break;
         }

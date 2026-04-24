@@ -5,7 +5,7 @@
 
 package org.opensearch.knn.index.clusterann.codec;
 
-import org.opensearch.knn.index.clusterann.prefetch.ProbedCentroid;
+import org.opensearch.knn.index.clusterann.prefetch.ProbeTarget;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
@@ -22,7 +22,7 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  * Reads one centroid's columnar posting data (primary + SOAR), filters, scores, collects.
  * Quantized section uses block-columnar layout (BLOCK_SIZE=32) for SIMD scoring.
  */
-public final class ClusterANNPostingVisitor implements PostingVisitor {
+public final class ClusterANNCentroidScanner implements CentroidScanner {
 
     private final IndexInput postingsInput;
     private final ClusterANNFieldState fieldState;
@@ -43,7 +43,7 @@ public final class ClusterANNPostingVisitor implements PostingVisitor {
     // State set by reset()
     private int centroidIdx;
 
-    public ClusterANNPostingVisitor(
+    public ClusterANNCentroidScanner(
         IndexInput postingsInput,
         ClusterANNFieldState fieldState,
         RandomVectorScorer exactScorer,
@@ -67,14 +67,14 @@ public final class ClusterANNPostingVisitor implements PostingVisitor {
     }
 
     @Override
-    public int reset(ProbedCentroid centroid) throws IOException {
+    public int prepare(ProbeTarget centroid) throws IOException {
         this.centroidIdx = centroid.centroidIdx();
         postingsInput.seek(centroid.fileOffset());
         return 0;
     }
 
     @Override
-    public int visit(KnnCollector collector) throws IOException {
+    public int scan(KnnCollector collector) throws IOException {
         int totalScored = 0;
         totalScored += scanOnePosting(collector);
         totalScored += scanOnePosting(collector);

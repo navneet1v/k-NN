@@ -14,5 +14,5 @@ package org.opensearch.knn.index.clusterann.prefetch;
  * @param postingBytes  total bytes for this centroid (primary + SOAR)
  * @param centroidDist  distance from query to centroid
  */
-public record ProbedCentroid(int centroidIdx, long fileOffset, long postingBytes, float centroidDist) {
+public record ProbeTarget(int centroidIdx, long fileOffset, long postingBytes, float centroidDist) {
 }

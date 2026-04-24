@@ -16,15 +16,15 @@ import java.io.IOException;
  *
  * <p>Zero extra disk storage — uses doc counts already in .clam.
  */
-public final class FilterAwareProbeIterator implements ProbeIterator {
+public final class FilterAwareProbeScheduler implements ProbeScheduler {
 
     private static final float SELECTIVITY_THRESHOLD = 0.10f;
 
-    private final ProbeIterator delegate;
+    private final ProbeScheduler delegate;
     private final int[] centroidDocCounts;
     private final float filterSelectivity;
     private final boolean active;
-    private ProbedCentroid buffered;
+    private ProbeTarget buffered;
 
     /**
      * @param delegate          underlying probe iterator
@@ -32,7 +32,7 @@ public final class FilterAwareProbeIterator implements ProbeIterator {
      * @param numVectors        total vectors in segment
      * @param filterCost        approximate number of docs passing the filter
      */
-    public FilterAwareProbeIterator(ProbeIterator delegate, int[] centroidDocCounts, int numVectors, long filterCost) {
+    public FilterAwareProbeScheduler(ProbeScheduler delegate, int[] centroidDocCounts, int numVectors, long filterCost) {
         this.delegate = delegate;
         this.centroidDocCounts = centroidDocCounts;
         this.filterSelectivity = numVectors > 0 ? (float) filterCost / numVectors : 1.0f;
@@ -45,7 +45,7 @@ public final class FilterAwareProbeIterator implements ProbeIterator {
         if (buffered != null) return true;
         while (delegate.hasNext()) {
             try {
-                ProbedCentroid probe = delegate.next();
+                ProbeTarget probe = delegate.next();
                 if (shouldVisit(probe)) {
                     buffered = probe;
                     return true;
@@ -58,16 +58,16 @@ public final class FilterAwareProbeIterator implements ProbeIterator {
     }
 
     @Override
-    public ProbedCentroid next() throws IOException {
+    public ProbeTarget next() throws IOException {
         if (buffered != null) {
-            ProbedCentroid result = buffered;
+            ProbeTarget result = buffered;
             buffered = null;
             return result;
         }
         return delegate.next();
     }
 
-    private boolean shouldVisit(ProbedCentroid probe) {
+    private boolean shouldVisit(ProbeTarget probe) {
         if (!active) return true;
         int docCount = centroidDocCounts[probe.centroidIdx()];
         // Expected matching docs = docCount × selectivity

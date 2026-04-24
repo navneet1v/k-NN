@@ -17,13 +17,13 @@ import java.util.Arrays;
  * Yields the nprobe nearest centroids with adaptive cutoff.
  * Computes distances once, sorts, and determines nprobe from the distance distribution.
  */
-public final class NearestProbeIterator implements ProbeIterator {
+public final class NearestProbeScheduler implements ProbeScheduler {
 
-    private final ProbedCentroid[] probes;
+    private final ProbeTarget[] probes;
     private final int nprobe;
     private int cursor;
 
-    public NearestProbeIterator(float[] query, ClusterANNFieldState fieldState, int k) {
+    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k) {
         float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
         int numCentroids = fieldState.numCentroids;
@@ -46,14 +46,14 @@ public final class NearestProbeIterator implements ProbeIterator {
         this.nprobe = calculateNprobe(sortedDists, numCentroids, k);
 
         // Build probes with posting size from offset table
-        this.probes = new ProbedCentroid[nprobe];
+        this.probes = new ProbeTarget[nprobe];
         for (int i = 0; i < nprobe; i++) {
             int c = indices[i];
             long offset = offsets[c];
             // Posting size: distance to next centroid's offset or estimate
             long nextOffset = findNextOffset(offsets, c, fieldState);
             long postingBytes = nextOffset - offset;
-            probes[i] = new ProbedCentroid(c, offset, postingBytes, dists[c]);
+            probes[i] = new ProbeTarget(c, offset, postingBytes, dists[c]);
         }
         this.cursor = 0;
     }
@@ -68,7 +68,7 @@ public final class NearestProbeIterator implements ProbeIterator {
     }
 
     @Override
-    public ProbedCentroid next() {
+    public ProbeTarget next() {
         return probes[cursor++];
     }
 

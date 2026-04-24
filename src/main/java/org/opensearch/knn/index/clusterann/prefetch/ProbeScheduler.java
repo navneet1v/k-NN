@@ -9,11 +9,11 @@ import java.io.IOException;
 
 /**
  * Iterator over centroids to probe during IVF search.
- * Yields {@link ProbedCentroid} in visit order. Decorators can reorder
+ * Yields {@link ProbeTarget} in visit order. Decorators can reorder
  * or prefetch without changing the interface contract.
  */
-public interface ProbeIterator {
+public interface ProbeScheduler {
     boolean hasNext();
 
-    ProbedCentroid next() throws IOException;
+    ProbeTarget next() throws IOException;
 }
