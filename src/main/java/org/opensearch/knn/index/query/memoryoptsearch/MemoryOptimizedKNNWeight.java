@@ -25,12 +25,14 @@ import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.Version;
+import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.knn.index.query.MemoryOptimizedSearchScoreConverter;
+import org.opensearch.knn.index.query.searchstrategy.SimpleTopKAnnSearchStrategy;
 import org.opensearch.lucene.OptimisticKnnCollectorManager;
 import org.opensearch.lucene.ReentrantKnnCollectorManager;
 
@@ -54,6 +56,9 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
     @Setter
     private ReentrantKnnCollectorManager reentrantKNNCollectorManager;
 
+    // TODO: Fix this.
+    private final TopKnnCollectorManager topApproxKnnCollector;
+
     public MemoryOptimizedKNNWeight(KNNQuery query, float boost, final Weight filterWeight, IndexSearcher searcher, Integer k) {
         super(query, boost, filterWeight);
 
@@ -74,6 +79,7 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
                 visitLimit
             );
         }
+        topApproxKnnCollector = new TopKnnCollectorManager(k, searcher);
     }
 
     @Override
@@ -193,7 +199,15 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
         final KnnCollectorManager collectorManager = reentrantKNNCollectorManager != null
             ? reentrantKNNCollectorManager
             : knnCollectorManager;
-        final KnnCollector knnCollector = collectorManager.newCollector(visitedLimit, DEFAULT_HNSW_SEARCH_STRATEGY, context);
+
+        final KnnCollector knnCollector;
+        // TODO: Fix this. This is hack for now
+        if (FieldInfoExtractor.isClusterAnnIndex(context.reader().getFieldInfos().fieldInfo(knnQuery.getField()))) {
+            knnCollector = topApproxKnnCollector.newCollector(visitedLimit, SimpleTopKAnnSearchStrategy.INSTANCE, context);
+        } else {
+            knnCollector = collectorManager.newCollector(visitedLimit, DEFAULT_HNSW_SEARCH_STRATEGY, context);
+        }
+
         final AcceptDocs acceptDocs = getAcceptedDocs(reader, cardinality, filterIdsBitSet);
 
         // Start searching index

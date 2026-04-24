@@ -8,6 +8,7 @@ package org.opensearch.knn.index.query.nativelib;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -26,6 +27,7 @@ import org.apache.lucene.search.knn.TopKnnCollectorManager;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOSupplier;
 import org.opensearch.common.StopWatch;
+import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.query.KNNQuery;
@@ -333,8 +335,10 @@ public class NativeEngineKnnVectorQuery extends Query {
         // Execute search tasks
         final List<PerLeafResult> perLeafResults = indexSearcher.getTaskExecutor().invokeAll(tasks);
 
+        final FieldInfo fieldInfo = leafReaderContexts.get(0).reader().getFieldInfos().fieldInfo(knnQuery.getField());
         // For memory optimized search, it should kick off 2nd search if optimistic
-        if (knnQuery.isMemoryOptimizedSearch() && perLeafResults.size() > 1) {
+        // TODO : This is a hack, fix it.
+        if (knnQuery.isMemoryOptimizedSearch() && perLeafResults.size() > 1 && FieldInfoExtractor.isClusterAnnIndex(fieldInfo) == false) {
             log.debug(
                 "Running second deep dive search in optimistic while memory optimized search is enabled. perLeafResults.size()={}",
                 perLeafResults.size()
