@@ -64,10 +64,6 @@ public abstract class BaseQueryFactory {
             return Optional.ofNullable(filter);
         }
 
-        public Optional<QueryShardContext> getContext() {
-            return Optional.ofNullable(context);
-        }
-
         public Optional<RescoreContext> getRescoreContext() {
             return Optional.ofNullable(rescoreContext);
         }
@@ -88,8 +84,7 @@ public abstract class BaseQueryFactory {
             return null;
         }
 
-        final QueryShardContext queryShardContext = createQueryRequest.getContext()
-            .orElseThrow(() -> new RuntimeException("Shard context cannot be null"));
+        final QueryShardContext queryShardContext = createQueryRequest.getContext();
         log.debug(
             String.format(
                 "Creating query with filter for index [%s], field [%s]",

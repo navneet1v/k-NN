@@ -225,4 +225,17 @@ public class KNNVectorFieldType extends MappedFieldType {
         }
         throw new IllegalStateException("Either KNN method context or Model Id should be configured");
     }
+
+    /**
+     * Function to check if KNN query needs to be used for the field. If engine is not Lucene then we always need to use
+     * the KNNQuery otherwise we need to use the Lucene Query. We could have created a utility for this but moving it under
+     * fieldType ensures that all the field types can participate in the decision making. When we evolve KNN to be part
+     * of OpenSearch core this abstraction will come handy similar to existsQuery()
+     *
+     * @param knnEngine {@link KNNEngine}
+     * @return boolean indicating if KNN query needs to be used
+     */
+    public boolean useKNNQuery(KNNEngine knnEngine) {
+        return knnEngine != KNNEngine.LUCENE;
+    }
 }

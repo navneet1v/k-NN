@@ -19,11 +19,13 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.MemoryOptimizedSearchSupportSpec;
 import org.opensearch.knn.index.engine.faiss.SQConfig;
 import org.opensearch.knn.index.engine.faiss.SQConfigParser;
+import org.opensearch.knn.index.mapper.EngineLessMethod;
 import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 import org.opensearch.knn.indices.ModelMetadata;
 import org.opensearch.knn.indices.ModelUtil;
 
+import static org.opensearch.knn.common.KNNConstants.KNN_METHOD;
 import static org.opensearch.knn.common.KNNConstants.SQ_CONFIG;
 import static org.opensearch.knn.common.KNNConstants.MODEL_ID;
 import static org.opensearch.knn.indices.ModelUtil.getModelMetadata;
@@ -201,5 +203,9 @@ public class FieldInfoExtractor {
             return SQConfig.EMPTY;
         }
         return SQConfigParser.fromCsv(configString);
+    }
+
+    public static boolean isClusterAnnIndex(final FieldInfo fieldInfo) {
+        return KNNConstants.METHOD_CLUSTER.equals(EngineLessMethod.fromName(fieldInfo.getAttribute(KNN_METHOD)).getName());
     }
 }
