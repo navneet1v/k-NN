@@ -6,9 +6,11 @@
 package org.opensearch.knn.index.codec.KNN1040Codec;
 
 import org.apache.lucene.util.VectorUtil;
+import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.KNNTestCase;
-
+import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import java.util.Random;
+import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 
 /**
  * Tests for multi-bit quantization packing and dot product methods.
@@ -22,22 +24,22 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     // ========== Packing Size ==========
 
     public void testPackedBytesPerVector_1bit() {
-        assertEquals(16, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(128, 1));
-        assertEquals(4, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(32, 1));
-        assertEquals(1, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(8, 1));
-        assertEquals(1, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(1, 1));
+        assertEquals(16, QuantizedVectorWriter.packedBytesPerVector(128, 1));
+        assertEquals(4, QuantizedVectorWriter.packedBytesPerVector(32, 1));
+        assertEquals(1, QuantizedVectorWriter.packedBytesPerVector(8, 1));
+        assertEquals(1, QuantizedVectorWriter.packedBytesPerVector(1, 1));
     }
 
     public void testPackedBytesPerVector_2bit() {
-        assertEquals(32, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(128, 2));
-        assertEquals(8, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(32, 2));
-        assertEquals(2, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(8, 2));
+        assertEquals(32, QuantizedVectorWriter.packedBytesPerVector(128, 2));
+        assertEquals(8, QuantizedVectorWriter.packedBytesPerVector(32, 2));
+        assertEquals(2, QuantizedVectorWriter.packedBytesPerVector(8, 2));
     }
 
     public void testPackedBytesPerVector_4bit() {
-        assertEquals(64, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(128, 4));
-        assertEquals(16, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(32, 4));
-        assertEquals(4, ClusterANN1040KnnVectorsWriter.packedBytesPerVector(8, 4));
+        assertEquals(64, QuantizedVectorWriter.packedBytesPerVector(128, 4));
+        assertEquals(16, QuantizedVectorWriter.packedBytesPerVector(32, 4));
+        assertEquals(4, QuantizedVectorWriter.packedBytesPerVector(8, 4));
     }
 
     // ========== 1-bit Pack + Dot Product ==========
@@ -47,14 +49,14 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         for (int i = 0; i < 8; i++)
             raw[i] = 1;
         byte[] packed = new byte[1];
-        ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 8);
+        OptimizedScalarQuantizer.packAsBinary(raw, packed);
         assertEquals((byte) 0xFF, packed[0]); // all bits set MSB-first
     }
 
     public void testPackAsBinary_alternating() {
         byte[] raw = new byte[] { 1, 0, 1, 0, 1, 0, 1, 0 };
         byte[] packed = new byte[1];
-        ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 8);
+        OptimizedScalarQuantizer.packAsBinary(raw, packed);
         assertEquals((byte) 0xAA, packed[0]); // 10101010
     }
 
@@ -93,7 +95,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         for (int i = 0; i < 8; i++)
             raw[i] = 3;
         byte[] packed = new byte[2]; // 2 stripes of 1 byte each
-        ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 8);
+        OptimizedScalarQuantizer.transposeDibit(raw, packed);
         assertEquals((byte) 0xFF, packed[0]); // lower bits all 1
         assertEquals((byte) 0xFF, packed[1]); // upper bits all 1
     }
@@ -104,7 +106,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         // 2 = binary 10 (lower=0, upper=1)
         byte[] raw = new byte[] { 1, 2, 1, 2, 1, 2, 1, 2 };
         byte[] packed = new byte[2];
-        ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 8);
+        OptimizedScalarQuantizer.transposeDibit(raw, packed);
         assertEquals((byte) 0xAA, packed[0]); // lower: 10101010
         assertEquals((byte) 0x55, packed[1]); // upper: 01010101
     }
@@ -136,7 +138,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         for (int i = 0; i < 8; i++)
             raw[i] = 15;
         byte[] packed = new byte[4]; // 4 stripes of 1 byte
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(raw, packed, 8);
+        OptimizedScalarQuantizer.transposeHalfByte(raw, packed);
         for (int s = 0; s < 4; s++) {
             assertEquals("Stripe " + s + " should be all 1s", (byte) 0xFF, packed[s]);
         }
@@ -148,7 +150,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         for (int i = 0; i < 8; i++)
             raw[i] = 5;
         byte[] packed = new byte[4];
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(raw, packed, 8);
+        OptimizedScalarQuantizer.transposeHalfByte(raw, packed);
         assertEquals((byte) 0xFF, packed[0]); // bit0 stripe
         assertEquals((byte) 0x00, packed[1]); // bit1 stripe
         assertEquals((byte) 0xFF, packed[2]); // bit2 stripe
@@ -164,7 +166,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
             docTransposed[i] = (byte) 0xFF;
         }
 
-        long dot = TwoPhaseClusterANNScorer.int4NibbleDotProduct(queryTransposed, docTransposed);
+        long dot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, docTransposed);
         // Per byte position: sum of all 16 cross-products with 8 bits each
         // = 8*(1+2+4+8+2+4+8+16+4+8+16+32+8+16+32+64) = 8*225 = 1800
         assertEquals(1800L, dot);
@@ -173,7 +175,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testInt4NibbleDotProduct_zeros() {
         byte[] queryTransposed = new byte[4];
         byte[] docTransposed = new byte[4];
-        long dot = TwoPhaseClusterANNScorer.int4NibbleDotProduct(queryTransposed, docTransposed);
+        long dot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, docTransposed);
         assertEquals(0L, dot);
     }
 
@@ -189,12 +191,12 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         }
 
         // Pack
-        byte[] packedDoc = new byte[ClusterANN1040KnnVectorsWriter.packedBytesPerVector(DIM, 1)];
-        ClusterANN1040KnnVectorsWriter.packAsBinary(rawDoc, packedDoc, DIM);
+        byte[] packedDoc = new byte[QuantizedVectorWriter.packedBytesPerVector(DIM, 1)];
+        OptimizedScalarQuantizer.packAsBinary(rawDoc, packedDoc);
 
         int stripeSize = (DIM + 7) / 8;
         byte[] queryTransposed = new byte[stripeSize * 4];
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawQuery, queryTransposed, DIM);
+        OptimizedScalarQuantizer.transposeHalfByte(rawQuery, queryTransposed);
 
         // Dot product via bit manipulation
         long bitDot = VectorUtil.int4BitDotProduct(queryTransposed, packedDoc);
@@ -218,12 +220,12 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         }
 
         // Pack
-        byte[] packedDoc = new byte[ClusterANN1040KnnVectorsWriter.packedBytesPerVector(DIM, 2)];
-        ClusterANN1040KnnVectorsWriter.transposeDibit(rawDoc, packedDoc, DIM);
+        byte[] packedDoc = new byte[QuantizedVectorWriter.packedBytesPerVector(DIM, 2)];
+        OptimizedScalarQuantizer.transposeDibit(rawDoc, packedDoc);
 
         int stripeSize = (DIM + 7) / 8;
         byte[] queryTransposed = new byte[stripeSize * 4];
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawQuery, queryTransposed, DIM);
+        OptimizedScalarQuantizer.transposeHalfByte(rawQuery, queryTransposed);
 
         // Dot product via bit manipulation
         long bitDot = VectorUtil.int4DibitDotProduct(queryTransposed, packedDoc);
@@ -249,13 +251,13 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         // Pack
         int stripeSize = (DIM + 7) / 8;
         byte[] packedDoc = new byte[stripeSize * 4];
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawDoc, packedDoc, DIM);
+        OptimizedScalarQuantizer.transposeHalfByte(rawDoc, packedDoc);
 
         byte[] queryTransposed = new byte[stripeSize * 4];
-        ClusterANN1040KnnVectorsWriter.transposeHalfByte(rawQuery, queryTransposed, DIM);
+        OptimizedScalarQuantizer.transposeHalfByte(rawQuery, queryTransposed);
 
         // Dot product via bit manipulation
-        long bitDot = TwoPhaseClusterANNScorer.int4NibbleDotProduct(queryTransposed, packedDoc);
+        long bitDot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, packedDoc);
 
         // Brute force reference
         long expected = 0;
@@ -290,7 +292,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         for (int i = 0; i < 13; i++)
             raw[i] = 1;
         byte[] packed = new byte[2]; // (13+7)/8 = 2
-        ClusterANN1040KnnVectorsWriter.packAsBinary(raw, packed, 13);
+        OptimizedScalarQuantizer.packAsBinary(raw, packed);
         assertEquals((byte) 0xFF, packed[0]); // first 8 bits
         assertEquals((byte) 0xF8, packed[1]); // 5 bits set: 11111000
     }
@@ -299,7 +301,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         // 5 dimensions
         byte[] raw = new byte[] { 3, 3, 3, 3, 3 };
         byte[] packed = new byte[2]; // (5+7)/8 * 2 = 2
-        ClusterANN1040KnnVectorsWriter.transposeDibit(raw, packed, 5);
+        OptimizedScalarQuantizer.transposeDibit(raw, packed);
         // 5 bits set MSB-first: 11111000 = 0xF8
         assertEquals((byte) 0xF8, packed[0]);
         assertEquals((byte) 0xF8, packed[1]);

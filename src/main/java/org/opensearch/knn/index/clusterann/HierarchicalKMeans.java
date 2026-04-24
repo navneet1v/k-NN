@@ -21,7 +21,7 @@ import java.util.stream.IntStream;
  *
  * <p>Key differences from other implementations:
  * <ul>
- *   <li>ScaNN-inspired: learned split threshold (1.5× target, not 1.34×)</li>
+ *   <li>ScaNN-inspired: learned split threshold (1.5× target)</li>
  *   <li>Reservoir sampling init at every level (no k-means++ overhead)</li>
  *   <li>Balanced splitting: oversized clusters get sub-k proportional to their excess</li>
  *   <li>Single code path for all dataset sizes</li>

@@ -76,7 +76,9 @@ public interface EngineLessMethod {
     static void register(EngineLessMethod method) {
         if (REGISTRY.containsKey(method.getName())) {
             throw new IllegalStateException(
-                "Engine-less method '" + method.getName() + "' is already registered by "
+                "Engine-less method '"
+                    + method.getName()
+                    + "' is already registered by "
                     + REGISTRY.get(method.getName()).getClass().getName()
             );
         }

@@ -21,66 +21,45 @@ import org.apache.lucene.search.AcceptDocs;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
-import org.opensearch.knn.index.clusterann.DistanceMetric;
-import org.opensearch.knn.index.util.WarmupUtil;
-import org.opensearch.knn.index.warmup.WarmableReader;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.*;
+
 /**
- * Reader for the ClusterANN IVF format. Performs cluster-based approximate nearest neighbor
- * search by probing a subset of centroids and scanning their posting lists.
+ * Reader for ClusterANN IVF format v2.
  *
- * <p>Search flow:
- * <ol>
- *   <li>Find nprobe nearest centroids to the query</li>
- *   <li>For each probed centroid, read primary + SOAR posting lists</li>
- *   <li>Score candidates using RandomVectorScorer (exact) or TwoPhaseClusterANNScorer (ADC)</li>
- *   <li>Collect results into {@link KnnCollector}</li>
- * </ol>
- *
- * <p>Scoring paths:
- * <ul>
- *   <li>{@link RandomVectorScorer} — full-precision with native SIMD via bulkScore()</li>
- *   <li>{@link TwoPhaseClusterANNScorer} — ADC first pass + exact rescore</li>
- * </ul>
+ * <p>Search uses a composable probe pipeline:
+ * {@link NearestProbeIterator} → {@link SequentialProbeIterator} → {@link PrefetchingProbeIterator}
+ * feeding a {@link ClusterANNPostingVisitor}.
  */
 @Log4j2
-public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements WarmableReader {
+public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
     private final FlatVectorsReader flatVectorsReader;
     private final Map<Integer, ClusterANNFieldState> fieldStates;
     private final Map<String, Integer> fieldNameToNumber;
     private final FieldInfos fieldInfos;
 
-    // Index file inputs (kept open for the lifetime of the reader)
-    private final IndexInput centroidsInput;
+    private final IndexInput metaInput;
     private final IndexInput postingsInput;
-    private final IndexInput quantizedInput;
 
     public ClusterANN1040KnnVectorsReader(FlatVectorsReader flatVectorsReader, SegmentReadState state) throws IOException {
         this.flatVectorsReader = flatVectorsReader;
 
         boolean success = false;
         IndexInput metaIn = null;
-        IndexInput centIn = null;
         IndexInput postIn = null;
-        IndexInput quantIn = null;
         try {
-            metaIn = openInput(state, ClusterANN1040KnnVectorsWriter.META_EXTENSION);
-            centIn = openInput(state, ClusterANN1040KnnVectorsWriter.CENTROIDS_EXTENSION);
-            postIn = openInput(state, ClusterANN1040KnnVectorsWriter.POSTINGS_EXTENSION);
-            quantIn = openInput(state, ClusterANN1040KnnVectorsWriter.QUANTIZED_EXTENSION);
+            metaIn = openInput(state, META_EXTENSION);
+            postIn = openInput(state, POSTINGS_EXTENSION);
 
             this.fieldStates = ClusterANNFieldState.readAll(metaIn, state);
 
-            // Build field name → number mapping
             this.fieldNameToNumber = new HashMap<>();
             for (FieldInfo fi : state.fieldInfos) {
                 if (fieldStates.containsKey(fi.number)) {
@@ -88,16 +67,13 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
                 }
             }
 
-            this.centroidsInput = centIn;
+            this.metaInput = metaIn;
             this.postingsInput = postIn;
-            this.quantizedInput = quantIn;
             this.fieldInfos = state.fieldInfos;
             success = true;
         } finally {
             if (!success) {
-                IOUtils.closeWhileHandlingException(metaIn, centIn, postIn, quantIn, flatVectorsReader);
-            } else if (metaIn != null) {
-                metaIn.close(); // meta fully read, no longer needed
+                IOUtils.closeWhileHandlingException(metaIn, postIn, flatVectorsReader);
             }
         }
 
@@ -125,286 +101,96 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
         ClusterANNFieldState fieldState = fieldNumber != null ? fieldStates.get(fieldNumber) : null;
 
         if (fieldState == null || fieldState.isEmpty()) {
-            // No IVF index — fall back to brute force
             bruteForceSearch(field, target, knnCollector, acceptDocs);
             return;
         }
 
-        // Ensure centroids and posting offsets are loaded
-        fieldState.ensureCentroidsLoaded(centroidsInput);
-        fieldState.ensurePostingOffsetsLoaded(postingsInput);
-
-        // #9 fix: clone IndexInputs for thread safety (each search gets independent seek position)
-        IndexInput postingsClone = postingsInput.clone();
-        IndexInput quantizedClone = quantizedInput != null ? quantizedInput.clone() : null;
+        fieldState.ensureLoaded(metaInput);
 
         int k = knnCollector.k();
-        int[] nprobeOut = new int[1];
-        int[] nearestCentroids = findNearestCentroids(
-            target,
-            fieldState.centroids,
-            fieldState.numCentroids,
-            fieldState.metric,
-            k,
-            nprobeOut
-        );
-        int nprobe = nprobeOut[0];
+        IndexInput postingsClone = postingsInput.clone();
 
-        // Create scorer
+        // Build probe pipeline: Nearest → Sequential → Prefetching
+        ProbeIterator probes = new NearestProbeIterator(target, fieldState, k);
+        probes = new SequentialProbeIterator(probes);
+        probes = new PrefetchingProbeIterator(probes, postingsClone);
+
+        // Build scorers
         RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
         if (exactScorer == null) return;
 
         VectorSimilarityFunction simFunc = getSimFunc(field);
-        boolean useADC = fieldState.docBits > 0 && quantizedInput != null && fieldState.numVectors > 32;
+        boolean useADC = fieldState.docBits > 0 && fieldState.numVectors > MIN_ADC_VECTORS;
 
-        TwoPhaseClusterANNScorer adcScorer = null;
+        QuantizedVectorReader adcReader = null;
         if (useADC) {
-            adcScorer = new TwoPhaseClusterANNScorer(exactScorer, quantizedInput, fieldState, simFunc, target, k);
+            adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, target, k);
         }
 
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         BitSet visited = new BitSet(fieldState.numVectors);
 
-        // Pipelined prefetch
-        boolean nativeScoring = adcScorer != null && adcScorer.isNativeScoring();
-        PipelinedPrefetcher prefetcher = new PipelinedPrefetcher(
+        // Build visitor
+        PostingVisitor visitor = new ClusterANNPostingVisitor(
             postingsClone,
-            useADC ? quantizedInput : null,
-            nearestCentroids,
-            fieldState.primaryPostingOffsets,
-            fieldState.soarPostingOffsets,
-            fieldState.quantizedOffset,
-            useADC ? ScalarBitEncoding.fromDocBits(fieldState.docBits).recordBytes(fieldState.dimension) : 0,
-            fieldState.numVectors,
-            fieldState.numCentroids,
-            nativeScoring
+            fieldState,
+            exactScorer,
+            adcReader,
+            target,
+            acceptBits,
+            visited,
+            useADC
         );
 
-        // Reusable batch buffers — sized to max posting list
-        int maxPostingSize = 256;
-        int[] batchOrds = new int[maxPostingSize];
-        float[] batchScores = new float[maxPostingSize];
-        float[] centroidBuffer = new float[fieldState.dimension];
-
-        for (int i = 0; i < nprobe; i++) {
-            prefetcher.advanceTo(i);
-            int centId = nearestCentroids[i];
-
-            postingsClone.seek(fieldState.primaryPostingOffsets[centId]);
-            int[] primaryDocIds = PostingListCodec.read(postingsClone);
-            if (primaryDocIds.length > maxPostingSize) {
-                maxPostingSize = primaryDocIds.length;
-                batchOrds = new int[maxPostingSize];
-                batchScores = new float[maxPostingSize];
-            }
-            scanPostingList(
-                primaryDocIds,
-                exactScorer,
-                adcScorer,
-                prefetcher,
-                fieldState,
-                centId,
-                target,
-                acceptBits,
-                visited,
-                knnCollector,
-                useADC,
-                centroidBuffer,
-                batchOrds,
-                batchScores
-            );
-
-            if (knnCollector.earlyTerminated()) break;
-
-            postingsClone.seek(fieldState.soarPostingOffsets[centId]);
-            int[] soarDocIds = PostingListCodec.read(postingsClone);
-            if (soarDocIds.length > maxPostingSize) {
-                maxPostingSize = soarDocIds.length;
-                batchOrds = new int[maxPostingSize];
-                batchScores = new float[maxPostingSize];
-            }
-            scanPostingList(
-                soarDocIds,
-                exactScorer,
-                adcScorer,
-                prefetcher,
-                fieldState,
-                centId,
-                target,
-                acceptBits,
-                visited,
-                knnCollector,
-                useADC,
-                centroidBuffer,
-                batchOrds,
-                batchScores
-            );
-
+        // Visit loop
+        while (probes.hasNext()) {
+            ProbedCentroid probe = probes.next();
+            visitor.reset(probe);
+            visitor.visit(knnCollector);
             if (knnCollector.earlyTerminated()) break;
         }
 
-        // Two-phase: rescore top ADC candidates
-        if (adcScorer != null) {
-            adcScorer.finish(knnCollector);
+        // ADC rescore
+        if (adcReader != null) {
+            adcReader.finish(knnCollector);
         }
     }
 
     @Override
     public void search(String field, byte[] target, KnnCollector knnCollector, AcceptDocs acceptDocs) throws IOException {
-        // Byte vector search: delegate to brute force via flat reader
         RandomVectorScorer byteScorer = flatVectorsReader.getRandomVectorScorer(field, target);
         if (byteScorer == null) return;
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
-        for (int ord = 0; ord < byteScorer.maxOrd(); ord++) {
+        int maxOrd = byteScorer.maxOrd();
+        int[] ords = new int[Math.min(maxOrd, 256)];
+        float[] scores = new float[ords.length];
+        int count = 0;
+        for (int ord = 0; ord < maxOrd; ord++) {
             int docId = byteScorer.ordToDoc(ord);
             if (acceptBits != null && !acceptBits.get(docId)) continue;
-            knnCollector.collect(docId, byteScorer.score(ord));
-            knnCollector.incVisitedCount(1);
-        }
-    }
-
-    @Override
-    public void warmUp(String fieldName) throws IOException {
-        // Warm centroids into memory
-        Integer fieldNumber = fieldNameToNumber.get(fieldName);
-        if (fieldNumber != null) {
-            ClusterANNFieldState state = fieldStates.get(fieldNumber);
-            if (state != null && !state.isEmpty()) {
-                state.ensureCentroidsLoaded(centroidsInput);
+            ords[count++] = ord;
+            if (count == ords.length) {
+                byteScorer.bulkScore(ords, scores, count);
+                for (int j = 0; j < count; j++)
+                    knnCollector.collect(byteScorer.ordToDoc(ords[j]), scores[j]);
+                knnCollector.incVisitedCount(count);
+                count = 0;
             }
         }
-        // Warm flat vectors
-        FloatVectorValues values = flatVectorsReader.getFloatVectorValues(fieldName);
-        if (values != null) {
-            WarmupUtil.readAll(values);
+        if (count > 0) {
+            byteScorer.bulkScore(ords, scores, count);
+            for (int j = 0; j < count; j++)
+                knnCollector.collect(byteScorer.ordToDoc(ords[j]), scores[j]);
+            knnCollector.incVisitedCount(count);
         }
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsReader, centroidsInput, postingsInput, quantizedInput);
+        IOUtils.close(flatVectorsReader, metaInput, postingsInput);
     }
 
-    // ========== Private: Posting List Scanning ==========
-
-    private void scanPostingList(
-        int[] ordinals,
-        RandomVectorScorer exactScorer,
-        TwoPhaseClusterANNScorer adcScorer,
-        PipelinedPrefetcher prefetcher,
-        ClusterANNFieldState fieldState,
-        int centroidIdx,
-        float[] target,
-        Bits acceptBits,
-        BitSet visited,
-        KnnCollector knnCollector,
-        boolean useADC,
-        float[] centroidBuffer,
-        int[] batchOrds,
-        float[] batchScores
-    ) throws IOException {
-        if (ordinals.length == 0) return;
-
-        if (useADC && adcScorer != null) {
-            System.arraycopy(fieldState.centroids[centroidIdx], 0, centroidBuffer, 0, fieldState.dimension);
-
-            int validCount = 0;
-            for (int ord : ordinals) {
-                int doc = exactScorer.ordToDoc(ord);
-                if (visited.get(doc)) continue;
-                visited.set(doc);
-                if (acceptBits != null && !acceptBits.get(doc)) continue;
-                batchOrds[validCount++] = ord;
-            }
-
-            if (validCount > 0) {
-                prefetcher.prefetchQuantized(batchOrds, validCount);
-                float centroidDp = 0f;
-                if (adcScorer.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
-                    centroidDp = VectorUtil.dotProduct(target, centroidBuffer);
-                }
-                adcScorer.scoreADCBatch(batchOrds, validCount, centroidIdx, centroidBuffer, centroidDp);
-                knnCollector.incVisitedCount(validCount);
-            }
-        } else {
-            int batchCount = 0;
-            for (int ord : ordinals) {
-                int doc = exactScorer.ordToDoc(ord);
-                if (visited.get(doc)) continue;
-                visited.set(doc);
-                if (acceptBits != null && !acceptBits.get(doc)) continue;
-                batchOrds[batchCount++] = ord;
-            }
-
-            if (batchCount > 0) {
-                exactScorer.bulkScore(batchOrds, batchScores, batchCount);
-                float minCompetitive = knnCollector.minCompetitiveSimilarity();
-                for (int i = 0; i < batchCount; i++) {
-                    if (batchScores[i] > minCompetitive) {
-                        int doc = exactScorer.ordToDoc(batchOrds[i]);
-                        knnCollector.collect(doc, batchScores[i]);
-                    }
-                }
-                knnCollector.incVisitedCount(batchCount);
-            }
-        }
-    }
-
-    // ========== Private: Centroid Selection ==========
-
-    /**
-     * Adaptive nprobe: distance-based cutoff. Probes centroids until the distance gap
-     * between consecutive centroids exceeds a threshold, or min/max bounds are hit.
-     * More principled than a fixed heuristic — adapts to actual cluster geometry.
-     */
-    private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {
-        if (numCentroids <= 10) return numCentroids;
-        int minProbe = Math.max(1, (int) Math.sqrt(k));
-        int maxProbe = Math.min(numCentroids, Math.max(10, numCentroids / 4));
-
-        // Distance-based cutoff: stop when next centroid is >2x farther than the nearest
-        float nearestDist = sortedDists[0];
-        float cutoff = Math.max(nearestDist * 4f, 1e-6f);
-        int nprobe = minProbe;
-        for (int i = minProbe; i < maxProbe; i++) {
-            if (sortedDists[i] > cutoff) break;
-            nprobe = i + 1;
-        }
-        return nprobe;
-    }
-
-    private static int[] findNearestCentroids(
-        float[] query,
-        float[][] centroids,
-        int numCentroids,
-        DistanceMetric metric,
-        int k,
-        int[] nprobeOut
-    ) {
-        float[] dists = new float[numCentroids];
-        Integer[] indices = new Integer[numCentroids];
-        for (int c = 0; c < numCentroids; c++) {
-            dists[c] = metric.distance(query, centroids[c]);
-            indices[c] = c;
-        }
-
-        Arrays.sort(indices, (a, b) -> Float.compare(dists[a], dists[b]));
-
-        float[] sortedDists = new float[numCentroids];
-        for (int i = 0; i < numCentroids; i++) {
-            sortedDists[i] = dists[indices[i]];
-        }
-
-        int nprobe = calculateNprobe(sortedDists, numCentroids, k);
-        nprobeOut[0] = nprobe;
-        int[] result = new int[nprobe];
-        for (int i = 0; i < nprobe; i++) {
-            result[i] = indices[i];
-        }
-        return result;
-    }
-
-    // ========== Private: Brute Force Fallback ==========
+    // ========== Brute Force Fallback ==========
 
     private void bruteForceSearch(String field, float[] target, KnnCollector knnCollector, AcceptDocs acceptDocs) throws IOException {
         RandomVectorScorer scorer = flatVectorsReader.getRandomVectorScorer(field, target);
@@ -420,32 +206,30 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader implements 
             ords[count++] = ord;
             if (count == ords.length) {
                 scorer.bulkScore(ords, scores, count);
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < count; i++)
                     knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
-                }
                 knnCollector.incVisitedCount(count);
                 count = 0;
             }
         }
         if (count > 0) {
             scorer.bulkScore(ords, scores, count);
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < count; i++)
                 knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
-            }
             knnCollector.incVisitedCount(count);
         }
     }
 
-    // ========== Private: Helpers ==========
+    // ========== Helpers ==========
 
     private IndexInput openInput(SegmentReadState state, String extension) throws IOException {
         String fileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, extension);
         IndexInput input = state.directory.openInput(fileName, state.context);
         CodecUtil.checkIndexHeader(
             input,
-            ClusterANN1040KnnVectorsWriter.CODEC_NAME,
-            ClusterANN1040KnnVectorsWriter.VERSION_START,
-            ClusterANN1040KnnVectorsWriter.VERSION_CURRENT,
+            CODEC_NAME,
+            ClusterANNFormatConstants.VERSION_START,
+            ClusterANNFormatConstants.VERSION_CURRENT,
             state.segmentInfo.getId(),
             state.segmentSuffix
         );
