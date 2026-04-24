@@ -5,31 +5,33 @@
 
 package org.opensearch.knn.index.clusterann.prefetch;
 
-import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
-import org.opensearch.knn.index.clusterann.*;
-import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
-import org.opensearch.knn.index.clusterann.*;
+import org.apache.lucene.search.KnnCollector;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 /**
- * Yields the nprobe nearest centroids with adaptive cutoff.
- * Computes distances once, sorts, and determines nprobe from the distance distribution.
+ * Core search stage: selects nearest centroids and scans them.
+ *
+ * <p>Computes distances to all centroids, determines adaptive nprobe from
+ * the distance distribution, then scans each centroid via the scanner.
  */
 public final class NearestProbeScheduler implements ProbeScheduler {
 
     private final ProbeTarget[] probes;
     private final int nprobe;
-    private int cursor;
+    private final ClusterANNCentroidScanner scanner;
 
-    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k) {
+    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k, ClusterANNCentroidScanner scanner) {
+        this.scanner = scanner;
         float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
         int numCentroids = fieldState.numCentroids;
         DistanceMetric metric = fieldState.metric;
 
-        // Compute distances
         float[] dists = new float[numCentroids];
         Integer[] indices = new Integer[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
@@ -38,51 +40,49 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         }
         Arrays.sort(indices, (a, b) -> Float.compare(dists[a], dists[b]));
 
-        // Adaptive nprobe
         float[] sortedDists = new float[numCentroids];
         for (int i = 0; i < numCentroids; i++) {
             sortedDists[i] = dists[indices[i]];
         }
         this.nprobe = calculateNprobe(sortedDists, numCentroids, k);
 
-        // Build probes with posting size from offset table
         this.probes = new ProbeTarget[nprobe];
         for (int i = 0; i < nprobe; i++) {
             int c = indices[i];
             long offset = offsets[c];
-            // Posting size: distance to next centroid's offset or estimate
-            long nextOffset = findNextOffset(offsets, c, fieldState);
-            long postingBytes = nextOffset - offset;
-            probes[i] = new ProbeTarget(c, offset, postingBytes, dists[c]);
+            long nextOffset = findNextOffset(offsets, c);
+            probes[i] = new ProbeTarget(c, offset, nextOffset - offset, dists[c]);
         }
-        this.cursor = 0;
+    }
+
+    @Override
+    public int execute(KnnCollector collector) throws IOException {
+        int totalScored = 0;
+        for (int i = 0; i < nprobe; i++) {
+            scanner.prepare(probes[i]);
+            totalScored += scanner.scan(collector);
+            if (collector.earlyTerminated()) break;
+        }
+        return totalScored;
+    }
+
+    /** Exposed for wrapping stages that need the probe list. */
+    ProbeTarget[] probes() {
+        return probes;
     }
 
     int nprobe() {
         return nprobe;
     }
 
-    @Override
-    public boolean hasNext() {
-        return cursor < nprobe;
-    }
-
-    @Override
-    public ProbeTarget next() {
-        return probes[cursor++];
-    }
-
-    private static long findNextOffset(long[] offsets, int centroidIdx, ClusterANNFieldState fieldState) {
-        // Find the smallest offset that is greater than offsets[centroidIdx]
+    private static long findNextOffset(long[] offsets, int centroidIdx) {
         long thisOffset = offsets[centroidIdx];
         long minNext = Long.MAX_VALUE;
-        for (int i = 0; i < offsets.length; i++) {
-            if (offsets[i] > thisOffset && offsets[i] < minNext) {
-                minNext = offsets[i];
+        for (long offset : offsets) {
+            if (offset > thisOffset && offset < minNext) {
+                minNext = offset;
             }
         }
-        // If this is the last centroid by offset, estimate from postingsOffset context
-        // Use a reasonable upper bound
         return minNext == Long.MAX_VALUE ? thisOffset + 1024 * 1024 : minNext;
     }
 

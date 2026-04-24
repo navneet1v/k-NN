@@ -114,13 +114,6 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
 
-        // Build probe pipeline: Nearest → Filter → Sequential → Prefetch → Budget
-        ProbeScheduler probes = new NearestProbeScheduler(target, fieldState, k);
-        probes = new FilterAwareProbeScheduler(probes, fieldState.centroidDocCounts, fieldState.numVectors, filterCost);
-        probes = new SequentialProbeScheduler(probes);
-        probes = new ReadAheadProbeScheduler(probes, postingsClone);
-        BudgetedProbeScheduler budgeted = new BudgetedProbeScheduler(probes, knnCollector, fieldState.numVectors, k);
-
         // Build scorers
         RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
         if (exactScorer == null) return;
@@ -135,7 +128,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         BitSet visited = new BitSet(fieldState.numVectors);
 
-        CentroidScanner visitor = new ClusterANNCentroidScanner(
+        ClusterANNCentroidScanner scanner = new ClusterANNCentroidScanner(
             postingsClone,
             fieldState,
             exactScorer,
@@ -146,14 +139,18 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             useADC
         );
 
-        // Visit loop with budget tracking
-        while (budgeted.hasNext()) {
-            ProbeTarget probe = budgeted.next();
-            visitor.prepare(probe);
-            int scored = visitor.scan(knnCollector);
-            budgeted.recordVisit(fieldState.centroidDocCounts[probe.centroidIdx()], scored);
-            if (knnCollector.earlyTerminated()) break;
-        }
+        // Build and execute search pipeline (push-based, single execute() call)
+        NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, k, scanner);
+        OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
+            nearest,
+            scanner,
+            postingsClone,
+            fieldState.centroidDocCounts,
+            fieldState.numVectors,
+            k,
+            filterCost
+        );
+        pipeline.execute(knnCollector);
 
         if (adcReader != null) {
             adcReader.finish(knnCollector);

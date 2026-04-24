@@ -22,7 +22,7 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  * Reads one centroid's columnar posting data (primary + SOAR), filters, scores, collects.
  * Quantized section uses block-columnar layout (BLOCK_SIZE=32) for SIMD scoring.
  */
-public final class ClusterANNCentroidScanner implements CentroidScanner {
+public final class ClusterANNCentroidScanner {
 
     private final IndexInput postingsInput;
     private final ClusterANNFieldState fieldState;
@@ -66,14 +66,12 @@ public final class ClusterANNCentroidScanner implements CentroidScanner {
             : 0;
     }
 
-    @Override
     public int prepare(ProbeTarget centroid) throws IOException {
         this.centroidIdx = centroid.centroidIdx();
         postingsInput.seek(centroid.fileOffset());
         return 0;
     }
 
-    @Override
     public int scan(KnnCollector collector) throws IOException {
         int totalScored = 0;
         totalScored += scanOnePosting(collector);
