@@ -95,22 +95,14 @@ public final class QuantizedVectorWriter implements Closeable {
                 quantizeOne(vec, centroidCopy, blockCodes[j], j);
             }
 
-            // Write columnar: codes, then corrections
+            // Write columnar: codes (one bulk read), then corrections (bulk each)
             for (int j = 0; j < blockSize; j++) {
                 output.writeBytes(blockCodes[j], 0, packedBytes);
             }
-            for (int j = 0; j < blockSize; j++) {
-                output.writeInt(Float.floatToIntBits(blockLower[j]));
-            }
-            for (int j = 0; j < blockSize; j++) {
-                output.writeInt(Float.floatToIntBits(blockUpper[j]));
-            }
-            for (int j = 0; j < blockSize; j++) {
-                output.writeInt(Float.floatToIntBits(blockAdd[j]));
-            }
-            for (int j = 0; j < blockSize; j++) {
-                output.writeInt(blockSum[j]);
-            }
+            writeFloats(output, blockLower, blockSize);
+            writeFloats(output, blockUpper, blockSize);
+            writeFloats(output, blockAdd, blockSize);
+            writeInts(output, blockSum, blockSize);
 
             pos += blockSize;
         }
@@ -146,6 +138,16 @@ public final class QuantizedVectorWriter implements Closeable {
     @FunctionalInterface
     public interface VectorSupplier {
         float[] get(int ordinal) throws IOException;
+    }
+
+    private static void writeFloats(IndexOutput out, float[] values, int count) throws IOException {
+        for (int i = 0; i < count; i++)
+            out.writeInt(Float.floatToIntBits(values[i]));
+    }
+
+    private static void writeInts(IndexOutput out, int[] values, int count) throws IOException {
+        for (int i = 0; i < count; i++)
+            out.writeInt(values[i]);
     }
 
     private static void normalize(float[] vec) {

@@ -54,6 +54,7 @@ public final class QuantizedVectorReader {
     private final byte[] transposedBuffer;
 
     // Block read buffers
+    private final byte[] flatCodesBuf;
     private final byte[][] blockCodes;
     private final float[] blockLower;
     private final float[] blockUpper;
@@ -92,6 +93,7 @@ public final class QuantizedVectorReader {
         this.queryCopy = new float[fieldState.dimension];
         this.transposedBuffer = new byte[((fieldState.dimension + 7) / 8) * 4];
 
+        this.flatCodesBuf = new byte[BLOCK_SIZE * packedBytes];
         this.blockCodes = new byte[BLOCK_SIZE][packedBytes];
         this.blockLower = new float[BLOCK_SIZE];
         this.blockUpper = new float[BLOCK_SIZE];
@@ -144,20 +146,17 @@ public final class QuantizedVectorReader {
 
         ensureQueryQuantized(centroid);
 
-        // Read codes (contiguous)
+        // Read all codes in one bulk read, then slice per vector
+        input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
         for (int j = 0; j < blockSize; j++) {
-            input.readBytes(blockCodes[j], 0, packedBytes);
+            System.arraycopy(flatCodesBuf, j * packedBytes, blockCodes[j], 0, packedBytes);
         }
 
-        // Read corrections in bulk
-        for (int j = 0; j < blockSize; j++)
-            blockLower[j] = Float.intBitsToFloat(input.readInt());
-        for (int j = 0; j < blockSize; j++)
-            blockUpper[j] = Float.intBitsToFloat(input.readInt());
-        for (int j = 0; j < blockSize; j++)
-            blockAdd[j] = Float.intBitsToFloat(input.readInt());
-        for (int j = 0; j < blockSize; j++)
-            blockSum[j] = input.readInt();
+        // Read corrections in bulk (4 reads instead of 128)
+        readFloatsFromInts(input, blockLower, blockSize);
+        readFloatsFromInts(input, blockUpper, blockSize);
+        readFloatsFromInts(input, blockAdd, blockSize);
+        input.readInts(blockSum, 0, blockSize);
 
         // Score all vectors in block
         for (int j = 0; j < blockSize; j++) {
@@ -203,6 +202,14 @@ public final class QuantizedVectorReader {
             float exactScore = exactScorer.score(ord);
             collector.collect(doc, exactScore);
         }
+    }
+
+    private final int[] intBuf = new int[BLOCK_SIZE];
+
+    private void readFloatsFromInts(IndexInput input, float[] out, int count) throws IOException {
+        input.readInts(intBuf, 0, count);
+        for (int i = 0; i < count; i++)
+            out[i] = Float.intBitsToFloat(intBuf[i]);
     }
 
     private void ensureQueryQuantized(float[] centroid) {
