@@ -163,11 +163,22 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                 metaIn.readInt(); // numVectors
                 metaIn.readInt(); // dimension
                 numCentroids = metaIn.readInt();
+                metaIn.readString(); // metricName
+                metaIn.readByte(); // docBits
+                metaIn.readLong(); // postingsOffset
+                // Skip centroidDocCounts + centroidNorms
+                metaIn.skipBytes((long) numCentroids * Integer.BYTES);
+                metaIn.skipBytes((long) numCentroids * Float.BYTES);
             }
 
             // Read postings file
             try (IndexInput postIn = dir.openInput("seg0.clap", IOContext.READONCE)) {
                 CodecUtil.checkIndexHeader(postIn, CODEC_NAME, VERSION_START, VERSION_CURRENT, writeState.segmentInfo.getId(), "");
+
+                // Skip alignment padding (align to SECTION_ALIGNMENT after header)
+                long pos = postIn.getFilePointer();
+                long aligned = (pos + SECTION_ALIGNMENT - 1) & ~(SECTION_ALIGNMENT - 1);
+                postIn.seek(aligned);
 
                 // Read all primary + soar posting lists
                 int totalPrimary = 0;
@@ -181,9 +192,10 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                     for (int j = 0; j < primaryOrdCount; j++)
                         primaryOrds[j] = postIn.readVInt();
                     assertEquals(primaryDocIds.length, primaryOrds.length);
-                    // Skip quantized
-                    int recordBytes = ScalarBitEncoding.fromDocBits((byte) 1).recordBytes(DIM);
-                    postIn.skipBytes((long) primaryDocIds.length * recordBytes);
+                    // Skip block-columnar quantized section
+                    int packedBytes = ScalarBitEncoding.fromDocBits((byte) 1).docPackedBytes(DIM);
+                    long quantBytes = (long) primaryDocIds.length * packedBytes + (long) primaryDocIds.length * Integer.BYTES * 4;
+                    postIn.skipBytes(quantBytes);
 
                     // SOAR
                     int[] soarDocIds = PostingListCodec.read(postIn);
@@ -193,7 +205,7 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                     for (int j = 0; j < soarOrdCount; j++)
                         soarOrds[j] = postIn.readVInt();
                     assertEquals(soarDocIds.length, soarOrds.length);
-                    postIn.skipBytes((long) soarDocIds.length * recordBytes);
+                    postIn.skipBytes((long) soarDocIds.length * packedBytes + (long) soarDocIds.length * Integer.BYTES * 4);
                 }
                 assertEquals("All vectors should be in primary postings", numVectors, totalPrimary);
                 assertTrue("SOAR should assign some vectors", totalSoar > 0);

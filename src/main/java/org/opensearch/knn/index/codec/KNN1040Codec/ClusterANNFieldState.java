@@ -16,19 +16,21 @@ import java.util.Map;
 import static org.opensearch.knn.index.codec.KNN1040Codec.ClusterANNFormatConstants.END_OF_FIELDS;
 
 /**
- * Per-field state read from .clam. Format v2: centroids + offset table inline.
+ * Per-field state read from .clam.
  *
  * <p>.clam per-field layout:
  * <pre>
- * fieldNumber:    int
- * numVectors:     int
- * dimension:      int
- * numCentroids:   int
- * metricName:     String
- * docBits:        byte
- * postingsOffset: long
- * centroids:      numCentroids × dimension × float (original order)
- * offsetTable:    numCentroids × long (original order)
+ * fieldNumber:      int
+ * numVectors:       int
+ * dimension:        int
+ * numCentroids:     int
+ * metricName:       String
+ * docBits:          byte
+ * postingsOffset:   long
+ * centroidDocCounts: numCentroids × int   (docs per centroid, for filter estimation)
+ * centroidNorms:     numCentroids × float (||c||² per centroid, for fast ADC correction)
+ * centroids:         numCentroids × dimension × float
+ * offsetTable:       numCentroids × long
  * </pre>
  */
 final class ClusterANNFieldState {
@@ -41,7 +43,11 @@ final class ClusterANNFieldState {
     final byte docBits;
     final long postingsOffset;
 
-    // Lazy-loaded
+    // Eager-loaded (small: one int + one float per centroid)
+    final int[] centroidDocCounts;
+    final float[] centroidNorms;
+
+    // Lazy-loaded (large: dimension floats per centroid)
     float[][] centroids;
     long[] centroidOffsets;
 
@@ -55,6 +61,8 @@ final class ClusterANNFieldState {
         DistanceMetric metric,
         byte docBits,
         long postingsOffset,
+        int[] centroidDocCounts,
+        float[] centroidNorms,
         long centroidsFilePos
     ) {
         this.fieldNumber = fieldNumber;
@@ -64,6 +72,8 @@ final class ClusterANNFieldState {
         this.metric = metric;
         this.docBits = docBits;
         this.postingsOffset = postingsOffset;
+        this.centroidDocCounts = centroidDocCounts;
+        this.centroidNorms = centroidNorms;
         this.centroidsFilePos = centroidsFilePos;
     }
 
@@ -76,13 +86,11 @@ final class ClusterANNFieldState {
 
         metaInput.seek(centroidsFilePos);
 
-        // Centroids (original order)
         centroids = new float[numCentroids][dimension];
         for (int c = 0; c < numCentroids; c++) {
             metaInput.readFloats(centroids[c], 0, dimension);
         }
 
-        // Offset table (original order)
         centroidOffsets = new long[numCentroids];
         metaInput.readLongs(centroidOffsets, 0, numCentroids);
     }
@@ -107,9 +115,17 @@ final class ClusterANNFieldState {
                 metric = DistanceMetric.L2;
             }
 
+            // Read centroid stats (eager — small)
+            int[] docCounts = new int[numCentroids];
+            float[] norms = new float[numCentroids];
+            if (numCentroids > 0) {
+                metaInput.readInts(docCounts, 0, numCentroids);
+                metaInput.readFloats(norms, 0, numCentroids);
+            }
+
             long centroidsFilePos = metaInput.getFilePointer();
 
-            // Skip centroids + offset table
+            // Skip centroids + offset table (lazy loaded)
             if (numCentroids > 0) {
                 long centroidBytes = (long) numCentroids * dimension * Float.BYTES;
                 long offsetBytes = (long) numCentroids * Long.BYTES;
@@ -126,6 +142,8 @@ final class ClusterANNFieldState {
                     metric,
                     docBits,
                     postingsOffset,
+                    docCounts,
+                    norms,
                     centroidsFilePos
                 )
             );

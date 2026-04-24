@@ -109,11 +109,15 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         int k = knnCollector.k();
         IndexInput postingsClone = postingsInput.clone();
+        Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
+        long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
 
-        // Build probe pipeline: Nearest → Sequential → Prefetching
+        // Build probe pipeline: Nearest → Filter → Sequential → Prefetch → Budget
         ProbeIterator probes = new NearestProbeIterator(target, fieldState, k);
+        probes = new FilterAwareProbeIterator(probes, fieldState.centroidDocCounts, fieldState.numVectors, filterCost);
         probes = new SequentialProbeIterator(probes);
         probes = new PrefetchingProbeIterator(probes, postingsClone);
+        BudgetedProbeIterator budgeted = new BudgetedProbeIterator(probes, knnCollector, fieldState.numVectors, k);
 
         // Build scorers
         RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
@@ -127,10 +131,8 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, target, k);
         }
 
-        Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         BitSet visited = new BitSet(fieldState.numVectors);
 
-        // Build visitor
         PostingVisitor visitor = new ClusterANNPostingVisitor(
             postingsClone,
             fieldState,
@@ -142,15 +144,15 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             useADC
         );
 
-        // Visit loop
-        while (probes.hasNext()) {
-            ProbedCentroid probe = probes.next();
+        // Visit loop with budget tracking
+        while (budgeted.hasNext()) {
+            ProbedCentroid probe = budgeted.next();
             visitor.reset(probe);
-            visitor.visit(knnCollector);
+            int scored = visitor.visit(knnCollector);
+            budgeted.recordVisit(fieldState.centroidDocCounts[probe.centroidIdx()], scored);
             if (knnCollector.earlyTerminated()) break;
         }
 
-        // ADC rescore
         if (adcReader != null) {
             adcReader.finish(knnCollector);
         }

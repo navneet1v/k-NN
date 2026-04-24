@@ -152,6 +152,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         // Remap: spatialOrder[sortedIdx] = originalIdx
 
         // 3. Write posting lists to .clap (in spatial order, primary+soar adjacent)
+        postingsOutput.alignFilePointer(SECTION_ALIGNMENT);
         long postingsFieldOffset = postingsOutput.getFilePointer();
         long[] centroidOffsets = new long[numCentroids]; // offset per ORIGINAL centroid index
 
@@ -173,7 +174,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             }
         }
 
-        // 4. Write .clam: meta + centroids (spatial order) + offset table
+        // 4. Write .clam: meta + centroid stats + centroids + offset table
         metaOutput.writeInt(fieldInfo.number);
         metaOutput.writeInt(numVectors);
         metaOutput.writeInt(dimension);
@@ -181,6 +182,19 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeString(metric.name());
         metaOutput.writeByte(docBits);
         metaOutput.writeLong(postingsFieldOffset);
+
+        // Centroid doc counts (primary posting list sizes)
+        for (int c = 0; c < numCentroids; c++) {
+            metaOutput.writeInt(primaryPostings[c].length);
+        }
+
+        // Centroid norms (||c||² for fast ADC correction)
+        for (int c = 0; c < numCentroids; c++) {
+            float norm = 0f;
+            for (int d = 0; d < dimension; d++)
+                norm += centroids[c][d] * centroids[c][d];
+            metaOutput.writeInt(Float.floatToIntBits(norm));
+        }
 
         // Centroids in original order (bulk write via ByteBuffer)
         for (int c = 0; c < numCentroids; c++) {
