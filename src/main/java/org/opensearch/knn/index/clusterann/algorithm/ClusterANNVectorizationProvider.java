@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.clusterann;
+package org.opensearch.knn.index.clusterann.algorithm;
 
 import java.util.logging.Logger;
 

@@ -8,7 +8,7 @@ package org.opensearch.knn.index.codec.KNN1040Codec;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.KNNTestCase;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.*;
+import org.opensearch.knn.index.clusterann.codec.*;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import java.util.Random;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;

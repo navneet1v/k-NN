@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
+package org.opensearch.knn.index.clusterann.codec;
 
 /**
  * Bounded min-heap for ADC candidate collection. Keeps top {@code maxCandidates}

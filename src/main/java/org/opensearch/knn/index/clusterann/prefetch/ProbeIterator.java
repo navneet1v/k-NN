@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
+package org.opensearch.knn.index.clusterann.prefetch;
 
 import java.io.IOException;
 

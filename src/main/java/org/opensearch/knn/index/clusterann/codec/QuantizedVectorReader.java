@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
+package org.opensearch.knn.index.clusterann.codec;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
@@ -15,7 +15,7 @@ import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import java.io.IOException;
 import java.util.Arrays;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.BLOCK_SIZE;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.BLOCK_SIZE;
 
 /**
  * Reads block-columnar quantized vectors from .clap and performs ADC scoring.

@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.clusterann;
+package org.opensearch.knn.index.clusterann.algorithm;
 
+import org.opensearch.knn.index.clusterann.*;
 import org.apache.lucene.index.FloatVectorValues;
 
 import java.io.IOException;

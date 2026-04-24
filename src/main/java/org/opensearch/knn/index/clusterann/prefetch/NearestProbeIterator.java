@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch;
+package org.opensearch.knn.index.clusterann.prefetch;
 
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFieldState;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
+import org.opensearch.knn.index.clusterann.*;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
+import org.opensearch.knn.index.clusterann.*;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 
 import java.util.Arrays;

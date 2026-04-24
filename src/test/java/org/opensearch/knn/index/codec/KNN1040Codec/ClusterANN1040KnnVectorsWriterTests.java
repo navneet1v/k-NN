@@ -35,8 +35,9 @@ import java.util.Random;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.*;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.*;;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
+import org.opensearch.knn.index.clusterann.codec.*;
+import org.opensearch.knn.index.clusterann.codec.*;;
 
 /**
  * Tests for {@link ClusterANN1040KnnVectorsWriter} v2 format (2 files).

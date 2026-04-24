@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.clusterann;
 
+import org.opensearch.knn.index.clusterann.algorithm.ClusterANNVectorUtil;
+
 /**
  * Distance metrics for vector similarity computation.
  *

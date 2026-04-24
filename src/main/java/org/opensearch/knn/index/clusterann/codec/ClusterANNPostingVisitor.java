@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
+package org.opensearch.knn.index.clusterann.codec;
 
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.ProbedCentroid;
+import org.opensearch.knn.index.clusterann.prefetch.ProbedCentroid;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
@@ -16,7 +16,7 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import java.io.IOException;
 import java.util.BitSet;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.BLOCK_SIZE;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.BLOCK_SIZE;
 
 /**
  * Reads one centroid's columnar posting data (primary + SOAR), filters, scores, collects.

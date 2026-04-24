@@ -24,7 +24,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.knn.index.clusterann.ClusterANNVectorValues;
 import org.opensearch.knn.index.clusterann.ClusteringResult;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
-import org.opensearch.knn.index.clusterann.IVFIndexBuilder;
+import org.opensearch.knn.index.clusterann.algorithm.IVFIndexBuilder;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -33,9 +33,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.*;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.*;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.*;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
+import org.opensearch.knn.index.clusterann.codec.*;
+import org.opensearch.knn.index.clusterann.prefetch.*;
 
 /**
  * Writer for ClusterANN IVF format v2.

@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.clusterann;
 
+import org.opensearch.knn.index.clusterann.algorithm.*;
 import org.opensearch.knn.KNNTestCase;
 
 import java.util.ArrayList;

@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN1040Codec.clusterann;
+package org.opensearch.knn.index.clusterann.codec;
 
+import org.opensearch.knn.index.clusterann.*;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
@@ -13,7 +14,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.END_OF_FIELDS;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.END_OF_FIELDS;
 
 /**
  * Per-field state read from .clam.

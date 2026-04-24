@@ -28,9 +28,9 @@ import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.opensearch.knn.index.codec.KNN1040Codec.clusterann.ClusterANNFormatConstants.*;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.*;
-import org.opensearch.knn.index.codec.KNN1040Codec.clusterann.prefetch.*;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
+import org.opensearch.knn.index.clusterann.codec.*;
+import org.opensearch.knn.index.clusterann.prefetch.*;
 
 /**
  * Reader for ClusterANN IVF format v2.
