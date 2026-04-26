@@ -6,6 +6,7 @@
 package org.opensearch.knn.index.clusterann.algorithm;
 
 import org.apache.lucene.util.VectorUtil;
+import org.opensearch.knn.jni.SimdVectorComputeService;
 
 /**
  * SIMD-accelerated vector distance utilities for ClusterANN algorithms.
@@ -97,5 +98,55 @@ public final class ClusterANNVectorUtil {
             }
         }
         return bestIdx;
+    }
+
+    /**
+     * Find nearest centroid using native SIMD bulk distance.
+     * Falls back to scalar if native unavailable.
+     */
+    public static int findNearestCentroidBulk(
+        float[] vector,
+        float[] flatCentroids,
+        int k,
+        int dimension,
+        float[] distances,
+        int metricOrd
+    ) {
+        try {
+            return SimdVectorComputeService.bulkCentroidDistance(vector, flatCentroids, distances, dimension, k, metricOrd);
+        } catch (Throwable t) {
+            // Fallback: per-centroid
+            int bestIdx = 0;
+            float bestDist = Float.MAX_VALUE;
+            for (int c = 0; c < k; c++) {
+                float d = 0;
+                int off = c * dimension;
+                for (int j = 0; j < dimension; j++) {
+                    if (metricOrd == 0) {
+                        float diff = vector[j] - flatCentroids[off + j];
+                        d += diff * diff;
+                    } else {
+                        d -= vector[j] * flatCentroids[off + j];
+                    }
+                }
+                distances[c] = d;
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestIdx = c;
+                }
+            }
+            return bestIdx;
+        }
+    }
+
+    /** Flatten centroids into a single float[] for bulk native calls. */
+    public static float[] flattenCentroids(float[][] centroids) {
+        int k = centroids.length;
+        int dim = centroids[0].length;
+        float[] flat = new float[k * dim];
+        for (int c = 0; c < k; c++) {
+            System.arraycopy(centroids[c], 0, flat, c * dim, dim);
+        }
+        return flat;
     }
 }

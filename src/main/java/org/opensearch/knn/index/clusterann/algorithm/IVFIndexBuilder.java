@@ -6,6 +6,7 @@
 package org.opensearch.knn.index.clusterann.algorithm;
 
 import org.opensearch.knn.index.clusterann.*;
+import org.opensearch.knn.jni.SimdVectorComputeService;
 import org.apache.lucene.index.FloatVectorValues;
 
 import java.io.IOException;
@@ -133,36 +134,47 @@ public final class IVFIndexBuilder {
             }
             int primaryCent = assignments[i];
             float[] primaryCentroid = centroids[primaryCent];
+            int[] neighbors = nearestCentroids[primaryCent];
+            int numCandidates = neighbors.length;
+            if (numCandidates == 0) return;
 
-            float residualNormSq = 0f;
-            for (int d = 0; d < dim; d++) {
-                float r = vec[d] - primaryCentroid[d];
-                residualNormSq += r * r;
+            // Flatten candidate centroids (thread-local allocation)
+            float[] flatCandidates = new float[numCandidates * dim];
+            for (int j = 0; j < numCandidates; j++) {
+                System.arraycopy(centroids[neighbors[j]], 0, flatCandidates, j * dim, dim);
             }
-            float residualNorm = (float) Math.sqrt(residualNormSq);
-            if (residualNorm < 1e-10f) return;
-            float invNorm = 1f / residualNorm;
+
+            float[] dists = new float[numCandidates];
+            try {
+                SimdVectorComputeService.bulkSOARDistance(vec, primaryCentroid, flatCandidates, dists, dim, numCandidates, soarLambda);
+            } catch (Throwable t) {
+                // Fallback: scalar SOAR
+                float residualNormSq = 0f;
+                for (int d = 0; d < dim; d++) {
+                    float r = vec[d] - primaryCentroid[d];
+                    residualNormSq += r * r;
+                }
+                if (residualNormSq < 1e-20f) return;
+                float invNorm = soarLambda / residualNormSq;
+                for (int j = 0; j < numCandidates; j++) {
+                    float dsq = 0f, proj = 0f;
+                    for (int d = 0; d < dim; d++) {
+                        float diff = vec[d] - centroids[neighbors[j]][d];
+                        dsq += diff * diff;
+                        proj += (vec[d] - primaryCentroid[d]) * diff;
+                    }
+                    dists[j] = dsq + invNorm * proj * proj;
+                }
+            }
 
             float bestDist = Float.MAX_VALUE;
             int bestCent = -1;
-
-            for (int nc : nearestCentroids[primaryCent]) {
-                float[] cent = centroids[nc];
-                float dsq = 0f;
-                float proj = 0f;
-                for (int d = 0; d < dim; d++) {
-                    float diff = vec[d] - cent[d];
-                    dsq += diff * diff;
-                    float residualD = (vec[d] - primaryCentroid[d]) * invNorm;
-                    proj += residualD * diff;
-                }
-                float soarDist = dsq + soarLambda * (proj * proj);
-                if (soarDist < bestDist) {
-                    bestDist = soarDist;
-                    bestCent = nc;
+            for (int j = 0; j < numCandidates; j++) {
+                if (dists[j] < bestDist) {
+                    bestDist = dists[j];
+                    bestCent = neighbors[j];
                 }
             }
-
             soarAssignments[i] = bestCent;
         });
 

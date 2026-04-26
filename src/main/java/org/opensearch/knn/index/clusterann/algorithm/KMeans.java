@@ -220,6 +220,8 @@ public final class KMeans {
 
         // Create centroid views for SIMD-accelerated distance (avoids offset-based overload)
         float[][] centroidViews = centroids;
+        float[] flatCentroids = ClusterANNVectorUtil.flattenCentroids(centroids);
+        int metricOrd = config.metric == DistanceMetric.L2 ? 0 : 1;
 
         // Reset sums and counts
         for (float[] s : clusterSums)
@@ -257,14 +259,9 @@ public final class KMeans {
                         }
                     }
                 } else {
-                    // Full scan: check all centroids (first iterations or unassigned)
-                    for (int c = 0; c < k; c++) {
-                        float dist = config.metric.distance(vec, centroidViews[c]);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            bestCluster = c;
-                        }
-                    }
+                    // Full scan: bulk native SIMD distance to all centroids
+                    float[] dists = new float[k]; // thread-local allocation
+                    bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, dists, metricOrd);
                 }
 
                 if (assignments[i] != bestCluster) {
@@ -307,13 +304,9 @@ public final class KMeans {
                         }
                     }
                 } else {
-                    for (int c = 0; c < k; c++) {
-                        float dist = config.metric.distance(vec, centroidViews[c]);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            bestCluster = c;
-                        }
-                    }
+                    // Full scan: bulk native SIMD distance
+                    float[] dists = new float[k];
+                    bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, dists, metricOrd);
                 }
 
                 if (assignments[i] != bestCluster) {
