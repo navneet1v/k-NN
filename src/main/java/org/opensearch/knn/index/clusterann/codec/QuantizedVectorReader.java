@@ -11,6 +11,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.jni.SimdVectorComputeService;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -61,6 +62,8 @@ public final class QuantizedVectorReader {
     private final float[] blockAdd;
     private final int[] blockSum;
     private final float[] blockScores;
+    private final float[] rawDotBuf;
+    private final boolean nativeAvailable;
 
     // Current query quantization state
     private byte[] currentTransposed;
@@ -100,6 +103,15 @@ public final class QuantizedVectorReader {
         this.blockAdd = new float[BLOCK_SIZE];
         this.blockSum = new int[BLOCK_SIZE];
         this.blockScores = new float[BLOCK_SIZE];
+        this.rawDotBuf = new float[BLOCK_SIZE];
+        boolean native_;
+        try {
+            SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
+            native_ = true;
+        } catch (Throwable t) {
+            native_ = false;
+        }
+        this.nativeAvailable = native_;
     }
 
     public VectorSimilarityFunction getSimFunc() {
@@ -146,11 +158,8 @@ public final class QuantizedVectorReader {
 
         ensureQueryQuantized(centroid);
 
-        // Read all codes in one bulk read, then slice per vector
+        // Read all codes in one bulk read
         input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
-        for (int j = 0; j < blockSize; j++) {
-            System.arraycopy(flatCodesBuf, j * packedBytes, blockCodes[j], 0, packedBytes);
-        }
 
         // Read corrections in bulk (4 reads instead of 128)
         readFloatsFromInts(input, blockLower, blockSize);
@@ -158,22 +167,38 @@ public final class QuantizedVectorReader {
         readFloatsFromInts(input, blockAdd, blockSize);
         input.readInts(blockSum, 0, blockSize);
 
-        // Score all vectors in block
+        // Bulk dot product: native SIMD or Java fallback
+        if (nativeAvailable) {
+            SimdVectorComputeService.bulkQuantizedDotProduct(
+                currentTransposed,
+                flatCodesBuf,
+                rawDotBuf,
+                packedBytes,
+                blockSize,
+                fieldState.docBits
+            );
+        } else {
+            for (int j = 0; j < blockSize; j++) {
+                System.arraycopy(flatCodesBuf, j * packedBytes, blockCodes[j], 0, packedBytes);
+            }
+            for (int j = 0; j < blockSize; j++) {
+                if (fieldState.docBits == 1) {
+                    rawDotBuf[j] = VectorUtil.int4BitDotProduct(currentTransposed, blockCodes[j]);
+                } else if (fieldState.docBits == 2) {
+                    rawDotBuf[j] = VectorUtil.int4DibitDotProduct(currentTransposed, blockCodes[j]);
+                } else {
+                    rawDotBuf[j] = int4NibbleDotProduct(currentTransposed, blockCodes[j]);
+                }
+            }
+        }
+
+        // Apply corrections and collect
         for (int j = 0; j < blockSize; j++) {
             if (!validBuf[blockStart + j]) continue;
 
-            long rawDot;
-            if (fieldState.docBits == 1) {
-                rawDot = VectorUtil.int4BitDotProduct(currentTransposed, blockCodes[j]);
-            } else if (fieldState.docBits == 2) {
-                rawDot = VectorUtil.int4DibitDotProduct(currentTransposed, blockCodes[j]);
-            } else {
-                rawDot = int4NibbleDotProduct(currentTransposed, blockCodes[j]);
-            }
-
             float docScale = (blockUpper[j] - blockLower[j]) * encoding.docBitScale();
             float score = blockLower[j] * currentQueryLower * fieldState.dimension + currentQueryLower * docScale * blockSum[j]
-                + blockLower[j] * currentQueryScale * currentQueryComponentSum + docScale * currentQueryScale * (float) rawDot;
+                + blockLower[j] * currentQueryScale * currentQueryComponentSum + docScale * currentQueryScale * rawDotBuf[j];
 
             float adcSimilarity;
             if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {

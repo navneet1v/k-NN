@@ -634,3 +634,75 @@ SimilarityFunction* SimilarityFunction::selectSimilarityFunction(const NativeSim
                              + std::to_string(static_cast<int32_t>(nativeFunctionType)));
 }
 #endif
+
+// ===== ClusterANN batch dot product functions (pure, thread-safe) =====
+
+// 1-bit doc × 4-bit query: direct use of avx512_4bitDotProductBatch
+void batchDotProduct1bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n) {
+    int32_t processed = 0;
+    for (; processed + 8 <= n; processed += 8) {
+        uint8_t* ptrs[8];
+        for (int i = 0; i < 8; i++) ptrs[i] = const_cast<uint8_t*>(d) + (processed + i) * bpc;
+        avx512_4bitDotProductBatch<8>(q, ptrs, bpc, r + processed);
+    }
+    for (; processed + 4 <= n; processed += 4) {
+        uint8_t* ptrs[4];
+        for (int i = 0; i < 4; i++) ptrs[i] = const_cast<uint8_t*>(d) + (processed + i) * bpc;
+        avx512_4bitDotProductBatch<4>(q, ptrs, bpc, r + processed);
+    }
+    for (; processed < n; processed++) {
+        r[processed] = static_cast<float>(
+            int4BitDotProduct(q, d + processed * bpc, bpc));
+    }
+}
+
+// Helper: batch 1-bit on a stripe with offset into each doc's codes
+static void batchStripe(const uint8_t* q, const uint8_t* d, float* r,
+                        int32_t bpc, int32_t stripeSize, int32_t stripeOffset, int32_t n) {
+    int32_t processed = 0;
+    for (; processed + 8 <= n; processed += 8) {
+        uint8_t* ptrs[8];
+        for (int i = 0; i < 8; i++) ptrs[i] = const_cast<uint8_t*>(d) + (processed + i) * bpc + stripeOffset;
+        avx512_4bitDotProductBatch<8>(q, ptrs, stripeSize, r + processed);
+    }
+    for (; processed + 4 <= n; processed += 4) {
+        uint8_t* ptrs[4];
+        for (int i = 0; i < 4; i++) ptrs[i] = const_cast<uint8_t*>(d) + (processed + i) * bpc + stripeOffset;
+        avx512_4bitDotProductBatch<4>(q, ptrs, stripeSize, r + processed);
+    }
+    for (; processed < n; processed++) {
+        r[processed] = static_cast<float>(
+            int4BitDotProduct(q, d + processed * bpc + stripeOffset, stripeSize));
+    }
+}
+
+// 2-bit doc × 4-bit query: 2 stripes
+void batchDotProduct2bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n) {
+    int32_t ss = bpc / 2;
+    float tmp[32];
+
+    // Stripe 0 (lower bits)
+    batchStripe(q, d, r, bpc, ss, 0, n);
+
+    // Stripe 1 (upper bits)
+    batchStripe(q, d, tmp, bpc, ss, ss, n);
+
+    // Combine: result += stripe1 * 2
+    for (int32_t i = 0; i < n; i++) r[i] += tmp[i] * 2.0f;
+}
+
+// 4-bit doc × 4-bit query: 4 stripes
+void batchDotProduct4bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n) {
+    int32_t ss = bpc / 4;
+    float tmp[32];
+
+    // Stripe 0
+    batchStripe(q, d, r, bpc, ss, 0, n);
+
+    // Stripes 1-3
+    for (int32_t s = 1; s < 4; s++) {
+        batchStripe(q, d, tmp, bpc, ss, s * ss, n);
+        float weight = static_cast<float>(1 << s);
+        for (int32_t i = 0; i < n; i++) r[i] += tmp[i] * weight;
+    }
+}

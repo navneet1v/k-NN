@@ -152,3 +152,120 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_save
       JNI_UTIL.CatchCppExceptionAndThrowJava(env);
     }
 }
+
+
+// ===== ClusterANN bulk operations (pure functions, no state, thread-safe) =====
+
+// Forward declarations for batch functions defined in avx512_simd_similarity_function.cpp
+extern void batchDotProduct1bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);
+extern void batchDotProduct2bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);
+extern void batchDotProduct4bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkQuantizedDotProduct(
+    JNIEnv* env, jclass,
+    jbyteArray queryArr, jbyteArray docsArr, jfloatArray resultsArr,
+    jint bytesPerCode, jint numVectors, jint docBits
+) {
+    try {
+        auto* q = reinterpret_cast<uint8_t*>(env->GetByteArrayElements(queryArr, nullptr));
+        auto* d = reinterpret_cast<uint8_t*>(env->GetByteArrayElements(docsArr, nullptr));
+        auto* r = env->GetFloatArrayElements(resultsArr, nullptr);
+
+        switch (docBits) {
+            case 1: batchDotProduct1bit(q, d, r, bytesPerCode, numVectors); break;
+            case 2: batchDotProduct2bit(q, d, r, bytesPerCode, numVectors); break;
+            case 4: batchDotProduct4bit(q, d, r, bytesPerCode, numVectors); break;
+            default: break;
+        }
+
+        env->ReleaseFloatArrayElements(resultsArr, r, 0);
+        env->ReleaseByteArrayElements(docsArr, reinterpret_cast<jbyte*>(d), JNI_ABORT);
+        env->ReleaseByteArrayElements(queryArr, reinterpret_cast<jbyte*>(q), JNI_ABORT);
+    } catch (...) {
+        JNI_UTIL.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+JNIEXPORT jint JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkCentroidDistance(
+    JNIEnv* env, jclass,
+    jfloatArray vectorArr, jfloatArray centroidsArr, jfloatArray distancesArr,
+    jint dimension, jint numCentroids, jint metricOrd
+) {
+    try {
+        float* vec = env->GetFloatArrayElements(vectorArr, nullptr);
+        float* cents = env->GetFloatArrayElements(centroidsArr, nullptr);
+        float* dists = env->GetFloatArrayElements(distancesArr, nullptr);
+
+        int bestIdx = 0;
+        float bestDist = std::numeric_limits<float>::max();
+
+        for (int32_t i = 0; i < numCentroids; i++) {
+            float* c = cents + (int64_t)i * dimension;
+            float d = 0;
+            if (metricOrd == 0) { // L2
+                for (int32_t j = 0; j < dimension; j++) {
+                    float diff = vec[j] - c[j];
+                    d += diff * diff;
+                }
+            } else { // DOT_PRODUCT (negated for distance)
+                for (int32_t j = 0; j < dimension; j++) {
+                    d -= vec[j] * c[j];
+                }
+            }
+            dists[i] = d;
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+
+        env->ReleaseFloatArrayElements(distancesArr, dists, 0);
+        env->ReleaseFloatArrayElements(centroidsArr, cents, JNI_ABORT);
+        env->ReleaseFloatArrayElements(vectorArr, vec, JNI_ABORT);
+        return bestIdx;
+    } catch (...) {
+        JNI_UTIL.CatchCppExceptionAndThrowJava(env);
+        return -1;
+    }
+}
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkSOARDistance(
+    JNIEnv* env, jclass,
+    jfloatArray vectorArr, jfloatArray primaryArr, jfloatArray candidatesArr,
+    jfloatArray distancesArr, jint dimension, jint numCandidates, jfloat soarLambda
+) {
+    try {
+        float* vec = env->GetFloatArrayElements(vectorArr, nullptr);
+        float* primary = env->GetFloatArrayElements(primaryArr, nullptr);
+        float* cands = env->GetFloatArrayElements(candidatesArr, nullptr);
+        float* dists = env->GetFloatArrayElements(distancesArr, nullptr);
+
+        // Compute residual and norm (stack-allocated for thread safety)
+        std::vector<float> residual(dimension);
+        float residualNormSq = 0;
+        for (int32_t d = 0; d < dimension; d++) {
+            residual[d] = vec[d] - primary[d];
+            residualNormSq += residual[d] * residual[d];
+        }
+
+        if (residualNormSq < 1e-20f) {
+            for (int32_t i = 0; i < numCandidates; i++) dists[i] = std::numeric_limits<float>::max();
+        } else {
+            float invNorm = soarLambda / residualNormSq;
+            for (int32_t i = 0; i < numCandidates; i++) {
+                float* c = cands + (int64_t)i * dimension;
+                float dsq = 0, proj = 0;
+                for (int32_t d = 0; d < dimension; d++) {
+                    float diff = vec[d] - c[d];
+                    dsq += diff * diff;
+                    proj += residual[d] * diff;
+                }
+                dists[i] = dsq + invNorm * proj * proj;
+            }
+        }
+
+        env->ReleaseFloatArrayElements(distancesArr, dists, 0);
+        env->ReleaseFloatArrayElements(candidatesArr, cands, JNI_ABORT);
+        env->ReleaseFloatArrayElements(primaryArr, primary, JNI_ABORT);
+        env->ReleaseFloatArrayElements(vectorArr, vec, JNI_ABORT);
+    } catch (...) {
+        JNI_UTIL.CatchCppExceptionAndThrowJava(env);
+    }
+}

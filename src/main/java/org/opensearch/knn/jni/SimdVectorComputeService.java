@@ -71,4 +71,69 @@ public class SimdVectorComputeService {
      * @return Similarity score.
      */
     public native static float scoreSimilarity(int internalVectorId);
+
+    // ===== ClusterANN bulk operations (pure functions, no state, thread-safe) =====
+
+    /**
+     * Batch quantized dot product for block-columnar ADC scoring.
+     * Supports 1-bit, 2-bit, and 4-bit document quantization against 4-bit query.
+     *
+     * @param queryTransposed 4-bit query transposed into bit planes
+     * @param docCodesBatch   contiguous packed codes (numVectors × bytesPerCode)
+     * @param results         output raw dot products
+     * @param bytesPerCode    packed bytes per vector
+     * @param numVectors      vectors to score (≤ 32)
+     * @param docBits         quantization bits (1, 2, or 4)
+     */
+    public static native void bulkQuantizedDotProduct(
+        byte[] queryTransposed,
+        byte[] docCodesBatch,
+        float[] results,
+        int bytesPerCode,
+        int numVectors,
+        int docBits
+    );
+
+    /**
+     * Compute distances from one vector to multiple centroids.
+     * Returns index of nearest centroid.
+     *
+     * @param vector       query vector
+     * @param centroids    flat array of centroids (numCentroids × dimension)
+     * @param distances    output distances
+     * @param dimension    vector dimension
+     * @param numCentroids number of centroids
+     * @param metricOrd    0=L2, 1=DOT_PRODUCT
+     * @return index of nearest centroid
+     */
+    public static native int bulkCentroidDistance(
+        float[] vector,
+        float[] centroids,
+        float[] distances,
+        int dimension,
+        int numCentroids,
+        int metricOrd
+    );
+
+    /**
+     * Compute SOAR distances from a vector to candidate centroids.
+     * SOAR distance = L2² + lambda × (projection² / ||residual||²)
+     *
+     * @param vector          the vector
+     * @param primaryCentroid the primary assigned centroid
+     * @param candidates      flat array of candidate centroids (numCandidates × dimension)
+     * @param distances       output SOAR distances
+     * @param dimension       vector dimension
+     * @param numCandidates   number of candidates
+     * @param soarLambda      SOAR lambda parameter
+     */
+    public static native void bulkSOARDistance(
+        float[] vector,
+        float[] primaryCentroid,
+        float[] candidates,
+        float[] distances,
+        int dimension,
+        int numCandidates,
+        float soarLambda
+    );
 }

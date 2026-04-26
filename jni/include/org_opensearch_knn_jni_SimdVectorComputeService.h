@@ -39,6 +39,30 @@ JNIEXPORT jfloat JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_sc
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_saveSQSearchContext
   (JNIEnv *, jclass, jbyteArray, jfloat, jfloat, jfloat, jint, jlongArray, jint, jint, jfloat);
 
+/*
+ * Class:     org_opensearch_knn_jni_SimdVectorComputeService
+ * Method:    bulkQuantizedDotProduct
+ * Signature: ([B[B[FIII)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkQuantizedDotProduct
+  (JNIEnv *, jclass, jbyteArray, jbyteArray, jfloatArray, jint, jint, jint);
+
+/*
+ * Class:     org_opensearch_knn_jni_SimdVectorComputeService
+ * Method:    bulkCentroidDistance
+ * Signature: ([F[F[FIII)I
+ */
+JNIEXPORT jint JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkCentroidDistance
+  (JNIEnv *, jclass, jfloatArray, jfloatArray, jfloatArray, jint, jint, jint);
+
+/*
+ * Class:     org_opensearch_knn_jni_SimdVectorComputeService
+ * Method:    bulkSOARDistance
+ * Signature: ([F[F[F[FIIF)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_bulkSOARDistance
+  (JNIEnv *, jclass, jfloatArray, jfloatArray, jfloatArray, jfloatArray, jint, jint, jfloat);
+
 #ifdef __cplusplus
 }
 #endif
