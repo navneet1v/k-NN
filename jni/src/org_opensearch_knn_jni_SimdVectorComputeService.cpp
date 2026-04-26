@@ -156,7 +156,7 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_SimdVectorComputeService_save
 
 // ===== ClusterANN bulk operations (pure functions, no state, thread-safe) =====
 
-// Forward declarations for batch functions defined in avx512_simd_similarity_function.cpp
+// Defined in clusterann_batch_dot_product.cpp (platform-independent, scalar fallback)
 extern void batchDotProduct1bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);
 extern void batchDotProduct2bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);
 extern void batchDotProduct4bit(const uint8_t* q, const uint8_t* d, float* r, int32_t bpc, int32_t n);

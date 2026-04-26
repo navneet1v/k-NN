@@ -104,14 +104,7 @@ public final class QuantizedVectorReader {
         this.blockSum = new int[BLOCK_SIZE];
         this.blockScores = new float[BLOCK_SIZE];
         this.rawDotBuf = new float[BLOCK_SIZE];
-        boolean native_;
-        try {
-            SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
-            native_ = true;
-        } catch (Throwable t) {
-            native_ = false;
-        }
-        this.nativeAvailable = native_;
+        this.nativeAvailable = isNativeAvailable();
     }
 
     public VectorSimilarityFunction getSimFunc() {
@@ -253,6 +246,17 @@ public final class QuantizedVectorReader {
     }
 
     /** 4-bit × 4-bit transposed dot product. */
+    private static boolean isNativeAvailable() {
+        try {
+            Class.forName("org.opensearch.knn.jni.SimdVectorComputeService");
+            // Verify the method exists by calling with zero-length arrays
+            SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public static long int4NibbleDotProduct(byte[] queryTransposed, byte[] docTransposed) {
         int stripeSize = docTransposed.length / 4;
         long sum = 0;

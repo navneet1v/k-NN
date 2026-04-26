@@ -136,6 +136,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/init-simd.cmake)
 set(SIMD_COMPUTING_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/org_opensearch_knn_jni_SimdVectorComputeService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/simd/similarity_function/similarity_function.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/simd/similarity_function/clusterann_batch_dot_product.cpp
 )
 
 # Make it a shared library
