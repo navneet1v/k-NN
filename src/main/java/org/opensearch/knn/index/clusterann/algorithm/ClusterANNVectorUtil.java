@@ -20,6 +20,21 @@ import org.opensearch.knn.jni.SimdVectorComputeService;
 public final class ClusterANNVectorUtil {
 
     private static final BulkVectorOps BULK = ClusterANNVectorizationProvider.getInstance();
+    private static final boolean NATIVE_AVAILABLE = probeNative();
+
+    private static boolean probeNative() {
+        try {
+            SimdVectorComputeService.bulkCentroidDistance(new float[1], new float[1], new float[1], 1, 1, 0);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Whether native SIMD library is available. Checked once at class load. */
+    public static boolean isNativeAvailable() {
+        return NATIVE_AVAILABLE;
+    }
 
     private ClusterANNVectorUtil() {}
 
@@ -112,31 +127,29 @@ public final class ClusterANNVectorUtil {
         float[] distances,
         int metricOrd
     ) {
-        try {
+        if (NATIVE_AVAILABLE) {
             return SimdVectorComputeService.bulkCentroidDistance(vector, flatCentroids, distances, dimension, k, metricOrd);
-        } catch (Throwable t) {
-            // Fallback: per-centroid
-            int bestIdx = 0;
-            float bestDist = Float.MAX_VALUE;
-            for (int c = 0; c < k; c++) {
-                float d = 0;
-                int off = c * dimension;
-                for (int j = 0; j < dimension; j++) {
-                    if (metricOrd == 0) {
-                        float diff = vector[j] - flatCentroids[off + j];
-                        d += diff * diff;
-                    } else {
-                        d -= vector[j] * flatCentroids[off + j];
-                    }
-                }
-                distances[c] = d;
-                if (d < bestDist) {
-                    bestDist = d;
-                    bestIdx = c;
+        }
+        int bestIdx = 0;
+        float bestDist = Float.MAX_VALUE;
+        for (int c = 0; c < k; c++) {
+            float d = 0;
+            int off = c * dimension;
+            for (int j = 0; j < dimension; j++) {
+                if (metricOrd == 0) {
+                    float diff = vector[j] - flatCentroids[off + j];
+                    d += diff * diff;
+                } else {
+                    d -= vector[j] * flatCentroids[off + j];
                 }
             }
-            return bestIdx;
+            distances[c] = d;
+            if (d < bestDist) {
+                bestDist = d;
+                bestIdx = c;
+            }
         }
+        return bestIdx;
     }
 
     /** Flatten centroids into a single float[] for bulk native calls. */

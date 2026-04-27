@@ -61,7 +61,6 @@ public final class QuantizedVectorReader {
     private final float[] blockAdd;
     private final int[] blockSum;
     private final float[] rawDotBuf;
-    private final boolean nativeAvailable;
 
     // Cached query quantization state — avoid re-quantizing per block
     private float[] cachedCentroid;
@@ -102,7 +101,6 @@ public final class QuantizedVectorReader {
         this.blockAdd = new float[BLOCK_SIZE];
         this.blockSum = new int[BLOCK_SIZE];
         this.rawDotBuf = new float[BLOCK_SIZE];
-        this.nativeAvailable = isNativeAvailable();
     }
 
     public VectorSimilarityFunction getSimFunc() {
@@ -153,7 +151,7 @@ public final class QuantizedVectorReader {
         input.readInts(blockSum, 0, blockSize);
 
         // Bulk dot product
-        if (nativeAvailable) {
+        if (NATIVE_AVAILABLE) {
             SimdVectorComputeService.bulkQuantizedDotProduct(
                 currentTransposed,
                 flatCodesBuf,
@@ -247,7 +245,9 @@ public final class QuantizedVectorReader {
         currentQueryAdditionalCorrection = qResult.additionalCorrection();
     }
 
-    private static boolean isNativeAvailable() {
+    private static final boolean NATIVE_AVAILABLE = probeNative();
+
+    private static boolean probeNative() {
         try {
             Class.forName("org.opensearch.knn.jni.SimdVectorComputeService");
             SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);

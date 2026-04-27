@@ -149,10 +149,9 @@ public final class IVFIndexBuilder {
             }
 
             float[] dists = tlDists.get();
-            try {
+            if (ClusterANNVectorUtil.isNativeAvailable()) {
                 SimdVectorComputeService.bulkSOARDistance(vec, primaryCentroid, flatCandidates, dists, dim, numCandidates, soarLambda);
-            } catch (Throwable t) {
-                // Fallback: scalar SOAR
+            } else {
                 float residualNormSq = 0f;
                 for (int d = 0; d < dim; d++) {
                     float r = vec[d] - primaryCentroid[d];
