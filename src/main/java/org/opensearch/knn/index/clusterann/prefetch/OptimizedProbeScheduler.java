@@ -107,12 +107,15 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         return totalScored;
     }
 
+    private static final int L2_CACHE_THRESHOLD = 256 * 1024;
+
     private void issueReadAhead(ProbeTarget probe) throws IOException {
         long offset = probe.fileOffset();
         long len = probe.postingBytes();
-        if (len > 0 && offset >= 0 && offset + len <= postingsInput.length()) {
-            postingsInput.prefetch(offset, len);
-        }
+        if (len <= 0 || offset < 0 || offset + len > postingsInput.length()) return;
+        // Skip prefetch for oversized postings that would thrash L2 cache
+        if (len > L2_CACHE_THRESHOLD) return;
+        postingsInput.prefetch(offset, len);
     }
 
     private static void reorderByOffset(ProbeTarget[] probes, int count, int windowSize) {

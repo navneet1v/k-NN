@@ -180,9 +180,10 @@ public final class QuantizedVectorReader {
             }
         }
 
-        // Apply corrections and collect
+        // Apply corrections and collect with early rejection
         float docBitScale = encoding.docBitScale();
         int dim = fieldState.dimension;
+        float candidateThreshold = candidates.threshold();
         for (int j = 0; j < blockSize; j++) {
             if (!validBuf[blockStart + j]) continue;
 
@@ -197,6 +198,8 @@ public final class QuantizedVectorReader {
             } else {
                 score += currentQueryAdditionalCorrection + blockAdd[j];
                 adcSimilarity = Math.max((1.0f + score) / 2.0f, 0);
+                // Early reject: if score can't beat threshold, skip collection
+                if (adcSimilarity <= candidateThreshold) continue;
             }
 
             candidates.add(ordBuf[blockStart + j], adcSimilarity);
