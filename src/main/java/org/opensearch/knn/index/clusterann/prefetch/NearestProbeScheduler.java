@@ -6,6 +6,7 @@
 package org.opensearch.knn.index.clusterann.prefetch;
 
 import org.apache.lucene.search.KnnCollector;
+import org.apache.lucene.util.VectorUtil;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
@@ -18,6 +19,13 @@ import java.util.Arrays;
  *
  * <p>Computes distances to all centroids, determines adaptive nprobe from
  * the distance distribution, then scans each centroid via the scanner.
+ *
+ * <p>Optimizations inspired by ScaNN:
+ * <ul>
+ *   <li>L2 via dot product + precomputed norms: ||q-c||² = ||q||² + ||c||² - 2·q·c</li>
+ *   <li>Primitive long[] sort (no Integer boxing)</li>
+ *   <li>Precomputed posting sizes for exact prefetch</li>
+ * </ul>
  */
 public final class NearestProbeScheduler implements ProbeScheduler {
 
@@ -33,20 +41,32 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         int numCentroids = fieldState.numCentroids;
         DistanceMetric metric = fieldState.metric;
 
-        // Compute distances and sort by distance using primitive long[] packing
+        // Compute distances using decomposed L2 when possible
         float[] dists = new float[numCentroids];
+        if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
+            // ScaNN optimization: ||q-c||² = ||q||² + ||c||² - 2·dot(q,c)
+            // dot product is faster than full L2 (no subtraction per dim)
+            // centroidNorms (||c||²) are precomputed in .clam
+            float queryNormSq = VectorUtil.dotProduct(query, query);
+            for (int c = 0; c < numCentroids; c++) {
+                float dot = VectorUtil.dotProduct(query, centroids[c]);
+                dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
+            }
+        } else {
+            for (int c = 0; c < numCentroids; c++) {
+                dists[c] = metric.distance(query, centroids[c]);
+            }
+        }
+
+        // Sort by distance using primitive long[] packing
         long[] packed = new long[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
-            dists[c] = metric.distance(query, centroids[c]);
-            // Pack: sortable float bits in upper 32, index in lower 32
             int floatBits = Float.floatToIntBits(dists[c]);
-            // Flip sign bit so IEEE 754 sorts correctly as unsigned long
             long sortKey = floatBits ^ (floatBits >> 31) | 0x80000000;
             packed[c] = (sortKey << 32) | (c & 0xFFFFFFFFL);
         }
         Arrays.sort(packed);
 
-        // Extract sorted indices
         int[] sortedIndices = new int[numCentroids];
         float[] sortedDists = new float[numCentroids];
         for (int i = 0; i < numCentroids; i++) {
