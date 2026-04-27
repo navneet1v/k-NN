@@ -22,7 +22,6 @@ import java.io.IOException;
  */
 public final class PostingListCodec {
 
-    private static final byte ENCODING_EMPTY = 0;
     private static final byte ENCODING_CONTINUOUS = 1;
     private static final byte ENCODING_DELTA_FIXED16 = 2;
     private static final byte ENCODING_PACKED_32 = 3;
@@ -75,9 +74,6 @@ public final class PostingListCodec {
     public static int read(IndexInput in, int[] buffer) throws IOException {
         int count = in.readVInt();
         if (count == 0) return 0;
-        if (count > buffer.length) {
-            buffer = new int[count]; // shouldn't happen in normal operation
-        }
         byte encoding = in.readByte();
         switch (encoding) {
             case ENCODING_CONTINUOUS -> {

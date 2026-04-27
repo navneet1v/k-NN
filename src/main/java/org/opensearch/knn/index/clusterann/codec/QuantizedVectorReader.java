@@ -8,7 +8,6 @@ package org.opensearch.knn.index.clusterann.codec;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.jni.SimdVectorComputeService;
@@ -24,10 +23,10 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  * <p>Block layout per BLOCK_SIZE vectors:
  * <pre>
  *   codes[0..BS-1]  ← contiguous for SIMD
- *   lower[0..BS-1]  ← bulk float read
- *   upper[0..BS-1]  ← bulk float read
- *   add[0..BS-1]    ← bulk float read
- *   sum[0..BS-1]    ← bulk int read
+ *   lower[0..BS-1]  ← bulk readInts
+ *   upper[0..BS-1]  ← bulk readInts
+ *   add[0..BS-1]    ← bulk readInts
+ *   sum[0..BS-1]    ← bulk readInts
  * </pre>
  */
 public final class QuantizedVectorReader {
@@ -56,16 +55,16 @@ public final class QuantizedVectorReader {
 
     // Block read buffers
     private final byte[] flatCodesBuf;
-    private final byte[][] blockCodes;
+    private final int[] intBuf;
     private final float[] blockLower;
     private final float[] blockUpper;
     private final float[] blockAdd;
     private final int[] blockSum;
-    private final float[] blockScores;
     private final float[] rawDotBuf;
     private final boolean nativeAvailable;
 
-    // Current query quantization state
+    // Cached query quantization state — avoid re-quantizing per block
+    private float[] cachedCentroid;
     private byte[] currentTransposed;
     private float currentQueryLower;
     private float currentQueryScale;
@@ -97,12 +96,11 @@ public final class QuantizedVectorReader {
         this.transposedBuffer = new byte[((fieldState.dimension + 7) / 8) * 4];
 
         this.flatCodesBuf = new byte[BLOCK_SIZE * packedBytes];
-        this.blockCodes = new byte[BLOCK_SIZE][packedBytes];
+        this.intBuf = new int[BLOCK_SIZE];
         this.blockLower = new float[BLOCK_SIZE];
         this.blockUpper = new float[BLOCK_SIZE];
         this.blockAdd = new float[BLOCK_SIZE];
         this.blockSum = new int[BLOCK_SIZE];
-        this.blockScores = new float[BLOCK_SIZE];
         this.rawDotBuf = new float[BLOCK_SIZE];
         this.nativeAvailable = isNativeAvailable();
     }
@@ -113,21 +111,11 @@ public final class QuantizedVectorReader {
 
     /** Bytes for one block of given size. */
     public long blockBytes(int blockSize) {
-        return (long) blockSize * packedBytes + (long) blockSize * Float.BYTES * 3 + (long) blockSize * Integer.BYTES;
+        return (long) blockSize * packedBytes + (long) blockSize * Integer.BYTES * 4;
     }
 
     /**
      * Score a block of vectors from current input position.
-     * Reads block-columnar: codes, then corrections.
-     *
-     * @param input      positioned at start of block's codes
-     * @param blockStart index into docIdBuf/ordBuf/validBuf
-     * @param blockSize  vectors in this block (≤ BLOCK_SIZE)
-     * @param docIdBuf   doc IDs for the posting
-     * @param ordBuf     ordinals for the posting
-     * @param validBuf   filter mask
-     * @param centroid   centroid for this posting
-     * @param centroidDp dot product of query with centroid (for non-euclidean)
      */
     public void scoreBlock(
         IndexInput input,
@@ -139,28 +127,32 @@ public final class QuantizedVectorReader {
         float[] centroid,
         float centroidDp
     ) throws IOException {
-        int validInBlock = 0;
+        // Count valid entries without separate loop — check while reading
+        boolean anyValid = false;
         for (int j = 0; j < blockSize; j++) {
-            if (validBuf[blockStart + j]) validInBlock++;
+            if (validBuf[blockStart + j]) {
+                anyValid = true;
+                break;
+            }
         }
 
-        if (validInBlock == 0) {
+        if (!anyValid) {
             input.skipBytes(blockBytes(blockSize));
             return;
         }
 
         ensureQueryQuantized(centroid);
 
-        // Read all codes in one bulk read
+        // Bulk read codes
         input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
 
-        // Read corrections in bulk (4 reads instead of 128)
+        // Bulk read corrections (4 calls total)
         readFloatsFromInts(input, blockLower, blockSize);
         readFloatsFromInts(input, blockUpper, blockSize);
         readFloatsFromInts(input, blockAdd, blockSize);
         input.readInts(blockSum, 0, blockSize);
 
-        // Bulk dot product: native SIMD or Java fallback
+        // Bulk dot product
         if (nativeAvailable) {
             SimdVectorComputeService.bulkQuantizedDotProduct(
                 currentTransposed,
@@ -171,27 +163,32 @@ public final class QuantizedVectorReader {
                 fieldState.docBits
             );
         } else {
+            // Java fallback: offset-based dot product (no per-vector copy)
             for (int j = 0; j < blockSize; j++) {
-                System.arraycopy(flatCodesBuf, j * packedBytes, blockCodes[j], 0, packedBytes);
-            }
-            for (int j = 0; j < blockSize; j++) {
+                if (!validBuf[blockStart + j]) {
+                    rawDotBuf[j] = 0;
+                    continue;
+                }
+                int offset = j * packedBytes;
                 if (fieldState.docBits == 1) {
-                    rawDotBuf[j] = VectorUtil.int4BitDotProduct(currentTransposed, blockCodes[j]);
+                    rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
                 } else if (fieldState.docBits == 2) {
-                    rawDotBuf[j] = VectorUtil.int4DibitDotProduct(currentTransposed, blockCodes[j]);
+                    rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
                 } else {
-                    rawDotBuf[j] = int4NibbleDotProduct(currentTransposed, blockCodes[j]);
+                    rawDotBuf[j] = int4NibbleDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
                 }
             }
         }
 
         // Apply corrections and collect
+        float docBitScale = encoding.docBitScale();
+        int dim = fieldState.dimension;
         for (int j = 0; j < blockSize; j++) {
             if (!validBuf[blockStart + j]) continue;
 
-            float docScale = (blockUpper[j] - blockLower[j]) * encoding.docBitScale();
-            float score = blockLower[j] * currentQueryLower * fieldState.dimension + currentQueryLower * docScale * blockSum[j]
-                + blockLower[j] * currentQueryScale * currentQueryComponentSum + docScale * currentQueryScale * rawDotBuf[j];
+            float docScale = (blockUpper[j] - blockLower[j]) * docBitScale;
+            float score = blockLower[j] * currentQueryLower * dim + currentQueryLower * docScale * blockSum[j] + blockLower[j]
+                * currentQueryScale * currentQueryComponentSum + docScale * currentQueryScale * rawDotBuf[j];
 
             float adcSimilarity;
             if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {
@@ -222,15 +219,17 @@ public final class QuantizedVectorReader {
         }
     }
 
-    private final int[] intBuf = new int[BLOCK_SIZE];
-
     private void readFloatsFromInts(IndexInput input, float[] out, int count) throws IOException {
         input.readInts(intBuf, 0, count);
         for (int i = 0; i < count; i++)
             out[i] = Float.intBitsToFloat(intBuf[i]);
     }
 
+    /** Cache query quantization per centroid — skip if same centroid reference. */
     private void ensureQueryQuantized(float[] centroid) {
+        if (centroid == cachedCentroid) return;
+        cachedCentroid = centroid;
+
         Arrays.fill(scratch, (byte) 0);
         System.arraycopy(queryVector, 0, queryCopy, 0, queryVector.length);
         OptimizedScalarQuantizer.QuantizationResult qResult = osq.multiScalarQuantize(queryCopy, destinations, bitsArray, centroid)[0];
@@ -245,11 +244,9 @@ public final class QuantizedVectorReader {
         currentQueryAdditionalCorrection = qResult.additionalCorrection();
     }
 
-    /** 4-bit × 4-bit transposed dot product. */
     private static boolean isNativeAvailable() {
         try {
             Class.forName("org.opensearch.knn.jni.SimdVectorComputeService");
-            // Verify the method exists by calling with zero-length arrays
             SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
             return true;
         } catch (Throwable t) {
@@ -257,14 +254,53 @@ public final class QuantizedVectorReader {
         }
     }
 
+    // ===== Public static dot product for tests =====
+
+    /** 4-bit × 4-bit transposed dot product (full array). */
     public static long int4NibbleDotProduct(byte[] queryTransposed, byte[] docTransposed) {
-        int stripeSize = docTransposed.length / 4;
+        return (long) int4NibbleDotProductOffset(queryTransposed, docTransposed, 0, docTransposed.length);
+    }
+
+    // ===== Offset-based dot products (no per-vector array copy) =====
+
+    /** 1-bit doc × 4-bit query: VectorUtil delegates with offset. */
+    private static float int4BitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
+        long sum = 0;
+        for (int i = 0; i < len; i++) {
+            int q0 = query[i] & 0xFF, q1 = query[i + len] & 0xFF;
+            int q2 = query[i + len * 2] & 0xFF, q3 = query[i + len * 3] & 0xFF;
+            int d = docs[offset + i] & 0xFF;
+            sum += Integer.bitCount(q0 & d) + Integer.bitCount(q1 & d) * 2L + Integer.bitCount(q2 & d) * 4L + Integer.bitCount(q3 & d) * 8L;
+        }
+        return sum;
+    }
+
+    /** 2-bit doc × 4-bit query with offset. */
+    private static float int4DibitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
+        int stripeSize = len / 2;
+        int qStripe = stripeSize; // query always has 4 stripes of stripeSize
         long sum = 0;
         for (int i = 0; i < stripeSize; i++) {
-            int d0 = docTransposed[i] & 0xFF, d1 = docTransposed[i + stripeSize] & 0xFF;
-            int d2 = docTransposed[i + stripeSize * 2] & 0xFF, d3 = docTransposed[i + stripeSize * 3] & 0xFF;
-            int q0 = queryTransposed[i] & 0xFF, q1 = queryTransposed[i + stripeSize] & 0xFF;
-            int q2 = queryTransposed[i + stripeSize * 2] & 0xFF, q3 = queryTransposed[i + stripeSize * 3] & 0xFF;
+            int d0 = docs[offset + i] & 0xFF, d1 = docs[offset + i + stripeSize] & 0xFF;
+            int q0 = query[i] & 0xFF, q1 = query[i + qStripe] & 0xFF;
+            int q2 = query[i + qStripe * 2] & 0xFF, q3 = query[i + qStripe * 3] & 0xFF;
+            sum += Integer.bitCount(q0 & d0) + Integer.bitCount(q0 & d1) * 2L + Integer.bitCount(q1 & d0) * 2L + Integer.bitCount(q1 & d1)
+                * 4L + Integer.bitCount(q2 & d0) * 4L + Integer.bitCount(q2 & d1) * 8L + Integer.bitCount(q3 & d0) * 8L + Integer.bitCount(
+                    q3 & d1
+                ) * 16L;
+        }
+        return sum;
+    }
+
+    /** 4-bit doc × 4-bit query with offset. */
+    private static float int4NibbleDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
+        int stripeSize = len / 4;
+        long sum = 0;
+        for (int i = 0; i < stripeSize; i++) {
+            int d0 = docs[offset + i] & 0xFF, d1 = docs[offset + i + stripeSize] & 0xFF;
+            int d2 = docs[offset + i + stripeSize * 2] & 0xFF, d3 = docs[offset + i + stripeSize * 3] & 0xFF;
+            int q0 = query[i] & 0xFF, q1 = query[i + stripeSize] & 0xFF;
+            int q2 = query[i + stripeSize * 2] & 0xFF, q3 = query[i + stripeSize * 3] & 0xFF;
             sum += Integer.bitCount(q0 & d0) + Integer.bitCount(q0 & d1) * 2L + Integer.bitCount(q0 & d2) * 4L + Integer.bitCount(q0 & d3)
                 * 8L + Integer.bitCount(q1 & d0) * 2L + Integer.bitCount(q1 & d1) * 4L + Integer.bitCount(q1 & d2) * 8L + Integer.bitCount(
                     q1 & d3

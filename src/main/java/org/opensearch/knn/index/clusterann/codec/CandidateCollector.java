@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.index.clusterann.codec;
 
+import java.util.Arrays;
+
 /**
  * Bounded min-heap for ADC candidate collection. Keeps top {@code maxCandidates}
  * by score, evicting the worst when full.
@@ -50,22 +52,23 @@ public final class CandidateCollector {
         return scores[i];
     }
 
-    /** Get indices of top-n candidates by score (partial select, descending). */
+    /** Get indices of top-n candidates by score (sort-based, O(n log n)). */
     int[] topN(int n) {
         n = Math.min(n, count);
-        int[] idx = new int[count];
-        for (int i = 0; i < count; i++)
-            idx[i] = i;
-        for (int i = 0; i < n; i++) {
-            int bestIdx = i;
-            for (int j = i + 1; j < count; j++) {
-                if (scores[idx[j]] > scores[idx[bestIdx]]) bestIdx = j;
-            }
-            int tmp = idx[i];
-            idx[i] = idx[bestIdx];
-            idx[bestIdx] = tmp;
+        // Pack (score, index) into long[] for primitive sort — descending by score
+        long[] packed = new long[count];
+        for (int i = 0; i < count; i++) {
+            // Negate float bits for descending sort
+            int floatBits = Float.floatToIntBits(scores[i]);
+            long sortKey = ~((long) (floatBits ^ ((floatBits >> 31) | 0x80000000)) & 0xFFFFFFFFL);
+            packed[i] = (sortKey << 32) | (i & 0xFFFFFFFFL);
         }
-        return java.util.Arrays.copyOf(idx, n);
+        Arrays.sort(packed, 0, count);
+        int[] result = new int[n];
+        for (int i = 0; i < n; i++) {
+            result[i] = (int) packed[i];
+        }
+        return result;
     }
 
     private void buildMinHeap() {

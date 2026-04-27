@@ -12,7 +12,6 @@ import org.apache.lucene.search.join.BitSetProducer;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
-import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 import org.opensearch.knn.index.query.common.QueryUtils;
 import org.opensearch.knn.index.query.lucenelib.OSKnnByteVectorQuery;
 import org.opensearch.knn.index.query.lucenelib.OSKnnFloatVectorQuery;
@@ -53,11 +52,14 @@ public class KNNQueryFactory extends BaseQueryFactory {
         final RescoreContext rescoreContext = createQueryRequest.getRescoreContext().orElse(null);
         final boolean expandNested = createQueryRequest.isExpandNested();
         final boolean memoryOptimizedSearchEnabled = createQueryRequest.isMemoryOptimizedSearchEnabled();
-        final KNNVectorFieldType knnVectorFieldType = (KNNVectorFieldType) createQueryRequest.getContext().getFieldType(fieldName);
 
-        final QueryShardContext context = createQueryRequest.getContext();
-        final BitSetProducer parentFilter = context.getParentFilter();
-        int shardId = context.getShardId();
+        BitSetProducer parentFilter = null;
+        int shardId = -1;
+        if (createQueryRequest.getContext().isPresent()) {
+            QueryShardContext context = createQueryRequest.getContext().get();
+            parentFilter = context.getParentFilter();
+            shardId = context.getShardId();
+        }
 
         if (parentFilter == null && expandNested) {
             throw new IllegalArgumentException(
@@ -70,7 +72,7 @@ public class KNNQueryFactory extends BaseQueryFactory {
             );
         }
 
-        if (knnVectorFieldType.useKNNQuery(createQueryRequest.getKnnEngine())) {
+        if (KNNEngine.getEnginesThatCreateCustomSegmentFiles().contains(createQueryRequest.getKnnEngine())) {
             final Query validatedFilterQuery = validateFilterQuerySupport(filterQuery, createQueryRequest.getKnnEngine());
 
             log.debug(

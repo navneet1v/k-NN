@@ -75,10 +75,14 @@ public class RNNQueryFactory extends BaseQueryFactory {
         final boolean memoryOptimizedSearchEnabled = createQueryRequest.isMemoryOptimizedSearchEnabled();
 
         if (KNNEngine.getEnginesThatCreateCustomSegmentFiles().contains(createQueryRequest.getKnnEngine())) {
-            final QueryShardContext context = createQueryRequest.getContext();
-            final BitSetProducer parentFilter = context.getParentFilter();
-            final IndexSettings indexSettings = context.getIndexSettings();
-            final KNNQuery.Context knnQueryContext = new KNNQuery.Context(indexSettings.getMaxResultWindow());
+            BitSetProducer parentFilter = null;
+            QueryShardContext context = createQueryRequest.getContext().get();
+
+            if (createQueryRequest.getContext().isPresent()) {
+                parentFilter = context.getParentFilter();
+            }
+            IndexSettings indexSettings = context.getIndexSettings();
+            KNNQuery.Context knnQueryContext = new KNNQuery.Context(indexSettings.getMaxResultWindow());
 
             return KNNQuery.builder()
                 .field(fieldName)

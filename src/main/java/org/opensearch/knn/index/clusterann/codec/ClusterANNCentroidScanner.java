@@ -40,7 +40,7 @@ public final class ClusterANNCentroidScanner {
     private boolean[] validBuf = new boolean[1024];
     private float[] scoreBuf = new float[1024];
 
-    // State set by reset()
+    // State set by prepare()
     private int centroidIdx;
 
     public ClusterANNCentroidScanner(
@@ -83,10 +83,11 @@ public final class ClusterANNCentroidScanner {
         int count = PostingListCodec.read(postingsInput, docIdBuf);
         if (count == 0) return 0;
 
+        // Bulk read ordinals (fixed-width ints)
         int ordCount = postingsInput.readVInt();
         ensureCapacity(Math.max(count, ordCount));
-        for (int i = 0; i < ordCount; i++) {
-            ordBuf[i] = postingsInput.readVInt();
+        if (ordCount > 0) {
+            postingsInput.readInts(ordBuf, 0, ordCount);
         }
 
         int validCount = 0;
@@ -106,13 +107,13 @@ public final class ClusterANNCentroidScanner {
         }
 
         if (useADC && adcReader != null) {
-            return scoreADC(collector, count);
+            return scoreADC(collector, count, validCount);
         } else {
             return scoreExact(collector, count);
         }
     }
 
-    private int scoreADC(KnnCollector collector, int count) throws IOException {
+    private int scoreADC(KnnCollector collector, int count, int validCount) throws IOException {
         float[] centroid = fieldState.centroids[centroidIdx];
         float centroidDp = 0f;
         if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
@@ -134,9 +135,9 @@ public final class ClusterANNCentroidScanner {
     }
 
     private int scoreExact(KnnCollector collector, int count) throws IOException {
-        // Skip block-columnar quantized section
         skipQuantizedBlocks(count);
 
+        // Compact valid entries
         int batchCount = 0;
         for (int i = 0; i < count; i++) {
             if (!validBuf[i]) continue;
@@ -158,10 +159,7 @@ public final class ClusterANNCentroidScanner {
         return batchCount;
     }
 
-    /** Skip the block-columnar quantized section for `count` vectors. */
     private void skipQuantizedBlocks(int count) throws IOException {
-        // Each vector contributes: packedBytes + 4 ints (lower, upper, add, sum)
-        // Block-columnar layout has same total bytes as row layout, just reordered
         long totalBytes = (long) count * packedBytes + (long) count * Integer.BYTES * 4;
         postingsInput.skipBytes(totalBytes);
     }

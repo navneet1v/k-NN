@@ -124,6 +124,11 @@ public final class IVFIndexBuilder {
             System.arraycopy(idx, 0, nearestCentroids[c], 0, candidateLimit);
         }
 
+        // Thread-local buffers to avoid per-vector allocation
+        int flatSize = candidateLimit * dim;
+        ThreadLocal<float[]> tlFlatCandidates = ThreadLocal.withInitial(() -> new float[flatSize]);
+        ThreadLocal<float[]> tlDists = ThreadLocal.withInitial(() -> new float[candidateLimit]);
+
         // Parallel SOAR computation
         IntStream.range(0, n).parallel().forEach(i -> {
             float[] vec;
@@ -138,13 +143,12 @@ public final class IVFIndexBuilder {
             int numCandidates = neighbors.length;
             if (numCandidates == 0) return;
 
-            // Flatten candidate centroids (thread-local allocation)
-            float[] flatCandidates = new float[numCandidates * dim];
+            float[] flatCandidates = tlFlatCandidates.get();
             for (int j = 0; j < numCandidates; j++) {
                 System.arraycopy(centroids[neighbors[j]], 0, flatCandidates, j * dim, dim);
             }
 
-            float[] dists = new float[numCandidates];
+            float[] dists = tlDists.get();
             try {
                 SimdVectorComputeService.bulkSOARDistance(vec, primaryCentroid, flatCandidates, dists, dim, numCandidates, soarLambda);
             } catch (Throwable t) {

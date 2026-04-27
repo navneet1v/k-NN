@@ -27,22 +27,19 @@ import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.algorithm.IVFIndexBuilder;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
 import org.opensearch.knn.index.clusterann.codec.*;
-import org.opensearch.knn.index.clusterann.prefetch.*;
 
 /**
  * Writer for ClusterANN IVF format v2.
  *
  * <p>Two files:
  * <ul>
- *   <li>{@code .clam} — metadata + centroids + offset table</li>
+ *   <li>{@code .clam} — metadata + centroid stats + posting sizes + centroids + offset table</li>
  *   <li>{@code .clap} — per-centroid: [docIds | ordinals | quantized] columnar</li>
  * </ul>
  *
@@ -151,32 +148,32 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
         // 2. Spatial sort centroids (by first principal component)
         int[] spatialOrder = spatialSort(centroids, dimension);
-        // Remap: spatialOrder[sortedIdx] = originalIdx
 
         // 3. Write posting lists to .clap (in spatial order, primary+soar adjacent)
         postingsOutput.alignFilePointer(SECTION_ALIGNMENT);
         long postingsFieldOffset = postingsOutput.getFilePointer();
-        long[] centroidOffsets = new long[numCentroids]; // offset per ORIGINAL centroid index
+        long[] centroidOffsets = new long[numCentroids];
+        int[] postingSizes = new int[numCentroids]; // exact byte size per centroid
 
         int[][] primaryPostings = result.primaryPostingLists();
         int[][] soarPostings = result.soarPostingLists();
 
-        ByteBuffer floatBuf = ByteBuffer.allocate(dimension * Float.BYTES).order(ByteOrder.LITTLE_ENDIAN);
-
         try (QuantizedVectorWriter qWriter = new QuantizedVectorWriter(fieldInfo.getVectorSimilarityFunction(), dimension, docBits)) {
             for (int si = 0; si < numCentroids; si++) {
                 int origIdx = spatialOrder[si];
-                centroidOffsets[origIdx] = postingsOutput.getFilePointer();
+                long startPos = postingsOutput.getFilePointer();
+                centroidOffsets[origIdx] = startPos;
 
                 // Primary posting list
                 writePostingList(primaryPostings[origIdx], vectors, centroids[origIdx], qWriter);
-
                 // SOAR posting list (adjacent)
                 writePostingList(soarPostings[origIdx], vectors, centroids[origIdx], qWriter);
+
+                postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
             }
         }
 
-        // 4. Write .clam: meta + centroid stats + centroids + offset table
+        // 4. Write .clam: meta + centroid stats + posting sizes + centroids + offset table
         metaOutput.writeInt(fieldInfo.number);
         metaOutput.writeInt(numVectors);
         metaOutput.writeInt(dimension);
@@ -198,11 +195,16 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             metaOutput.writeInt(Float.floatToIntBits(norm));
         }
 
-        // Centroids in original order (bulk write via ByteBuffer)
+        // Posting sizes (exact bytes per centroid — for accurate prefetch)
         for (int c = 0; c < numCentroids; c++) {
-            floatBuf.clear();
-            floatBuf.asFloatBuffer().put(centroids[c]);
-            metaOutput.writeBytes(floatBuf.array(), floatBuf.array().length);
+            metaOutput.writeInt(postingSizes[c]);
+        }
+
+        // Centroids in original order
+        for (int c = 0; c < numCentroids; c++) {
+            for (int d = 0; d < dimension; d++) {
+                metaOutput.writeInt(Float.floatToIntBits(centroids[c][d]));
+            }
         }
 
         // Offset table (indexed by original centroid index)
@@ -220,7 +222,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     }
 
     /**
-     * Write one posting list: [docIds | ordinals | quantized blocks] columnar.
+     * Write one posting list: [docIds | ordinals (fixed-width) | quantized blocks] columnar.
      */
     private void writePostingList(int[] ordinals, ClusterANNVectorValues vectors, float[] centroid, QuantizedVectorWriter qWriter)
         throws IOException {
@@ -236,8 +238,13 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         sortParallel(docIds, ordinals, count);
 
         // Write columns
-        PostingListCodec.write(docIds, postingsOutput);     // docIds column (sorted, delta-encoded)
-        writeRawInts(ordinals, postingsOutput);              // ordinals column (unsorted, raw VInts)
+        PostingListCodec.write(docIds, postingsOutput);
+
+        // Ordinals: fixed-width bulk write
+        postingsOutput.writeVInt(count);
+        for (int i = 0; i < count; i++) {
+            postingsOutput.writeInt(ordinals[i]);
+        }
 
         // Quantized column — block-columnar for SIMD scoring
         qWriter.writeBlocked(ordinals, count, vectors::vectorValue, centroid, postingsOutput);
@@ -276,8 +283,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             for (int d = 0; d < dimension; d++)
                 mean[d] += c[d];
         }
+        float invN = 1f / n;
         for (int d = 0; d < dimension; d++)
-            mean[d] /= n;
+            mean[d] *= invN;
 
         // Find axis of max variance (farthest centroid from mean)
         float[] axis = new float[dimension];
@@ -290,9 +298,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             }
             if (dist > maxDist) {
                 maxDist = dist;
-                System.arraycopy(c, 0, axis, 0, dimension);
                 for (int d = 0; d < dimension; d++)
-                    axis[d] -= mean[d];
+                    axis[d] = c[d] - mean[d];
             }
         }
 
@@ -312,15 +319,6 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             order[i] = (int) packed[i];
         }
         return order;
-    }
-
-    /** Sort two parallel arrays by the first (keys). */
-    /** Write unsorted ints as count + raw VInts. */
-    private static void writeRawInts(int[] vals, IndexOutput out) throws IOException {
-        out.writeVInt(vals.length);
-        for (int v : vals) {
-            out.writeVInt(v);
-        }
     }
 
     /** Sort two parallel arrays by the first (keys). */

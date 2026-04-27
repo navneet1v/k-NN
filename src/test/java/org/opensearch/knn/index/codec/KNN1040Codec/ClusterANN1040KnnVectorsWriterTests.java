@@ -168,9 +168,10 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                 metaIn.readString(); // metricName
                 metaIn.readByte(); // docBits
                 metaIn.readLong(); // postingsOffset
-                // Skip centroidDocCounts + centroidNorms
+                // Skip centroidDocCounts + centroidNorms + postingSizes
                 metaIn.skipBytes((long) numCentroids * Integer.BYTES);
                 metaIn.skipBytes((long) numCentroids * Float.BYTES);
+                metaIn.skipBytes((long) numCentroids * Integer.BYTES);
             }
 
             // Read postings file
@@ -191,8 +192,7 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                     totalPrimary += primaryDocIds.length;
                     int primaryOrdCount = postIn.readVInt();
                     int[] primaryOrds = new int[primaryOrdCount];
-                    for (int j = 0; j < primaryOrdCount; j++)
-                        primaryOrds[j] = postIn.readVInt();
+                    postIn.readInts(primaryOrds, 0, primaryOrdCount);
                     assertEquals(primaryDocIds.length, primaryOrds.length);
                     // Skip block-columnar quantized section
                     int packedBytes = ScalarBitEncoding.fromDocBits((byte) 1).docPackedBytes(DIM);
@@ -204,8 +204,7 @@ public class ClusterANN1040KnnVectorsWriterTests extends KNNTestCase {
                     totalSoar += soarDocIds.length;
                     int soarOrdCount = postIn.readVInt();
                     int[] soarOrds = new int[soarOrdCount];
-                    for (int j = 0; j < soarOrdCount; j++)
-                        soarOrds[j] = postIn.readVInt();
+                    postIn.readInts(soarOrds, 0, soarOrdCount);
                     assertEquals(soarDocIds.length, soarOrds.length);
                     postIn.skipBytes((long) soarDocIds.length * packedBytes + (long) soarDocIds.length * Integer.BYTES * 4);
                 }

@@ -29,29 +29,38 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         this.scanner = scanner;
         float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
+        int[] postingSizes = fieldState.postingSizes;
         int numCentroids = fieldState.numCentroids;
         DistanceMetric metric = fieldState.metric;
 
+        // Compute distances and sort by distance using primitive long[] packing
         float[] dists = new float[numCentroids];
-        Integer[] indices = new Integer[numCentroids];
+        long[] packed = new long[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
             dists[c] = metric.distance(query, centroids[c]);
-            indices[c] = c;
+            // Pack: sortable float bits in upper 32, index in lower 32
+            int floatBits = Float.floatToIntBits(dists[c]);
+            // Flip sign bit so IEEE 754 sorts correctly as unsigned long
+            long sortKey = floatBits ^ (floatBits >> 31) | 0x80000000;
+            packed[c] = (sortKey << 32) | (c & 0xFFFFFFFFL);
         }
-        Arrays.sort(indices, (a, b) -> Float.compare(dists[a], dists[b]));
+        Arrays.sort(packed);
 
+        // Extract sorted indices
+        int[] sortedIndices = new int[numCentroids];
         float[] sortedDists = new float[numCentroids];
         for (int i = 0; i < numCentroids; i++) {
-            sortedDists[i] = dists[indices[i]];
+            int c = (int) packed[i];
+            sortedIndices[i] = c;
+            sortedDists[i] = dists[c];
         }
+
         this.nprobe = calculateNprobe(sortedDists, numCentroids, k);
 
         this.probes = new ProbeTarget[nprobe];
         for (int i = 0; i < nprobe; i++) {
-            int c = indices[i];
-            long offset = offsets[c];
-            long nextOffset = findNextOffset(offsets, c);
-            probes[i] = new ProbeTarget(c, offset, nextOffset - offset, dists[c]);
+            int c = sortedIndices[i];
+            this.probes[i] = new ProbeTarget(c, offsets[c], postingSizes[c], dists[c]);
         }
     }
 
@@ -66,24 +75,12 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         return totalScored;
     }
 
-    /** Exposed for wrapping stages that need the probe list. */
     ProbeTarget[] probes() {
         return probes;
     }
 
     int nprobe() {
         return nprobe;
-    }
-
-    private static long findNextOffset(long[] offsets, int centroidIdx) {
-        long thisOffset = offsets[centroidIdx];
-        long minNext = Long.MAX_VALUE;
-        for (long offset : offsets) {
-            if (offset > thisOffset && offset < minNext) {
-                minNext = offset;
-            }
-        }
-        return minNext == Long.MAX_VALUE ? thisOffset + 1024 * 1024 : minNext;
     }
 
     private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {

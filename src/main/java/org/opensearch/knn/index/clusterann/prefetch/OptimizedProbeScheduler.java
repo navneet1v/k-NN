@@ -16,19 +16,13 @@ import java.util.Arrays;
  * Wraps a {@link NearestProbeScheduler} to reorder probes by file offset
  * within sliding windows, and issue read-ahead prefetch for upcoming probes.
  *
- * <p>This is a single stage that handles both I/O optimization concerns:
- * <ul>
- *   <li>Windowed offset reordering for sequential disk access</li>
- *   <li>Sliding-window prefetch via {@link IndexInput#prefetch}</li>
- * </ul>
- *
  * <p>Also enforces a scoring budget: stops probing when enough vectors
  * have been scored and competitive results are found.
  */
 public final class OptimizedProbeScheduler implements ProbeScheduler {
 
     private static final int WINDOW_SIZE = 4;
-    private static final int LOOKAHEAD = 2;
+    private static final int LOOKAHEAD = 4;
 
     private final ProbeTarget[] probes;
     private final int nprobe;
@@ -60,10 +54,8 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
 
     @Override
     public int execute(KnnCollector collector) throws IOException {
-        // Reorder probes: sort within windows by file offset
         reorderByOffset(probes, nprobe, WINDOW_SIZE);
 
-        // Compute budget
         double logN = Math.log10(Math.max(numVectors, 10));
         long budget = Math.max(k * 4L, (long) (2.0 * logN * logN * k));
         float filterSelectivity = numVectors > 0 ? (float) filterCost / numVectors : 1.0f;
@@ -82,11 +74,9 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         for (int i = 0; i < nprobe; i++) {
             ProbeTarget probe = probes[i];
 
-            // Filter: skip centroids unlikely to have matching docs
             if (filterActive) {
                 int docCount = centroidDocCounts[probe.centroidIdx()];
                 if (docCount * filterSelectivity < 0.5f) {
-                    // Prefetch next
                     if (prefetchedUpTo + 1 < nprobe) {
                         prefetchedUpTo++;
                         issueReadAhead(probes[prefetchedUpTo]);
@@ -95,18 +85,16 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 }
             }
 
-            // Budget: stop if we've scored enough and have competitive results
             if (docsScored >= k && docsExpected >= budget && collector.minCompetitiveSimilarity() != Float.NEGATIVE_INFINITY) {
                 break;
             }
 
-            // Prefetch next probe
-            if (prefetchedUpTo + 1 < nprobe) {
+            // Prefetch next probes
+            while (prefetchedUpTo + 1 < nprobe && prefetchedUpTo < i + LOOKAHEAD) {
                 prefetchedUpTo++;
                 issueReadAhead(probes[prefetchedUpTo]);
             }
 
-            // Scan this centroid
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
             docsExpected += centroidDocCounts[probe.centroidIdx()];
@@ -127,7 +115,6 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         }
     }
 
-    /** Sort probes within fixed-size windows by file offset. */
     private static void reorderByOffset(ProbeTarget[] probes, int count, int windowSize) {
         for (int start = 0; start < count; start += windowSize) {
             int end = Math.min(start + windowSize, count);

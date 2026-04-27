@@ -36,7 +36,7 @@ import org.opensearch.knn.index.clusterann.prefetch.*;
  * Reader for ClusterANN IVF format v2.
  *
  * <p>Search uses a composable probe pipeline:
- * {@link NearestProbeScheduler} → {@link SequentialProbeScheduler} → {@link ReadAheadProbeScheduler}
+ * {@link NearestProbeScheduler} → {@link OptimizedProbeScheduler}
  * feeding a {@link ClusterANNCentroidScanner}.
  */
 @Log4j2
