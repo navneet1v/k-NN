@@ -67,6 +67,23 @@ customer needs more RAM.
 
 ## 3. Solutions Considered
 
+### Quick Comparison
+
+| Option | Approach | Tracks Resident? | `mmap_lock` Free? | Overhead | Kernel Req | Assessment |
+|--------|----------|:-:|:-:|----------|------------|:--:|
+| **A** | `mincore()` via JNI | ✅ Yes | ❌ No | High — page table walk per graph | Any | ❌ |
+| **B** | `/proc/self/smaps` | ✅ Yes | ❌ No | Very high — walks ALL mappings | Any | ❌ |
+| **C** | `mincore()` via Panama FFM | ✅ Yes | ❌ No | High — same as A | Any | ❌ |
+| **D** | `mlock()` + tracked size | ✅ Guaranteed | N/A | Low | Any | ❌ |
+| **E** | Major page fault counter | ⚠️ Indirect | ✅ Yes | Zero | Any | ⚠️ |
+| **F** | Search-path latency | ⚠️ Indirect | ✅ Yes | Zero | Any | ⚠️ |
+| **G** | Mapped size tracking | ❌ No | ✅ Yes | Zero | Any | ✅ Primary |
+| **H** | `cachestat()` syscall | ✅ Yes | ✅ Yes | Low — RCU xarray walk | Linux 6.5+ | ⚠️ Future |
+
+**Recommended path**: Implement **G** now (mapped size — zero overhead, same contract as traditional path). Pursue **H** as a future enhancement when Linux 6.5+ adoption is sufficient (the only lock-free approach that provides actual resident size).
+
+---
+
 ### 3.1 Option A: `mincore()` via JNI — Exact Resident Size
 
 **Approach**: Use the `mincore()` Linux syscall to query which pages of each mmap'd graph file
@@ -450,6 +467,14 @@ the exact "you're running low on memory" signal that motivated this design.
 tables acquires the process-wide `mmap_lock`, which contends with Lucene's continuous segment
 open/close operations. This contention causes stalls in indexing and search, even when called
 periodically. See Appendix A for the full analysis.
+
+**Buffer Pool Based Memory Tracking**
+As we already know the Index Level Encryption Plugin is already implementing a Buffer Pool where all the memory segments 
+will loaded for a file after decryption. Now this gives us an advantage that if buffer pool is enabled then we track the 
+memory for graph files since in that case we will know what pages are present in BufferPool. This check should be simple 
+L1 cache check of buffer pool. But since buffer pool is not production-ize right now and might be applicable to all 
+domains we still see a gap.
+
 
 ### The Fundamental Tradeoff
 
