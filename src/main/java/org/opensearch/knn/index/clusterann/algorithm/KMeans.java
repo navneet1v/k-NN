@@ -205,6 +205,8 @@ public final class KMeans {
 
     // ========== Assignment Step ==========
 
+    private static final int BATCH_SIZE = 128;
+
     private static int assignmentStep(
         ClusterANNVectorValues vectors,
         float[][] centroids,
@@ -218,8 +220,6 @@ public final class KMeans {
         int n = vectors.size();
         int dim = vectors.dimension();
 
-        // Create centroid views for SIMD-accelerated distance (avoids offset-based overload)
-        float[][] centroidViews = centroids;
         float[] flatCentroids = ClusterANNVectorUtil.flattenCentroids(centroids);
         int metricOrd = config.metric == DistanceMetric.L2 ? 0 : 1;
 
@@ -234,44 +234,50 @@ public final class KMeans {
             int[][] threadCounts = new int[numThreads][k];
             AtomicInteger movedCount = new AtomicInteger(0);
 
-            IntStream.range(0, n).parallel().forEach(i -> {
+            // Batch assignment: process BATCH_SIZE vectors per task
+            int numBatches = (n + BATCH_SIZE - 1) / BATCH_SIZE;
+            IntStream.range(0, numBatches).parallel().forEach(batch -> {
                 int tid = (int) (Thread.currentThread().threadId() % numThreads);
-                float[] vec;
-                try {
-                    vec = vectors.vectorValue(i);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-                float bestDist = Float.MAX_VALUE;
-                int bestCluster = 0;
+                int batchStart = batch * BATCH_SIZE;
+                int batchEnd = Math.min(batchStart + BATCH_SIZE, n);
+                int batchLen = batchEnd - batchStart;
 
-                int prevCluster = assignments[i];
-
-                if (centroidProximityMap != null && prevCluster >= 0) {
-                    // Neighborhood-aware: only check current centroid + its neighbors
-                    bestDist = config.metric.distance(vec, centroidViews[prevCluster]);
-                    bestCluster = prevCluster;
-                    for (int nc : centroidProximityMap[prevCluster]) {
-                        float dist = config.metric.distance(vec, centroidViews[nc]);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            bestCluster = nc;
-                        }
+                // Tile: compute all distances for this batch
+                float[] distBuf = new float[k];
+                for (int i = batchStart; i < batchEnd; i++) {
+                    float[] vec;
+                    try {
+                        vec = vectors.vectorValue(i);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
                     }
-                } else {
-                    // Full scan: bulk native SIMD distance to all centroids
-                    float[] dists = new float[k]; // thread-local allocation
-                    bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, dists, metricOrd);
-                }
 
-                if (assignments[i] != bestCluster) {
-                    movedCount.incrementAndGet();
-                    assignments[i] = bestCluster;
-                }
+                    int bestCluster;
+                    int prevCluster = assignments[i];
 
-                threadCounts[tid][bestCluster]++;
-                for (int d = 0; d < dim; d++) {
-                    threadSums[tid][bestCluster][d] += vec[d];
+                    if (centroidProximityMap != null && prevCluster >= 0) {
+                        float bestDist = config.metric.distance(vec, centroids[prevCluster]);
+                        bestCluster = prevCluster;
+                        for (int nc : centroidProximityMap[prevCluster]) {
+                            float dist = config.metric.distance(vec, centroids[nc]);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                bestCluster = nc;
+                            }
+                        }
+                    } else {
+                        bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, distBuf, metricOrd);
+                    }
+
+                    if (assignments[i] != bestCluster) {
+                        movedCount.incrementAndGet();
+                        assignments[i] = bestCluster;
+                    }
+
+                    threadCounts[tid][bestCluster]++;
+                    for (int d = 0; d < dim; d++) {
+                        threadSums[tid][bestCluster][d] += vec[d];
+                    }
                 }
             });
 
@@ -287,26 +293,24 @@ public final class KMeans {
             return movedCount.get();
         } else {
             int moved = 0;
+            float[] distBuf = new float[k];
             for (int i = 0; i < n; i++) {
                 float[] vec = vectors.vectorValue(i);
-                float bestDist = Float.MAX_VALUE;
-                int bestCluster = 0;
-
+                int bestCluster;
                 int prevCluster = assignments[i];
+
                 if (centroidProximityMap != null && prevCluster >= 0) {
-                    bestDist = config.metric.distance(vec, centroidViews[prevCluster]);
+                    float bestDist = config.metric.distance(vec, centroids[prevCluster]);
                     bestCluster = prevCluster;
                     for (int nc : centroidProximityMap[prevCluster]) {
-                        float dist = config.metric.distance(vec, centroidViews[nc]);
+                        float dist = config.metric.distance(vec, centroids[nc]);
                         if (dist < bestDist) {
                             bestDist = dist;
                             bestCluster = nc;
                         }
                     }
                 } else {
-                    // Full scan: bulk native SIMD distance
-                    float[] dists = new float[k];
-                    bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, dists, metricOrd);
+                    bestCluster = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flatCentroids, k, dim, distBuf, metricOrd);
                 }
 
                 if (assignments[i] != bestCluster) {
@@ -347,22 +351,54 @@ public final class KMeans {
         Config config
     ) {
         int dim = vectors.dimension();
-        Random rng = new Random(config.seed + 7);
 
+        // Find largest cluster
         int largestCluster = 0;
         for (int c = 1; c < k; c++) {
             if (clusterCounts[c] > clusterCounts[largestCluster]) {
                 largestCluster = c;
             }
         }
+        if (clusterCounts[largestCluster] < 2) return;
 
+        // PCA-inspired splitting: find dimension of max variance in largest cluster
         for (int c = 0; c < k; c++) {
-            if (clusterCounts[c] == 0) {
-                for (int d = 0; d < dim; d++) {
-                    float perturbation = (rng.nextFloat() - 0.5f) * config.perturbation;
-                    centroids[c][d] = centroids[largestCluster][d] + perturbation;
+            if (clusterCounts[c] != 0) continue;
+
+            // Find dimension with max variance in largest cluster
+            float[] mean = centroids[largestCluster];
+            float maxVar = 0f;
+            int splitDim = 0;
+            float[] variances = new float[dim];
+            int count = 0;
+            for (int i = 0; i < assignments.length; i++) {
+                if (assignments[i] != largestCluster) continue;
+                try {
+                    float[] vec = vectors.vectorValue(i);
+                    for (int d = 0; d < dim; d++) {
+                        float diff = vec[d] - mean[d];
+                        variances[d] += diff * diff;
+                    }
+                    count++;
+                } catch (Exception e) {
+                    break;
                 }
             }
+            if (count > 0) {
+                for (int d = 0; d < dim; d++) {
+                    if (variances[d] > maxVar) {
+                        maxVar = variances[d];
+                        splitDim = d;
+                    }
+                }
+            }
+
+            // Split: perturb along max-variance dimension
+            float offset = (float) Math.sqrt(maxVar / Math.max(count, 1)) * 0.5f;
+            if (offset < 1e-6f) offset = config.perturbation;
+            System.arraycopy(centroids[largestCluster], 0, centroids[c], 0, dim);
+            centroids[c][splitDim] += offset;
+            centroids[largestCluster][splitDim] -= offset;
         }
     }
 
@@ -506,7 +542,7 @@ public final class KMeans {
         public static final class Builder {
             private DistanceMetric metric = DistanceMetric.L2;
             private int maxIterations = 20;
-            private float convergenceThreshold = 0f; // 0 = only stop when no moves
+            private float convergenceThreshold = 0.001f;
             private long seed = 42L;
             private boolean parallel = true;
             private boolean rebalanceEmpty = true;
