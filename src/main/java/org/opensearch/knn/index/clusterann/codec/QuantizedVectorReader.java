@@ -31,7 +31,7 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  */
 public final class QuantizedVectorReader {
 
-    private static final float RESCORE_OVERSAMPLE = 2.0f;
+    private static final int OVERSAMPLE = 20;
     private static final byte QUERY_BITS = 4;
     private static final float FOUR_BIT_SCALE = 1.0f / ((1 << QUERY_BITS) - 1);
 
@@ -42,6 +42,7 @@ public final class QuantizedVectorReader {
     private final ScalarBitEncoding encoding;
     private final int packedBytes;
     private final int k;
+    private final CandidateCollector candidates;
     private KnnCollector currentCollector;
 
     // Query quantization scratch
@@ -84,7 +85,7 @@ public final class QuantizedVectorReader {
         this.encoding = ScalarBitEncoding.fromDocBits(fieldState.docBits);
         this.packedBytes = encoding.docPackedBytes(fieldState.dimension);
         this.k = k;
-
+        this.candidates = new CandidateCollector(k * OVERSAMPLE);
         this.osq = new OptimizedScalarQuantizer(simFunc);
         this.scratch = new byte[fieldState.dimension];
         this.destinations = new byte[][] { scratch };
@@ -197,7 +198,7 @@ public final class QuantizedVectorReader {
                 adcSimilarity = (1.0f + Math.clamp(score, -1f, 1f)) / 2.0f;
             }
 
-            currentCollector.collect(docIdBuf[blockStart + j], adcSimilarity);
+            candidates.add(ordBuf[blockStart + j], adcSimilarity);
         }
     }
 
@@ -206,8 +207,25 @@ public final class QuantizedVectorReader {
         this.currentCollector = collector;
     }
 
-    /** No-op — collection happens directly in scoreBlock. */
-    public void finish(KnnCollector collector) throws IOException {}
+    /**
+     * Rescore top ADC candidates with exact scorer and drain into KnnCollector.
+     * ADC selects candidates, exact scorer ranks them correctly.
+     */
+    public void finish(KnnCollector collector) throws IOException {
+        int rescoreCount = Math.min(k * 2, candidates.count());
+        if (rescoreCount == 0) return;
+
+        int[] topIdx = candidates.topN(rescoreCount);
+        int[] ords = new int[rescoreCount];
+        for (int i = 0; i < rescoreCount; i++) {
+            ords[i] = candidates.ordinal(topIdx[i]);
+        }
+        float[] scores = new float[rescoreCount];
+        exactScorer.bulkScore(ords, scores, rescoreCount);
+        for (int i = 0; i < rescoreCount; i++) {
+            collector.collect(exactScorer.ordToDoc(ords[i]), scores[i]);
+        }
+    }
 
     private void readFloatsFromInts(IndexInput input, float[] out, int count) throws IOException {
         input.readInts(intBuf, 0, count);

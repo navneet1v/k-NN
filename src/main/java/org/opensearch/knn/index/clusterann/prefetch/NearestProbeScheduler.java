@@ -105,16 +105,6 @@ public final class NearestProbeScheduler implements ProbeScheduler {
 
     private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {
         if (numCentroids <= 10) return numCentroids;
-        int sqrtC = (int) Math.sqrt(numCentroids);
-        int minProbe = Math.max((int) Math.sqrt(k), sqrtC / 2);
-        int maxProbe = Math.min(numCentroids, sqrtC * 4);
-        float nearestDist = sortedDists[0];
-        float cutoff = Math.max(nearestDist * 2f, 1e-6f);
-        int nprobe = minProbe;
-        for (int i = minProbe; i < maxProbe; i++) {
-            if (sortedDists[i] > cutoff) break;
-            nprobe = i + 1;
-        }
-        return nprobe;
+        return Math.max(10, (int) Math.sqrt(numCentroids));
     }
 }
