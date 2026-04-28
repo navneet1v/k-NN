@@ -209,8 +209,8 @@ public final class QuantizedVectorReader {
 
     /**
      * Drain ADC candidates into the KnnCollector.
-     * Shard-level RescoreKNNVectorQuery (enabled via Mode.ON_DISK + x32 compression)
-     * handles exact rescoring with oversample=3x.
+     * NativeEngineKnnVectorQuery handles exact rescoring via RescoreContext
+     * (activated by Mode.ON_DISK + x32 compression → oversampleFactor=5.0).
      */
     public void finish(KnnCollector collector) {
         int count = candidates.count();
