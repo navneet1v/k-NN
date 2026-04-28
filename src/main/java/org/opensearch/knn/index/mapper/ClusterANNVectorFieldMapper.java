@@ -62,7 +62,7 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
                 public CompressionLevel getCompressionLevel() {
                     CompressionLevel cl = knnMethodConfigContext.getCompressionLevel();
                     // Default to x32 (1-bit) when not explicitly configured
-                    return CompressionLevel.isConfigured(cl) ? cl : CompressionLevel.x32;
+                    return CompressionLevel.isConfigured(cl) ? cl : CompressionLevel.x16;
                 }
 
                 @Override

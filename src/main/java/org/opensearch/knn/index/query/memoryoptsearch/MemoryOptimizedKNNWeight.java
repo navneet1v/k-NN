@@ -202,7 +202,15 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
 
         final KnnCollector knnCollector;
         // TODO: Fix this. This is hack for now
-        if (FieldInfoExtractor.isClusterAnnIndex(context.reader().getFieldInfos().fieldInfo(knnQuery.getField()))) {
+        FieldInfo fi = context.reader().getFieldInfos().fieldInfo(knnQuery.getField());
+        boolean isCluster = FieldInfoExtractor.isClusterAnnIndex(fi);
+        log.info(
+            "[ClusterANN-DEBUG] field={} isCluster={} attr={}",
+            knnQuery.getField(),
+            isCluster,
+            fi != null ? fi.getAttribute("knn_method") : "null_fi"
+        );
+        if (isCluster) {
             knnCollector = topApproxKnnCollector.newCollector(visitedLimit, SimpleTopKAnnSearchStrategy.INSTANCE, context);
         } else {
             knnCollector = collectorManager.newCollector(visitedLimit, DEFAULT_HNSW_SEARCH_STRATEGY, context);

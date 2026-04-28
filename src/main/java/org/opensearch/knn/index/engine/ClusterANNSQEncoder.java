@@ -18,7 +18,7 @@ public class ClusterANNSQEncoder implements Encoder {
 
     public static final String NAME = "sq";
     public static final String BITS_PARAM = "bits";
-    public static final int DEFAULT_BITS = 1;
+    public static final int DEFAULT_BITS = 2;
     private static final Set<Integer> VALID_BITS = Set.of(1, 2, 4);
 
     private static final MethodComponent METHOD_COMPONENT = MethodComponent.Builder.builder(NAME)

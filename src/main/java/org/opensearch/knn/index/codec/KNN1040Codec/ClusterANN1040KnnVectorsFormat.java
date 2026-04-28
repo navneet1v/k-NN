@@ -37,7 +37,7 @@ public class ClusterANN1040KnnVectorsFormat extends KnnVectorsFormat {
         new PrefetchableFlatVectorScorer(new NativeEngines990KnnVectorsScorer(FlatVectorScorerUtil.getLucene99FlatVectorsScorer()))
     );
     private static final String FORMAT_NAME = "ClusterANN1040KnnVectorsFormat";
-    private static final int DEFAULT_DOC_BITS = 1;
+    private static final int DEFAULT_DOC_BITS = 2;
 
     private final int docBits;
 
