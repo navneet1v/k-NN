@@ -208,15 +208,22 @@ public final class QuantizedVectorReader {
     }
 
     /**
-     * Drain ADC candidates into the KnnCollector.
-     * NativeEngineKnnVectorQuery handles exact rescoring via RescoreContext
-     * (activated by Mode.ON_DISK + x32 compression → oversampleFactor=5.0).
+     * Rescore top ADC candidates with exact scorer.
+     * k*20 ADC candidates → select top k*2 → exact rescore → collect into KnnCollector.
      */
-    public void finish(KnnCollector collector) {
-        int count = candidates.count();
-        for (int i = 0; i < count; i++) {
-            int ord = candidates.ordinal(i);
-            collector.collect(exactScorer.ordToDoc(ord), candidates.score(i));
+    public void finish(KnnCollector collector) throws IOException {
+        int rescoreCount = Math.min(k * 2, candidates.count());
+        if (rescoreCount == 0) return;
+
+        int[] topIdx = candidates.topN(rescoreCount);
+        int[] ords = new int[rescoreCount];
+        for (int i = 0; i < rescoreCount; i++) {
+            ords[i] = candidates.ordinal(topIdx[i]);
+        }
+        float[] scores = new float[rescoreCount];
+        exactScorer.bulkScore(ords, scores, rescoreCount);
+        for (int i = 0; i < rescoreCount; i++) {
+            collector.collect(exactScorer.ordToDoc(ords[i]), scores[i]);
         }
     }
 
