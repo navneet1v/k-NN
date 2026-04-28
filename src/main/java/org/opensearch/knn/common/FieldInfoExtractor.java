@@ -206,6 +206,9 @@ public class FieldInfoExtractor {
     }
 
     public static boolean isClusterAnnIndex(final FieldInfo fieldInfo) {
-        return KNNConstants.METHOD_CLUSTER.equals(EngineLessMethod.fromName(fieldInfo.getAttribute(KNN_METHOD)).getName());
+        if (fieldInfo == null) return false;
+        String method = fieldInfo.getAttribute(KNN_METHOD);
+        EngineLessMethod elm = EngineLessMethod.fromName(method);
+        return elm != null && KNNConstants.METHOD_CLUSTER.equals(elm.getName());
     }
 }
