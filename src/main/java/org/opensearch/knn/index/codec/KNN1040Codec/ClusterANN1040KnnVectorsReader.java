@@ -111,6 +111,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         int k = knnCollector.k();
         long t0 = System.nanoTime();
+        log.info("[ClusterANN-SEARCH] collector.k={}", k);
         IndexInput postingsClone = postingsInput.clone();
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
