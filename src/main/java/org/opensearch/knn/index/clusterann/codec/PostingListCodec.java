@@ -74,6 +74,12 @@ public final class PostingListCodec {
     public static int read(IndexInput in, int[] buffer) throws IOException {
         int count = in.readVInt();
         if (count == 0) return 0;
+        readBody(in, count, buffer);
+        return count;
+    }
+
+    /** Read posting body after count has already been consumed. Buffer must be >= count. */
+    public static void readBody(IndexInput in, int count, int[] buffer) throws IOException {
         byte encoding = in.readByte();
         switch (encoding) {
             case ENCODING_CONTINUOUS -> {
@@ -92,7 +98,6 @@ public final class PostingListCodec {
             }
             default -> throw new IOException("Unknown posting encoding: " + encoding);
         }
-        return count;
     }
 
     public static int[] read(IndexInput in) throws IOException {

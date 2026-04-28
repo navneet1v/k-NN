@@ -32,7 +32,6 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
 public final class QuantizedVectorReader {
 
     private static final float RESCORE_OVERSAMPLE = 2.0f;
-    private static final int ADC_MULTIPLIER = 20;
     private static final byte QUERY_BITS = 4;
     private static final float FOUR_BIT_SCALE = 1.0f / ((1 << QUERY_BITS) - 1);
 
@@ -43,7 +42,7 @@ public final class QuantizedVectorReader {
     private final ScalarBitEncoding encoding;
     private final int packedBytes;
     private final int k;
-    private final CandidateCollector candidates;
+    private KnnCollector currentCollector;
 
     // Query quantization scratch
     private final OptimizedScalarQuantizer osq;
@@ -85,7 +84,6 @@ public final class QuantizedVectorReader {
         this.encoding = ScalarBitEncoding.fromDocBits(fieldState.docBits);
         this.packedBytes = encoding.docPackedBytes(fieldState.dimension);
         this.k = k;
-        this.candidates = new CandidateCollector(k * ADC_MULTIPLIER);
 
         this.osq = new OptimizedScalarQuantizer(simFunc);
         this.scratch = new byte[fieldState.dimension];
@@ -178,10 +176,11 @@ public final class QuantizedVectorReader {
             }
         }
 
-        // Apply corrections and collect with early rejection
+        // Collect all ADC scores — don't use competitive threshold to reject
+        // because ADC scores are noisy and rejecting based on them loses good candidates.
+        // The KnnCollector's internal heap handles eviction correctly.
         float docBitScale = encoding.docBitScale();
         int dim = fieldState.dimension;
-        float candidateThreshold = candidates.threshold();
         for (int j = 0; j < blockSize; j++) {
             if (!validBuf[blockStart + j]) continue;
 
@@ -192,33 +191,23 @@ public final class QuantizedVectorReader {
             float adcSimilarity;
             if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {
                 score = currentQueryAdditionalCorrection + blockAdd[j] - 2 * score;
-                adcSimilarity = Math.max(1.0f / (1.0f + score), 0);
+                adcSimilarity = 1.0f / (1.0f + Math.max(score, 0f));
             } else {
                 score += currentQueryAdditionalCorrection + blockAdd[j];
-                adcSimilarity = Math.max((1.0f + score) / 2.0f, 0);
-                // Early reject: if score can't beat threshold, skip collection
-                if (adcSimilarity <= candidateThreshold) continue;
+                adcSimilarity = (1.0f + Math.clamp(score, -1f, 1f)) / 2.0f;
             }
 
-            candidates.add(ordBuf[blockStart + j], adcSimilarity);
+            currentCollector.collect(docIdBuf[blockStart + j], adcSimilarity);
         }
     }
 
-    /**
-     * Phase 2: rescore top ADC candidates with exact scorer.
-     */
-    public void finish(KnnCollector collector) throws IOException {
-        int rescoreCount = Math.min((int) (k * RESCORE_OVERSAMPLE), candidates.count());
-        if (rescoreCount == 0) return;
-
-        int[] topIdx = candidates.topN(rescoreCount);
-        for (int idx : topIdx) {
-            int ord = candidates.ordinal(idx);
-            int doc = exactScorer.ordToDoc(ord);
-            float exactScore = exactScorer.score(ord);
-            collector.collect(doc, exactScore);
-        }
+    /** Set the collector for this search. Must be called before scoreBlock. */
+    public void setCollector(KnnCollector collector) {
+        this.currentCollector = collector;
     }
+
+    /** No-op — collection happens directly in scoreBlock. */
+    public void finish(KnnCollector collector) throws IOException {}
 
     private void readFloatsFromInts(IndexInput input, float[] out, int count) throws IOException {
         input.readInts(intBuf, 0, count);

@@ -110,6 +110,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         fieldState.ensureLoaded(metaInput);
 
         int k = knnCollector.k();
+        long t0 = System.nanoTime();
         IndexInput postingsClone = postingsInput.clone();
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
@@ -124,6 +125,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         QuantizedVectorReader adcReader = null;
         if (useADC) {
             adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, target, k);
+            adcReader.setCollector(knnCollector);
         }
 
         BitSet visited = new BitSet(fieldState.numVectors);
@@ -141,6 +143,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         // Build and execute search pipeline (push-based, single execute() call)
         NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, k, scanner);
+        long t1 = System.nanoTime();
         OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
             nearest,
             scanner,
@@ -151,10 +154,20 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             filterCost
         );
         pipeline.execute(knnCollector);
+        long t2 = System.nanoTime();
 
         if (adcReader != null) {
             adcReader.finish(knnCollector);
         }
+        long t3 = System.nanoTime();
+        log.info(
+            "[ClusterANN-SEARCH] nprobe={} centroidDist={}ms scan={}ms drain={}ms total={}ms",
+            nearest.nprobe(),
+            (t1 - t0) / 1_000_000,
+            (t2 - t1) / 1_000_000,
+            (t3 - t2) / 1_000_000,
+            (t3 - t0) / 1_000_000
+        );
     }
 
     @Override

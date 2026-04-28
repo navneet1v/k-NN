@@ -80,8 +80,11 @@ public final class ClusterANNCentroidScanner {
     }
 
     private int scanOnePosting(KnnCollector collector) throws IOException {
-        int count = PostingListCodec.read(postingsInput, docIdBuf);
+        // Peek count first to ensure buffers are large enough
+        int count = postingsInput.readVInt();
         if (count == 0) return 0;
+        ensureCapacity(count);
+        PostingListCodec.readBody(postingsInput, count, docIdBuf);
 
         // Bulk read ordinals (fixed-width ints)
         int ordCount = postingsInput.readVInt();
