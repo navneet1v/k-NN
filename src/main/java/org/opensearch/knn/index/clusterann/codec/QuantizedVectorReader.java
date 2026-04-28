@@ -208,22 +208,15 @@ public final class QuantizedVectorReader {
     }
 
     /**
-     * Rescore top ADC candidates with exact scorer and drain into KnnCollector.
-     * ADC selects candidates, exact scorer ranks them correctly.
+     * Drain ADC candidates into the KnnCollector.
+     * Shard-level RescoreKNNVectorQuery (enabled via Mode.ON_DISK + x32 compression)
+     * handles exact rescoring with oversample=3x.
      */
-    public void finish(KnnCollector collector) throws IOException {
-        int rescoreCount = Math.min(k * 2, candidates.count());
-        if (rescoreCount == 0) return;
-
-        int[] topIdx = candidates.topN(rescoreCount);
-        int[] ords = new int[rescoreCount];
-        for (int i = 0; i < rescoreCount; i++) {
-            ords[i] = candidates.ordinal(topIdx[i]);
-        }
-        float[] scores = new float[rescoreCount];
-        exactScorer.bulkScore(ords, scores, rescoreCount);
-        for (int i = 0; i < rescoreCount; i++) {
-            collector.collect(exactScorer.ordToDoc(ords[i]), scores[i]);
+    public void finish(KnnCollector collector) {
+        int count = candidates.count();
+        for (int i = 0; i < count; i++) {
+            int ord = candidates.ordinal(i);
+            collector.collect(exactScorer.ordToDoc(ord), candidates.score(i));
         }
     }
 

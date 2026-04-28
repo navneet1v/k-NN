@@ -12,7 +12,6 @@ import org.opensearch.common.Explicit;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.engine.KNNMethodConfigContext;
 import org.opensearch.knn.index.engine.KNNMethodContext;
-
 import java.util.Map;
 import java.util.Optional;
 
@@ -62,6 +61,11 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
                 @Override
                 public CompressionLevel getCompressionLevel() {
                     return knnMethodConfigContext.getCompressionLevel();
+                }
+
+                @Override
+                public Mode getMode() {
+                    return Mode.ON_DISK;
                 }
 
                 @Override
