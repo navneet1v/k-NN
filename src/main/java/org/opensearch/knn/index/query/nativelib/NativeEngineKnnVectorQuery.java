@@ -94,6 +94,14 @@ public class NativeEngineKnnVectorQuery extends Query {
         // Create Weight depending on whether 2-phase search is needed
         final boolean isShardLevelRescoringDisabled = KNNSettings.isShardLevelRescoringDisabledForDiskBasedVector(knnQuery.getIndexName());
         final Integer firstPassKFor2PhaseSearch = getFirstPassK(isShardLevelRescoringDisabled);
+        RescoreContext rc = knnQuery.getRescoreContext();
+        log.info(
+            "[ClusterANN-QUERY] k={} firstPassK={} shardRescoringDisabled={} oversample={}",
+            knnQuery.getK(),
+            firstPassKFor2PhaseSearch,
+            isShardLevelRescoringDisabled,
+            rc != null ? rc.getOversampleFactor() : "null"
+        );
         final IOSupplier<KNNWeight> weightSupplier = getKNNWeightSupplier(firstPassKFor2PhaseSearch, indexSearcher, scoreMode);
 
         // Create weight

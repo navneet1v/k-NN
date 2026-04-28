@@ -59,6 +59,12 @@ public class KNNVectorFieldType extends MappedFieldType {
      * @see MemoryOptimizedSearchSupportSpec#isAlwaysUseMemoryOptimizedSearch(java.util.Optional)
      */
     boolean alwaysUseMemoryOptimizedSearch;
+    Float clusterAnnOversampleFactor;
+
+    public void setClusterAnnOversampleFactor(float factor) {
+        this.clusterAnnOversampleFactor = factor;
+    }
+
     /**
      * Whether this field type can benefit from memory-optimized search. This is determined at mapping time
      * based on the engine, method, encoder, and quantization configuration. A field may be eligible for
@@ -166,6 +172,9 @@ public class KNNVectorFieldType extends MappedFieldType {
     public RescoreContext resolveRescoreContext(RescoreContext userProvidedContext) {
         if (userProvidedContext != null) {
             return userProvidedContext;
+        }
+        if (clusterAnnOversampleFactor != null) {
+            return RescoreContext.builder().oversampleFactor(clusterAnnOversampleFactor).userProvided(false).build();
         }
         final KNNMappingConfig knnMappingConfig = getKnnMappingConfig();
         final Optional<KNNMethodContext> methodContext = knnMappingConfig.getKnnMethodContext();
