@@ -7,6 +7,7 @@ package org.opensearch.knn.index.mapper;
 
 import org.opensearch.core.common.Strings;
 import org.opensearch.knn.KNNTestCase;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.rescore.RescoreContext;
 import org.opensearch.Version;
@@ -125,7 +126,7 @@ public class CompressionLevelTests extends KNNTestCase {
             mode,
             belowThresholdDimension,
             Version.CURRENT,
-            false,
+            KNNConstants.METHOD_HNSW,
             KNNEngine.LUCENE
         );
         assertNotNull(rescoreContext);
@@ -137,7 +138,7 @@ public class CompressionLevelTests extends KNNTestCase {
             mode,
             aboveThresholdDimension,
             Version.CURRENT,
-            false,
+            KNNConstants.METHOD_HNSW,
             KNNEngine.LUCENE
         );
         assertNotNull(rescoreContext);
@@ -149,7 +150,7 @@ public class CompressionLevelTests extends KNNTestCase {
             mode,
             belowThresholdDimension,
             Version.CURRENT,
-            false,
+            KNNConstants.METHOD_HNSW,
             KNNEngine.FAISS
         );
         assertNotNull(rescoreContext);
@@ -157,7 +158,13 @@ public class CompressionLevelTests extends KNNTestCase {
         assertFalse(rescoreContext.isUserProvided());
 
         // x32 with null engine should return default behavior
-        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(mode, belowThresholdDimension, Version.CURRENT, false, null);
+        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(
+            mode,
+            belowThresholdDimension,
+            Version.CURRENT,
+            KNNConstants.METHOD_HNSW,
+            null
+        );
         assertNotNull(rescoreContext);
         assertEquals(5.0f, rescoreContext.getOversampleFactor(), 0.0f);
         assertFalse(rescoreContext.isUserProvided());
@@ -168,15 +175,15 @@ public class CompressionLevelTests extends KNNTestCase {
         RescoreContext rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(
             Mode.NOT_CONFIGURED,
             500,
-            org.opensearch.Version.CURRENT,
-            true
+            Version.CURRENT,
+            KNNConstants.METHOD_FLAT
         );
         assertNotNull(rescoreContext);
         assertEquals(2.0f, rescoreContext.getOversampleFactor(), 0.0f);
         assertFalse(rescoreContext.isUserProvided());
 
-        // isFlatMethod=false on x32 with NOT_CONFIGURED mode should return null (no mode for rescore)
-        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(Mode.NOT_CONFIGURED, 500, Version.CURRENT, false);
+        // non-flat method on x32 with NOT_CONFIGURED mode should return null (no mode for rescore)
+        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(Mode.NOT_CONFIGURED, 500, Version.CURRENT, KNNConstants.METHOD_HNSW);
         assertNull(rescoreContext);
     }
 
@@ -186,7 +193,7 @@ public class CompressionLevelTests extends KNNTestCase {
             Mode.NOT_CONFIGURED,
             500,
             Version.CURRENT,
-            false,
+            KNNConstants.METHOD_HNSW,
             true
         );
         assertNotNull(rescoreContext);
@@ -195,7 +202,7 @@ public class CompressionLevelTests extends KNNTestCase {
         assertFalse(rescoreContext.isAllowOverrideOversampleFactor());
 
         // sq(bits=1) should also work with ON_DISK mode and high dimension
-        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(Mode.ON_DISK, 1500, Version.CURRENT, false, true);
+        rescoreContext = CompressionLevel.x32.getDefaultRescoreContext(Mode.ON_DISK, 1500, Version.CURRENT, KNNConstants.METHOD_HNSW, true);
         assertNotNull(rescoreContext);
         assertEquals(RescoreContext.FAISS_SCALAR_QUANTIZED_INDEX_OVERSAMPLE_FACTOR, rescoreContext.getOversampleFactor(), 0.0f);
         assertFalse(rescoreContext.isAllowOverrideOversampleFactor());
@@ -203,13 +210,19 @@ public class CompressionLevelTests extends KNNTestCase {
 
     public void testGetDefaultRescoreContext_whenNonSQOneBitEncoder_thenFallsBackToNormalLogic() {
         // Non-sq(bits=1) encoder should fall through to normal compression level logic
-        RescoreContext rescoreContext = CompressionLevel.x8.getDefaultRescoreContext(Mode.ON_DISK, 500, Version.CURRENT, false, false);
+        RescoreContext rescoreContext = CompressionLevel.x8.getDefaultRescoreContext(
+            Mode.ON_DISK,
+            500,
+            Version.CURRENT,
+            KNNConstants.METHOD_HNSW,
+            false
+        );
         assertNotNull(rescoreContext);
         // x8 with dimension <= 1000 should use 5.0f oversample (normal logic)
         assertEquals(RescoreContext.OVERSAMPLE_FACTOR_BELOW_DIMENSION_THRESHOLD, rescoreContext.getOversampleFactor(), 0.0f);
 
-        // null encoder should also fall through
-        rescoreContext = CompressionLevel.x8.getDefaultRescoreContext(Mode.ON_DISK, 500, Version.CURRENT, false, false);
+        // non-sq encoder should also fall through
+        rescoreContext = CompressionLevel.x8.getDefaultRescoreContext(Mode.ON_DISK, 500, Version.CURRENT, KNNConstants.METHOD_HNSW, false);
         assertNotNull(rescoreContext);
         assertEquals(RescoreContext.OVERSAMPLE_FACTOR_BELOW_DIMENSION_THRESHOLD, rescoreContext.getOversampleFactor(), 0.0f);
     }

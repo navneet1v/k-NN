@@ -39,7 +39,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-import static org.opensearch.knn.common.KNNConstants.METHOD_FLAT;
+import static org.opensearch.knn.common.KNNConstants.METHOD_HNSW;
 import static org.opensearch.knn.index.mapper.KNNVectorFieldMapperUtil.deserializeStoredVector;
 
 /**
@@ -169,8 +169,8 @@ public class KNNVectorFieldType extends MappedFieldType {
         }
         final KNNMappingConfig knnMappingConfig = getKnnMappingConfig();
         final Optional<KNNMethodContext> methodContext = knnMappingConfig.getKnnMethodContext();
-        final boolean isFlatMethod = methodContext.isPresent()
-            && METHOD_FLAT.equals(methodContext.get().getMethodComponentContext().getName());
+        final String methodName = methodContext.map(knnMethodContext -> knnMethodContext.getMethodComponentContext().getName())
+            .orElse(METHOD_HNSW);
         final boolean isSQOneBit = methodContext.map(mc -> FaissSQEncoder.isSQOneBit(mc.getMethodComponentContext().getParameters()))
             .orElse(false);
         final int dimension = knnMappingConfig.getDimension();
@@ -184,7 +184,7 @@ public class KNNVectorFieldType extends MappedFieldType {
             mode,
             dimension,
             knnMappingConfig.getIndexCreatedVersion(),
-            isFlatMethod,
+            methodName,
             isSQOneBit,
             engine
         );

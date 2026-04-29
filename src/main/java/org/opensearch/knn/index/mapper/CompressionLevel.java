@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.opensearch.Version;
 import org.opensearch.core.common.Strings;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.rescore.RescoreContext;
 
@@ -40,6 +41,7 @@ public enum CompressionLevel {
      */
     private static final CompressionLevel DEFAULT = x1;
     private static final float FLAT_OVERSAMPLE_FACTOR = 2.0f;
+    private static final float CLUSTER_ANN_OVERSAMPLE_FACTOR = 2.0f;
 
     /**
      * Get the compression level from a string representation. The format for the string should be "Nx", where N is
@@ -110,44 +112,50 @@ public enum CompressionLevel {
      * is invalid.
      */
     public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version) {
-        return getDefaultRescoreContext(mode, dimension, version, false, false, null);
+        return getDefaultRescoreContext(mode, dimension, version, KNNConstants.METHOD_HNSW, false, null);
     }
 
-    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, boolean isFlatMethod) {
-        return getDefaultRescoreContext(mode, dimension, version, isFlatMethod, false, null);
+    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, String methodName) {
+        return getDefaultRescoreContext(mode, dimension, version, methodName, false, null);
     }
 
-    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, boolean isFlatMethod, KNNEngine engine) {
-        return getDefaultRescoreContext(mode, dimension, version, isFlatMethod, false, engine);
+    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, String methodName, KNNEngine engine) {
+        return getDefaultRescoreContext(mode, dimension, version, methodName, false, engine);
     }
 
-    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, boolean isFlatMethod, boolean isSQOneBit) {
-        return getDefaultRescoreContext(mode, dimension, version, isFlatMethod, isSQOneBit, null);
+    public RescoreContext getDefaultRescoreContext(Mode mode, int dimension, Version version, String methodName, boolean isSQOneBit) {
+        return getDefaultRescoreContext(mode, dimension, version, methodName, isSQOneBit, null);
     }
 
     @VisibleForTesting
     RescoreContext getDefaultRescoreContext(Mode mode, int dimension) {
-        return getDefaultRescoreContext(mode, dimension, Version.CURRENT, false, false, null);
+        return getDefaultRescoreContext(mode, dimension, Version.CURRENT, KNNConstants.METHOD_HNSW, false, null);
     }
 
     public RescoreContext getDefaultRescoreContext(
         Mode mode,
         int dimension,
         Version version,
-        boolean isFlatMethod,
+        String methodName,
         boolean isSQOneBit,
         KNNEngine engine
     ) {
         // For sq(bits=1) encoder, use fixed oversample factor.
-        if (isSQOneBit) {
+        if (isSQOneBit && methodName.equals(KNNConstants.METHOD_HNSW)) {
             return RescoreContext.builder()
                 .oversampleFactor(RescoreContext.FAISS_SCALAR_QUANTIZED_INDEX_OVERSAMPLE_FACTOR)
                 .allowOverrideOversampleFactor(false)
                 .userProvided(false)
                 .build();
         }
+
+        // TODO: move this on the method rather than keep it here.
+        if (KNNConstants.METHOD_CLUSTER.equals(methodName)) {
+            return RescoreContext.builder().oversampleFactor(CLUSTER_ANN_OVERSAMPLE_FACTOR).userProvided(false).build();
+        }
+
         // TODO move this to separate class called resolver to resolve rescore context
-        if (this == x32 && isFlatMethod) {
+        if (this == x32 && KNNConstants.METHOD_FLAT.equals(methodName)) {
             return RescoreContext.builder().oversampleFactor(FLAT_OVERSAMPLE_FACTOR).userProvided(false).build();
         }
         if (modesForRescore.contains(mode)) {
