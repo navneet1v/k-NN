@@ -120,7 +120,7 @@ public class KNNVectorDVLeafFieldData implements LeafFieldData {
      *       instead of a numeric array.</li>
      * </ul>
      *
-     * @param format the doc value format (unused for vectors, but required by the interface)
+     * @param format the doc value format — determines output encoding (array or binary)
      * @return a leaf fetcher that yields vector values per document
      */
     @Override
@@ -130,6 +130,8 @@ public class KNNVectorDVLeafFieldData implements LeafFieldData {
                 "docvalue_fields is not supported for [" + vectorDataType + "] vector field '" + fieldName + "'"
             );
         }
+
+        final boolean binary = format instanceof KNNVectorDocValueFormat && ((KNNVectorDocValueFormat) format).isBinary();
 
         return new DocValueFetcher.Leaf() {
             private int count;
@@ -151,7 +153,11 @@ public class KNNVectorDVLeafFieldData implements LeafFieldData {
 
             @Override
             public Object nextValue() throws IOException {
-                return vectorValues.getVector();
+                float[] vector = (float[]) vectorValues.getVector();
+                if (binary) {
+                    return KNNVectorDocValueFormat.encodeToBinary(vector);
+                }
+                return vector;
             }
         };
     }

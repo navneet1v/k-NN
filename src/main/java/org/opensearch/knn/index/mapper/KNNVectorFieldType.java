@@ -20,6 +20,7 @@ import org.opensearch.index.mapper.TextSearchInfo;
 import org.opensearch.index.mapper.ValueFetcher;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.index.query.QueryShardException;
+import org.opensearch.knn.index.KNNVectorDocValueFormat;
 import org.opensearch.knn.index.KNNVectorIndexFieldData;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
@@ -155,14 +156,30 @@ public class KNNVectorFieldType extends MappedFieldType {
     }
 
     @Override
-    public DocValueFormat docValueFormat(String format, ZoneId timeZone) {
-        if (format != null) {
-            throw new IllegalArgumentException("Field [" + name() + "] of type [" + typeName() + "] does not support custom formats");
-        }
+    public DocValueFormat docValueFormat(final String format, final ZoneId timeZone) {
         if (timeZone != null) {
             throw new IllegalArgumentException("Field [" + name() + "] of type [" + typeName() + "] does not support custom time zones");
         }
-        return DocValueFormat.RAW;
+        if (format == null || KNNVectorDocValueFormat.FORMAT_ARRAY.equals(format)) {
+            return KNNVectorDocValueFormat.ARRAY_FORMAT;
+        }
+        if (KNNVectorDocValueFormat.FORMAT_BINARY.equals(format)) {
+            return KNNVectorDocValueFormat.BINARY_FORMAT;
+        }
+        throw new IllegalArgumentException(
+            "Field ["
+                + name()
+                + "] of type ["
+                + typeName()
+                + "] does not support format ["
+                + format
+                + "]. "
+                + "Supported formats are ["
+                + KNNVectorDocValueFormat.FORMAT_ARRAY
+                + ", "
+                + KNNVectorDocValueFormat.FORMAT_BINARY
+                + "]"
+        );
     }
 
     @Override
