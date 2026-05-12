@@ -20,6 +20,7 @@ import org.opensearch.index.mapper.TextSearchInfo;
 import org.opensearch.index.mapper.ValueFetcher;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.index.query.QueryShardException;
+import org.opensearch.knn.index.KNNVectorDocValueFormat;
 import org.opensearch.knn.index.KNNVectorIndexFieldData;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
@@ -29,9 +30,11 @@ import org.opensearch.knn.index.engine.MemoryOptimizedSearchSupportSpec;
 import org.opensearch.knn.index.query.rescore.RescoreContext;
 import org.opensearch.knn.indices.ModelDao;
 import org.opensearch.knn.indices.ModelMetadata;
+import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.support.CoreValuesSourceType;
 import org.opensearch.search.lookup.SearchLookup;
 
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
@@ -150,6 +153,35 @@ public class KNNVectorFieldType extends MappedFieldType {
     public IndexFieldData.Builder fielddataBuilder(String fullyQualifiedIndexName, Supplier<SearchLookup> searchLookup) {
         failIfNoDocValues();
         return new KNNVectorIndexFieldData.Builder(name(), CoreValuesSourceType.BYTES, this.vectorDataType);
+    }
+
+    @Override
+    public DocValueFormat docValueFormat(final String format, final ZoneId timeZone) {
+        if (timeZone != null) {
+            throw new IllegalArgumentException("Field [" + name() + "] of type [" + typeName() + "] does not support custom time zones");
+        }
+        // Using binary format as default here since binary format provide better performance over array format.
+        // Ref gh issue: https://github.com/opensearch-project/k-NN/issues/3315
+        if (format == null || KNNVectorDocValueFormat.FORMAT_BINARY.equals(format)) {
+            return KNNVectorDocValueFormat.BINARY_FORMAT;
+        }
+        if (KNNVectorDocValueFormat.FORMAT_ARRAY.equals(format)) {
+            return KNNVectorDocValueFormat.ARRAY_FORMAT;
+        }
+        throw new IllegalArgumentException(
+            "Field ["
+                + name()
+                + "] of type ["
+                + typeName()
+                + "] does not support format ["
+                + format
+                + "]. "
+                + "Supported formats are ["
+                + KNNVectorDocValueFormat.FORMAT_ARRAY
+                + ", "
+                + KNNVectorDocValueFormat.FORMAT_BINARY
+                + "]"
+        );
     }
 
     @Override

@@ -18,10 +18,11 @@ import org.apache.lucene.tests.analysis.MockAnalyzer;
 import org.opensearch.index.fielddata.ScriptDocValues;
 import org.opensearch.index.mapper.DocValueFetcher;
 import org.opensearch.knn.KNNTestCase;
-import org.opensearch.search.DocValueFormat;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
 
@@ -101,7 +102,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
             MOCK_INDEX_FIELD_NAME,
             VectorDataType.FLOAT
         );
-        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(DocValueFormat.RAW);
+        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT);
         assertNotNull(leaf);
 
         float[][] results = new float[ALL_VECTORS.length][];
@@ -124,7 +125,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
             MOCK_INDEX_FIELD_NAME,
             VectorDataType.FLOAT
         );
-        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(DocValueFormat.RAW);
+        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT);
 
         boolean[] advanceResults = new boolean[ALL_VECTORS.length + 1];
         int[] docValueCounts = new int[ALL_VECTORS.length + 1];
@@ -150,7 +151,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
             MOCK_INDEX_FIELD_NAME,
             VectorDataType.FLOAT
         );
-        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(DocValueFormat.RAW);
+        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT);
 
         int[] docValueCounts = new int[ALL_VECTORS.length];
         for (int docId = 0; docId < ALL_VECTORS.length; docId++) {
@@ -195,7 +196,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
                     MOCK_INDEX_FIELD_NAME,
                     VectorDataType.FLOAT
                 );
-                DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(DocValueFormat.RAW);
+                DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT);
 
                 float[][] expected = { vector1, vector2, vector3 };
                 float[][] results = new float[expected.length][];
@@ -212,6 +213,30 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
         }
     }
 
+    public void testGetLeafValueFetcher_binaryFormat_returnsBase64String() throws IOException {
+        KNNVectorDVLeafFieldData leafFieldData = new KNNVectorDVLeafFieldData(
+            leafReaderContext.reader(),
+            MOCK_INDEX_FIELD_NAME,
+            VectorDataType.FLOAT
+        );
+        DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.BINARY_FORMAT);
+        assertNotNull(leaf);
+
+        assertTrue(leaf.advanceExact(0));
+        assertEquals(1, leaf.docValueCount());
+        Object value = leaf.nextValue();
+        assertTrue(value instanceof String);
+        String base64 = (String) value;
+
+        // Decode and verify
+        byte[] decoded = java.util.Base64.getDecoder().decode(base64);
+        assertEquals(SAMPLE_VECTOR_1.length * Float.BYTES, decoded.length);
+        ByteBuffer buffer = ByteBuffer.wrap(decoded).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < SAMPLE_VECTOR_1.length; i++) {
+            assertEquals(SAMPLE_VECTOR_1[i], buffer.getFloat(), 0.001f);
+        }
+    }
+
     public void testGetLeafValueFetcher_byteVectorDataType_throwsUnsupportedOp() {
         KNNVectorDVLeafFieldData leafFieldData = new KNNVectorDVLeafFieldData(
             leafReaderContext.reader(),
@@ -220,7 +245,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
         );
         UnsupportedOperationException ex = expectThrows(
             UnsupportedOperationException.class,
-            () -> leafFieldData.getLeafValueFetcher(DocValueFormat.RAW)
+            () -> leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT)
         );
         assertTrue(ex.getMessage().contains("docvalue_fields is not supported"));
         assertTrue(ex.getMessage().contains("BYTE"));
@@ -234,7 +259,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
         );
         UnsupportedOperationException ex = expectThrows(
             UnsupportedOperationException.class,
-            () -> leafFieldData.getLeafValueFetcher(DocValueFormat.RAW)
+            () -> leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT)
         );
         assertTrue(ex.getMessage().contains("docvalue_fields is not supported"));
         assertTrue(ex.getMessage().contains("BINARY"));
@@ -261,7 +286,7 @@ public class KNNVectorDVLeafFieldDataTests extends KNNTestCase {
                     MOCK_INDEX_FIELD_NAME,
                     VectorDataType.FLOAT
                 );
-                DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(DocValueFormat.RAW);
+                DocValueFetcher.Leaf leaf = leafFieldData.getLeafValueFetcher(KNNVectorDocValueFormat.ARRAY_FORMAT);
                 assertNotNull(leaf);
 
                 boolean[] advanceResults = new boolean[numDocs];
