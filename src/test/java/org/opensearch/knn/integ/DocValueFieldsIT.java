@@ -974,6 +974,109 @@ public class DocValueFieldsIT extends KNNRestTestCase {
         deleteKNNIndex(indexName);
     }
 
+    /**
+     * Verifies that vectors can be indexed using base64-encoded little-endian format
+     * and retrieved correctly via both docvalue_fields (array and binary formats).
+     * Tests both Faiss and Lucene engines to ensure the base64 indexing path works
+     * regardless of engine.
+     */
+    @SneakyThrows
+    public void testDocValueFields_indexWithBase64_returnsCorrectVector() {
+        for (KNNEngine engine : List.of(KNNEngine.FAISS, KNNEngine.LUCENE)) {
+            String indexName = TEST_INDEX + "_base64_idx_" + engine.getName();
+
+            KNNJsonIndexMappingsBuilder.Method method = KNNJsonIndexMappingsBuilder.Method.builder()
+                .methodName(METHOD_HNSW)
+                .spaceType(SpaceType.L2.getValue())
+                .engine(engine.getName())
+                .build();
+
+            String mapping = KNNJsonIndexMappingsBuilder.builder()
+                .fieldName(VECTOR_FIELD)
+                .dimension(DIMENSION)
+                .vectorDataType(VectorDataType.FLOAT.getValue())
+                .method(method)
+                .build()
+                .getIndexMapping();
+
+            createKnnIndex(indexName, mapping);
+
+            // Encode VECTOR_1 as base64 little-endian
+            ByteBuffer buf = ByteBuffer.allocate(DIMENSION * Float.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+            buf.asFloatBuffer().put(VECTOR_1);
+            String base64Vector = Base64.getEncoder().encodeToString(buf.array());
+
+            // Index using base64 string instead of array
+            String docBody = XContentFactory.jsonBuilder().startObject().field(VECTOR_FIELD, base64Vector).endObject().toString();
+            Request request = new Request("POST", "/" + indexName + "/_doc/1?refresh=true");
+            request.setJsonEntity(docBody);
+            client().performRequest(request);
+
+            // Retrieve via docvalue_fields (array format) and verify values
+            String query = XContentFactory.jsonBuilder()
+                .startObject()
+                .startObject("query")
+                .startObject("match_all")
+                .endObject()
+                .endObject()
+                .array("docvalue_fields", VECTOR_FIELD)
+                .field("_source", false)
+                .endObject()
+                .toString();
+
+            Response response = searchKNNIndex(indexName, query, 1);
+            String responseBody = EntityUtils.toString(response.getEntity());
+            List<Map<String, Object>> hits = parseSearchHits(responseBody);
+
+            assertEquals("Expected 1 hit for engine " + engine.getName(), 1, hits.size());
+            List<List<Double>> vectorField = getDocValueField(hits.get(0), VECTOR_FIELD);
+            assertNotNull("Expected vector in response for engine " + engine.getName(), vectorField);
+            assertEquals(DIMENSION, vectorField.get(0).size());
+            for (int i = 0; i < DIMENSION; i++) {
+                assertEquals(
+                    "Mismatch at index " + i + " for engine " + engine.getName(),
+                    VECTOR_1[i],
+                    vectorField.get(0).get(i).floatValue(),
+                    0.001f
+                );
+            }
+
+            // Also verify KNN search works on base64-indexed vector
+            String knnQuery = XContentFactory.jsonBuilder()
+                .startObject()
+                .startObject("query")
+                .startObject("knn")
+                .startObject(VECTOR_FIELD)
+                .field("vector", VECTOR_1)
+                .field("k", 1)
+                .endObject()
+                .endObject()
+                .endObject()
+                .array("docvalue_fields", VECTOR_FIELD)
+                .field("_source", false)
+                .endObject()
+                .toString();
+
+            Response knnResponse = searchKNNIndex(indexName, knnQuery, 1);
+            String knnBody = EntityUtils.toString(knnResponse.getEntity());
+            List<Map<String, Object>> knnHits = parseSearchHits(knnBody);
+
+            assertEquals("Expected 1 KNN hit for engine " + engine.getName(), 1, knnHits.size());
+            List<List<Double>> knnVector = getDocValueField(knnHits.get(0), VECTOR_FIELD);
+            assertNotNull("Expected vector in KNN response for engine " + engine.getName(), knnVector);
+            for (int i = 0; i < DIMENSION; i++) {
+                assertEquals(
+                    "KNN result mismatch at index " + i + " for engine " + engine.getName(),
+                    VECTOR_1[i],
+                    knnVector.get(0).get(i).floatValue(),
+                    0.001f
+                );
+            }
+
+            deleteKNNIndex(indexName);
+        }
+    }
+
     // Nested field tests
 
     /**

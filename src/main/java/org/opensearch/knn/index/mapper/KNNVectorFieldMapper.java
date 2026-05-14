@@ -6,8 +6,10 @@
 package org.opensearch.knn.index.mapper;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -860,6 +862,13 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 vector.add(value);
                 token = context.parser().nextToken();
             }
+        } else if (token == XContentParser.Token.VALUE_STRING) {
+            final float[] decoded = decodeBase64ToFloats(context.parser().text(), dimension);
+            for (float f : decoded) {
+                value = perDimensionProcessor.process(f);
+                perDimensionValidator.validate(value);
+                vector.add(value);
+            }
         } else if (token == XContentParser.Token.VALUE_NUMBER) {
             value = perDimensionProcessor.process(context.parser().floatValue());
             perDimensionValidator.validate(value);
@@ -877,6 +886,26 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             array[i++] = f;
         }
         return Optional.of(array);
+    }
+
+    private float[] decodeBase64ToFloats(String base64, int expectedDimension) {
+        final byte[] bytes = Base64.getDecoder().decode(base64);
+        int expectedBytes = expectedDimension * Float.BYTES;
+        if (bytes.length != expectedBytes) {
+            throw new IllegalArgumentException(
+                String.format(
+                    Locale.ROOT,
+                    "Base64 encoded vector has incorrect byte length [%d], expected [%d] for dimension [%d]",
+                    bytes.length,
+                    expectedBytes,
+                    expectedDimension
+                )
+            );
+        }
+        final ByteBuffer buffer = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        final float[] result = new float[expectedDimension];
+        buffer.asFloatBuffer().get(result);
+        return result;
     }
 
     @Override
