@@ -48,3 +48,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 * Add scorer-aware ByteVectorValues wrapper for FAISS Index [#3192](https://github.com/opensearch-project/k-NN/pull/3192)
 * Add Hamming distance scorer for byte vectors in VectorScorers [#3214](https://github.com/opensearch-project/k-NN/pull/3214)
 * Introduce VectorScorers to create VectorScorer instances based on the underlying vector storage format [#3183](https://github.com/opensearch-project/k-NN/pull/3183)
+* Add the bulkscore logic in MOS when K is greater than number of docs in segment [#3285](https://github.com/opensearch-project/k-NN/pull/3285)
+* Added capability to retrieve float data type vectors using doc_values [#3321](https://github.com/opensearch-project/k-NN/pull/3321)
