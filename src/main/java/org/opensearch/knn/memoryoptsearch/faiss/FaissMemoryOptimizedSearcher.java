@@ -25,6 +25,7 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.common.RobustUniqueRandomIterator;
 import org.opensearch.knn.index.KNNVectorSimilarityFunction;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
 import org.opensearch.knn.index.util.WarmupUtil;
 import org.opensearch.knn.memoryoptsearch.VectorSearcher;
 import org.opensearch.knn.memoryoptsearch.faiss.cagra.FaissCagraHNSW;
@@ -163,7 +164,12 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
 
         if (knnCollector.k() < scorer.maxOrd()) {
             // Do ANN search with Lucene's HNSW graph searcher.
-            HnswGraphSearcher.search(scorer, collector, new FaissHnswGraph(hnsw, indexInput.clone()), acceptedOrds);
+            final FaissHnswGraph graph = new FaissHnswGraph(hnsw, indexInput.clone());
+            HnswGraphSearcher.search(scorer, collector, graph, acceptedOrds);
+            // Record graph traversal metrics
+            SearchMetricsContext.current().addEdgesTraversed(graph.getEdgesTraversed());
+            SearchMetricsContext.current().addNeighborSeeks(graph.getNeighborSeeks());
+            SearchMetricsContext.current().addNeighborBytesRead(graph.getNeighborBytesRead());
         } else {
             // if k is larger than the number of vectors we expect to visit in an HNSW search,
             // we can just iterate over all vectors and collect them.

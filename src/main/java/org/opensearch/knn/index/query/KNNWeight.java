@@ -28,6 +28,10 @@ import org.opensearch.common.StopWatch;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.index.query.metrics.ExactSearchMetrics;
+import org.opensearch.knn.index.query.metrics.KNNSearchMetricsEmitter;
+import org.opensearch.knn.index.query.metrics.SearchMetricsContext;
+import org.opensearch.knn.index.query.metrics.ANNSearchMetrics;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
@@ -88,6 +92,18 @@ public abstract class KNNWeight extends Weight {
 
     protected final QuantizationService quantizationService;
     private final KnnExplanation knnExplanation;
+    /**
+     * -- GETTER --
+     *  Returns the accumulated ANN search metrics across all segments for this query.
+     */
+    @Getter
+    private final ANNSearchMetrics queryANNSearchMetrics;
+    /**
+     * -- GETTER --
+     *  Returns the accumulated exact search metrics across all segments for this query.
+     */
+    @Getter
+    private final ExactSearchMetrics queryExactSearchMetrics;
 
     public KNNWeight(KNNQuery query, float boost) {
         this(query, boost, null);
@@ -102,6 +118,8 @@ public abstract class KNNWeight extends Weight {
         this.exactSearcher = DEFAULT_EXACT_SEARCHER;
         this.quantizationService = QuantizationService.getInstance();
         this.knnExplanation = new KnnExplanation();
+        this.queryANNSearchMetrics = new ANNSearchMetrics();
+        this.queryExactSearchMetrics = new ExactSearchMetrics();
     }
 
     public static void initialize(ModelDao modelDao) {
@@ -344,6 +362,21 @@ public abstract class KNNWeight extends Weight {
         final StopWatch annStopWatch = startStopWatch(log);
         final TopDocs topDocs = approximateSearch(context, filterBitSet, filterCardinality, k);
         stopStopWatchAndLog(log, annStopWatch, "ANN search", knnQuery.getShardId(), segmentName, knnQuery.getField());
+
+        // Capture segment-level results and merge into the per-query accumulator
+        ANNSearchMetrics segmentANNSearchMetrics = SearchMetricsContext.current();
+        segmentANNSearchMetrics.setResultsReturned(topDocs.scoreDocs.length);
+        queryANNSearchMetrics.merge(segmentANNSearchMetrics);
+
+        // Emit per-segment metrics via logging
+        KNNSearchMetricsEmitter.emitSegmentLevelANNSearchMetrics(
+            segmentANNSearchMetrics,
+            knnQuery.getIndexName(),
+            knnQuery.getShardId(),
+            "hnsw",
+            segmentName,
+            reader.maxDoc()
+        );
 
         if (knnQuery.isExplain()) {
             knnExplanation.addLeafResult(context.id(), topDocs.scoreDocs.length);
@@ -596,10 +629,34 @@ public abstract class KNNWeight extends Weight {
      */
     public TopDocs exactSearch(final LeafReaderContext leafReaderContext, final ExactSearcher.ExactSearcherContext exactSearcherContext)
         throws IOException {
+        // Reset metrics context to isolate exact search prefetch from ANN prefetch
+        SearchMetricsContext.reset();
+
         final StopWatch stopWatch = startStopWatch(log);
         TopDocs exactSearchResults = exactSearcher.searchLeaf(leafReaderContext, exactSearcherContext);
         final SegmentReader reader = Lucene.segmentReader(leafReaderContext.reader());
         stopStopWatchAndLog(log, stopWatch, "Exact search", knnQuery.getShardId(), reader.getSegmentName(), knnQuery.getField());
+
+        // Capture exact search metrics — prefetch/vectorBytesRead come from SearchMetricsContext
+        // (exact search uses PrefetchableRandomVectorScorer which tracks both)
+        ANNSearchMetrics exactPrefetchMetrics = SearchMetricsContext.current();
+        int docsScored = exactSearchResults.scoreDocs.length;
+
+        ExactSearchMetrics segmentExactMetrics = new ExactSearchMetrics();
+        segmentExactMetrics.addDocsScored(docsScored);
+        segmentExactMetrics.addVectorBytesRead(exactPrefetchMetrics.getVectorBytesRead());
+        segmentExactMetrics.addVectorBytesPrefetched(exactPrefetchMetrics.getVectorBytesPrefetched());
+        segmentExactMetrics.addPrefetchGroupCount(exactPrefetchMetrics.getPrefetchGroupCount());
+        queryExactSearchMetrics.merge(segmentExactMetrics);
+
+        KNNSearchMetricsEmitter.emitExactSearchSegmentMetrics(
+            segmentExactMetrics,
+            knnQuery.getIndexName(),
+            knnQuery.getShardId(),
+            reader.getSegmentName(),
+            reader.maxDoc()
+        );
+
         return exactSearchResults;
     }
 

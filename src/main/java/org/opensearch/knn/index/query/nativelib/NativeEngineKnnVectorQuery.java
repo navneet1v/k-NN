@@ -31,6 +31,7 @@ import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.query.KNNQuery;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.knn.index.query.PerLeafResult;
+import org.opensearch.knn.index.query.metrics.KNNSearchMetricsEmitter;
 import org.opensearch.knn.index.query.ResultUtil;
 import org.opensearch.knn.index.query.TopDocsDISI;
 import org.opensearch.knn.index.query.common.QueryUtils;
@@ -129,6 +130,18 @@ public class NativeEngineKnnVectorQuery extends Query {
                 leafReaderContexts.size()
             );
         }
+
+        // Emit combined shard-level metrics (ANN + exact search) as a single log line
+        int totalDocs = leafReaderContexts.stream().mapToInt(ctx -> ctx.reader().maxDoc()).sum();
+        KNNSearchMetricsEmitter.emitShardLevelMetrics(
+            knnWeight.getQueryANNSearchMetrics(),
+            knnWeight.getQueryExactSearchMetrics(),
+            knnQuery.getIndexName(),
+            knnQuery.getShardId(),
+            knnQuery.isMemoryOptimizedSearch(),
+            leafReaderContexts.size(),
+            totalDocs
+        );
 
         // Since memory optimized search is using this class, we need to return the same totalHits value when it's disabled.
         // e.g. Let's say we got 100 result per each segment where #segments=3, then 300 should be returned as total hit.
