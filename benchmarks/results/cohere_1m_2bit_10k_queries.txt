@@ -1,0 +1,52 @@
+Loading Cohere-1M...
+Base: (1000000, 768), Queries: (10000, 768), GT: (10000, 100)
+Index created: 200
+
+Indexing 1000000 vectors...
+  2000/1000000 (1171 vec/s)
+  202000/1000000 (1543 vec/s)
+  402000/1000000 (1510 vec/s)
+  602000/1000000 (1377 vec/s)
+  802000/1000000 (1370 vec/s)
+Done in 708s
+
+Force merging...
+Merge done in 901s
+  osf=2x q2000: recall_so_far=0.9704
+  osf=2x q4000: recall_so_far=0.9713
+  osf=2x q6000: recall_so_far=0.9711
+  osf=2x q8000: recall_so_far=0.9713
+
+======================================================================
+2-bit | oversample=2x | 10K queries | Recall@100: 0.9710 (min=0.800, max=1.000)
+Latency: p50=112ms p99=127ms avg=113ms
+======================================================================
+  osf=3x q2000: recall_so_far=0.9934
+  osf=3x q4000: recall_so_far=0.9937
+  osf=3x q6000: recall_so_far=0.9937
+  osf=3x q8000: recall_so_far=0.9938
+
+======================================================================
+2-bit | oversample=3x | 10K queries | Recall@100: 0.9937 (min=0.880, max=1.000)
+Latency: p50=111ms p99=119ms avg=111ms
+======================================================================
+  osf=4x q2000: recall_so_far=0.9979
+  osf=4x q4000: recall_so_far=0.9981
+  osf=4x q6000: recall_so_far=0.9981
+  osf=4x q8000: recall_so_far=0.9982
+
+======================================================================
+2-bit | oversample=4x | 10K queries | Recall@100: 0.9982 (min=0.940, max=1.000)
+Latency: p50=111ms p99=120ms avg=110ms
+======================================================================
+  osf=5x q2000: recall_so_far=0.9992
+  osf=5x q4000: recall_so_far=0.9993
+  osf=5x q6000: recall_so_far=0.9993
+  osf=5x q8000: recall_so_far=0.9993
+
+======================================================================
+2-bit | oversample=5x | 10K queries | Recall@100: 0.9993 (min=0.960, max=1.000)
+Latency: p50=111ms p99=120ms avg=110ms
+======================================================================
+
+All done!

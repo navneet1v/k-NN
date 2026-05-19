@@ -1,4 +1,16 @@
-## Benchmark Folder Tools Deprecated
-All benchmark workloads have been moved to [OpenSearch Benchmark Workloads](https://github.com/opensearch-project/opensearch-benchmark-workloads/tree/main/vectorsearch). Please use OSB tool to run the benchmarks.
+# ClusterANN Benchmarks
 
-If you are still interested in using the old tool, the benchmarks are moved to the [branch](https://github.com/opensearch-project/k-NN/tree/old-benchmarks/benchmarks).  
+## Datasets (at /Users/viktari/pysptag/data/)
+| Dataset | Vectors | Dims | Metric | Notes |
+|---------|---------|------|--------|-------|
+| sift | 1M | 128 | L2 | Standard ANN benchmark |
+| cohere | 1M | 768 | IP | Unnormalized embeddings |
+| gist | 1M | 960 | L2 | High-dimensional |
+
+## Scripts
+- `bench_all.py` — Run all datasets with configurable oversample/compression
+- `bench_clusterann_sift.py` — SIFT-1M standalone
+- `bench_clusterann_cohere.py` — Cohere-1M standalone
+
+## Results
+See `results/` folder for saved outputs.

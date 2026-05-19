@@ -1,0 +1,24 @@
+Loading SIFT-1M...
+
+[sift-1m] Index created: 200
+[sift-1m] Indexing 1000000 vectors...
+  500000/1000000 (17056 vec/s)
+[sift-1m] Indexed in 61s
+[sift-1m] Segments: 18 (no force merge)
+[sift-1m] Benchmarking 10000 queries, oversample=2.0x...
+  q2000: recall_so_far=0.9292
+  q4000: recall_so_far=0.9295
+  q6000: recall_so_far=0.9308
+  q8000: recall_so_far=0.9317
+
+======================================================================
+sift-1m | 2-bit | oversample=2x | NO force merge | 18 segments | 10000 queries
+Recall@100: 0.9319 (min=0.640, max=1.000)
+Latency: p50=11ms p99=17ms avg=11ms
+======================================================================
+
+Loading Cohere-1M...
+
+[cohere-1m] Index created: 200
+[cohere-1m] Indexing 1000000 vectors...
+Error at 0

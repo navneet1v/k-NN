@@ -1,0 +1,57 @@
+Loading SIFT-1M...
+Base: (1000000, 128), Queries: (10000, 128), GT: (10000, 100)
+Index created: 200
+
+Indexing 1000000 vectors...
+  5000/1000000 (10442 vec/s)
+  105000/1000000 (17506 vec/s)
+  205000/1000000 (17431 vec/s)
+  305000/1000000 (17335 vec/s)
+  405000/1000000 (17023 vec/s)
+  505000/1000000 (16803 vec/s)
+  605000/1000000 (16282 vec/s)
+  705000/1000000 (16091 vec/s)
+  805000/1000000 (16073 vec/s)
+  905000/1000000 (16054 vec/s)
+Done in 62s
+
+Force merging...
+Merge done in 67s
+  osf=2x q2000: recall_so_far=0.9567
+  osf=2x q4000: recall_so_far=0.9570
+  osf=2x q6000: recall_so_far=0.9585
+  osf=2x q8000: recall_so_far=0.9592
+
+======================================================================
+SIFT-1M 2-bit | oversample=2x | 10K queries | Recall@100: 0.9597 (min=0.780, max=1.000)
+Latency: p50=13ms p99=20ms avg=13ms
+======================================================================
+  osf=3x q2000: recall_so_far=0.9866
+  osf=3x q4000: recall_so_far=0.9869
+  osf=3x q6000: recall_so_far=0.9874
+  osf=3x q8000: recall_so_far=0.9875
+
+======================================================================
+SIFT-1M 2-bit | oversample=3x | 10K queries | Recall@100: 0.9877 (min=0.840, max=1.000)
+Latency: p50=13ms p99=15ms avg=13ms
+======================================================================
+  osf=4x q2000: recall_so_far=0.9943
+  osf=4x q4000: recall_so_far=0.9945
+  osf=4x q6000: recall_so_far=0.9947
+  osf=4x q8000: recall_so_far=0.9947
+
+======================================================================
+SIFT-1M 2-bit | oversample=4x | 10K queries | Recall@100: 0.9948 (min=0.880, max=1.000)
+Latency: p50=13ms p99=15ms avg=13ms
+======================================================================
+  osf=5x q2000: recall_so_far=0.9966
+  osf=5x q4000: recall_so_far=0.9968
+  osf=5x q6000: recall_so_far=0.9970
+  osf=5x q8000: recall_so_far=0.9970
+
+======================================================================
+SIFT-1M 2-bit | oversample=5x | 10K queries | Recall@100: 0.9970 (min=0.900, max=1.000)
+Latency: p50=13ms p99=15ms avg=13ms
+======================================================================
+
+All done!
