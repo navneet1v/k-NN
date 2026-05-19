@@ -132,11 +132,11 @@ public class NativeEngineKnnVectorQuery extends Query {
             StopWatch stopWatch = new StopWatch().start();
             perLeafResults = doRescore(indexSearcher, leafReaderContexts, knnWeight, perLeafResults, finalK);
             long rescoreTime = stopWatch.stop().totalTime().millis();
+            long adcBytes = org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.getLastQueryAdcBytes();
+            long rescoreBytes = (long) firstPassKFor2PhaseSearch * knnQuery.getQueryVector().length * 4;
             log.debug(
-                "Rescoring results took {} ms. oversampled k:{}, segments:{}",
-                rescoreTime,
-                firstPassKFor2PhaseSearch,
-                leafReaderContexts.size()
+                "[ClusterANN-IO] adc_bytes={} rescore_bytes={} total_bytes={} rescore_ms={} oversample_k={}",
+                adcBytes, rescoreBytes, adcBytes + rescoreBytes, rescoreTime, firstPassKFor2PhaseSearch
             );
         }
 

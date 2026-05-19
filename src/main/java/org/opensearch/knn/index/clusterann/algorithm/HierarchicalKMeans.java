@@ -250,11 +250,7 @@ public final class HierarchicalKMeans {
         if (indices.length == allVectors.size()) {
             return allVectors;
         }
-        List<float[]> subList = new ArrayList<>(indices.length);
-        for (int idx : indices) {
-            subList.add(allVectors.vectorValue(idx));
-        }
-        return ClusterANNVectorValues.fromList(subList, allVectors.dimension());
+        return ClusterANNVectorValues.fromSubset(allVectors, indices);
     }
 
     private static float[] computeMean(ClusterANNVectorValues vectors, int[] indices) throws IOException {

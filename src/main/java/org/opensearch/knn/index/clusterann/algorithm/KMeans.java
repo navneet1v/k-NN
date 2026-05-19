@@ -89,7 +89,8 @@ public final class KMeans {
         int[][] centroidProximityMap = null;
         for (iter = 0; iter < config.maxIterations && !converged; iter++) {
             if (iter == 2 && k > PROXIMITY_MAP_SIZE * 2) {
-                centroidProximityMap = computeCentroidProximityMap(centroids, k, config.metric);
+                sanitizeCentroids(centroids, k, dim);
+                centroidProximityMap = computeCentroidProximityMap(centroids, k, DistanceMetric.L2);
             }
             int moved = assignmentStep(
                 iterVectors,
@@ -101,7 +102,8 @@ public final class KMeans {
                 config,
                 centroidProximityMap
             );
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, config.metric != DistanceMetric.L2);
+            sanitizeCentroids(centroids, k, dim);
 
             if (config.rebalanceEmpty) {
                 rebalanceEmptyClusters(vectors, centroids, clusterCounts, iterAssignments, k, config);
@@ -114,7 +116,8 @@ public final class KMeans {
         // Final full pass: assign all vectors to converged centroids
         if (sampled) {
             assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config, centroidProximityMap);
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, config.metric != DistanceMetric.L2);
+            sanitizeCentroids(centroids, k, dim);
         }
 
         // Post-process: split oversized clusters
@@ -147,7 +150,7 @@ public final class KMeans {
             float[] prevCentroid = centroids[c - 1];
             float totalWeight = 0f;
             for (int i = 0; i < n; i++) {
-                float d = config.metric.distance(vectors.vectorValue(i), prevCentroid);
+                float d = DistanceMetric.L2.distance(vectors.vectorValue(i), prevCentroid);
                 if (d < minDistSq[i]) {
                     minDistSq[i] = d;
                 }
@@ -221,7 +224,7 @@ public final class KMeans {
         int dim = vectors.dimension();
 
         float[] flatCentroids = ClusterANNVectorUtil.flattenCentroids(centroids);
-        int metricOrd = config.metric == DistanceMetric.L2 ? 0 : 1;
+        int metricOrd = 0;
 
         // Reset sums and counts
         for (float[] s : clusterSums)
@@ -229,22 +232,18 @@ public final class KMeans {
         Arrays.fill(clusterCounts, 0);
 
         if (config.parallel) {
-            int numThreads = Runtime.getRuntime().availableProcessors();
-            float[][][] threadSums = new float[numThreads][k][dim];
-            int[][] threadCounts = new int[numThreads][k];
+            final int NUM_WORKERS = 4;
+            int sliceSize = (n + NUM_WORKERS - 1) / NUM_WORKERS;
+            float[][][] workerSums = new float[NUM_WORKERS][k][dim];
+            int[][] workerCounts = new int[NUM_WORKERS][k];
             AtomicInteger movedCount = new AtomicInteger(0);
 
-            // Batch assignment: process BATCH_SIZE vectors per task
-            int numBatches = (n + BATCH_SIZE - 1) / BATCH_SIZE;
-            IntStream.range(0, numBatches).parallel().forEach(batch -> {
-                int tid = (int) (Thread.currentThread().threadId() % numThreads);
-                int batchStart = batch * BATCH_SIZE;
-                int batchEnd = Math.min(batchStart + BATCH_SIZE, n);
-                int batchLen = batchEnd - batchStart;
-
-                // Tile: compute all distances for this batch
+            // Each worker processes a contiguous slice of vectors — no shared state
+            IntStream.range(0, NUM_WORKERS).parallel().forEach(workerId -> {
+                int start = workerId * sliceSize;
+                int end = Math.min(start + sliceSize, n);
                 float[] distBuf = new float[k];
-                for (int i = batchStart; i < batchEnd; i++) {
+                for (int i = start; i < end; i++) {
                     float[] vec;
                     try {
                         vec = vectors.vectorValue(i);
@@ -256,10 +255,10 @@ public final class KMeans {
                     int prevCluster = assignments[i];
 
                     if (centroidProximityMap != null && prevCluster >= 0) {
-                        float bestDist = config.metric.distance(vec, centroids[prevCluster]);
+                        float bestDist = DistanceMetric.L2.distance(vec, centroids[prevCluster]);
                         bestCluster = prevCluster;
                         for (int nc : centroidProximityMap[prevCluster]) {
-                            float dist = config.metric.distance(vec, centroids[nc]);
+                            float dist = DistanceMetric.L2.distance(vec, centroids[nc]);
                             if (dist < bestDist) {
                                 bestDist = dist;
                                 bestCluster = nc;
@@ -274,19 +273,19 @@ public final class KMeans {
                         assignments[i] = bestCluster;
                     }
 
-                    threadCounts[tid][bestCluster]++;
+                    workerCounts[workerId][bestCluster]++;
                     for (int d = 0; d < dim; d++) {
-                        threadSums[tid][bestCluster][d] += vec[d];
+                        workerSums[workerId][bestCluster][d] += vec[d];
                     }
                 }
             });
 
-            // Reduce thread-local accumulators
-            for (int t = 0; t < numThreads; t++) {
+            // Reduce worker accumulators
+            for (int w = 0; w < NUM_WORKERS; w++) {
                 for (int c = 0; c < k; c++) {
-                    clusterCounts[c] += threadCounts[t][c];
+                    clusterCounts[c] += workerCounts[w][c];
                     for (int d = 0; d < dim; d++) {
-                        clusterSums[c][d] += threadSums[t][c][d];
+                        clusterSums[c][d] += workerSums[w][c][d];
                     }
                 }
             }
@@ -300,10 +299,10 @@ public final class KMeans {
                 int prevCluster = assignments[i];
 
                 if (centroidProximityMap != null && prevCluster >= 0) {
-                    float bestDist = config.metric.distance(vec, centroids[prevCluster]);
+                    float bestDist = DistanceMetric.L2.distance(vec, centroids[prevCluster]);
                     bestCluster = prevCluster;
                     for (int nc : centroidProximityMap[prevCluster]) {
-                        float dist = config.metric.distance(vec, centroids[nc]);
+                        float dist = DistanceMetric.L2.distance(vec, centroids[nc]);
                         if (dist < bestDist) {
                             bestDist = dist;
                             bestCluster = nc;
@@ -330,11 +329,42 @@ public final class KMeans {
     // ========== Centroid Update ==========
 
     private static void updateCentroids(float[][] centroids, float[][] clusterSums, int[] clusterCounts, int k, int dim) {
+        updateCentroids(centroids, clusterSums, clusterCounts, k, dim, false);
+    }
+
+    private static void updateCentroids(float[][] centroids, float[][] clusterSums, int[] clusterCounts, int k, int dim, boolean spherical) {
         for (int c = 0; c < k; c++) {
             if (clusterCounts[c] > 0) {
                 float invCount = 1f / clusterCounts[c];
                 for (int d = 0; d < dim; d++) {
                     centroids[c][d] = clusterSums[c][d] * invCount;
+                }
+                if (spherical) {
+                    float norm = 0f;
+                    for (int d = 0; d < dim; d++) {
+                        norm += centroids[c][d] * centroids[c][d];
+                    }
+                    if (norm > 0f) {
+                        float invNorm = (float) (1.0 / Math.sqrt(norm));
+                        for (int d = 0; d < dim; d++) {
+                            centroids[c][d] *= invNorm;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ========== Centroid Sanitization ==========
+
+    /** Replace any non-finite centroid with zeros (will be treated as empty and rebalanced). */
+    private static void sanitizeCentroids(float[][] centroids, int k, int dim) {
+        for (int c = 0; c < k; c++) {
+            for (int d = 0; d < dim; d++) {
+                if (!Float.isFinite(centroids[c][d])) {
+                    // Zero out entire centroid
+                    java.util.Arrays.fill(centroids[c], 0f);
+                    break;
                 }
             }
         }

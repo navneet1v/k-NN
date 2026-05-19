@@ -52,8 +52,15 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         this.filterCost = filterCost;
     }
 
+    /** Per-query I/O bytes counter (ADC scan portion). */
+    private static final ThreadLocal<long[]> QUERY_BYTES = ThreadLocal.withInitial(() -> new long[1]);
+
+    /** Get bytes read for ADC scan in the last query on this thread. */
+    public static long getLastQueryAdcBytes() { return QUERY_BYTES.get()[0]; }
+
     @Override
     public int execute(KnnCollector collector) throws IOException {
+        QUERY_BYTES.get()[0] = 0;
         reorderByOffset(probes, nprobe, WINDOW_SIZE);
 
         double logN = Math.log10(Math.max(numVectors, 10));
@@ -97,6 +104,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
 
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
+            QUERY_BYTES.get()[0] += probe.postingBytes();
             docsExpected += centroidDocCounts[probe.centroidIdx()];
             docsScored += scored;
             totalScored += scored;

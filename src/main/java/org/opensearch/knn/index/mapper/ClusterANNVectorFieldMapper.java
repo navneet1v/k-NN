@@ -79,7 +79,7 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
         // Engine-less fields always search via the Lucene reader path
         mappedFieldType.alwaysUseMemoryOptimizedSearch = true;
         // Override rescore context for ClusterANN — need higher oversample for 1-bit ADC
-        mappedFieldType.setClusterAnnOversampleFactor(5.0f);
+        mappedFieldType.setClusterAnnOversampleFactor(3.0f);
         return new ClusterANNVectorFieldMapper(
             simpleName,
             mappedFieldType,

@@ -88,6 +88,16 @@ public final class ClusterANNVectorValues extends FloatVectorValues {
         return fromList(vectors, null, dim);
     }
 
+    /** View-based subset: no vector copying, just ordinal remapping. */
+    public static ClusterANNVectorValues fromSubset(ClusterANNVectorValues parent, int[] indices) {
+        return new ClusterANNVectorValues(
+            new SubsetSupplier(parent, indices),
+            null,
+            indices.length,
+            parent.dimension()
+        );
+    }
+
     // ========== Factory: merge (source segment readers) ==========
 
     private static final int TEMP_FILE_THRESHOLD = 10_000_000;
@@ -254,6 +264,26 @@ public final class ClusterANNVectorValues extends FloatVectorValues {
         float[] vector(int ord) throws IOException;
 
         VectorSupplier copy() throws IOException;
+    }
+
+    private static final class SubsetSupplier implements VectorSupplier {
+        private final ClusterANNVectorValues parent;
+        private final int[] indices;
+
+        SubsetSupplier(ClusterANNVectorValues parent, int[] indices) {
+            this.parent = parent;
+            this.indices = indices;
+        }
+
+        @Override
+        public float[] vector(int ord) throws IOException {
+            return parent.vectorValue(indices[ord]);
+        }
+
+        @Override
+        public VectorSupplier copy() throws IOException {
+            return this; // safe: parent handles thread-safety
+        }
     }
 
     private static final class OnHeapSupplier implements VectorSupplier {
