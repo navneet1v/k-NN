@@ -9,9 +9,14 @@ NUM_QUERIES = 10000
 DATA_DIR = "/Users/viktari/pysptag/data"
 
 DATASETS = {
-    "sift": {"dim": 128, "space": "l2", "compression": "16x"},
-    "cohere": {"dim": 768, "space": "innerproduct", "compression": "16x"},
-    "gist": {"dim": 960, "space": "l2", "compression": "16x"},
+    "sift": {"dim": 128, "space": "l2", "compression": "16x", "format": "bin"},
+    "cohere": {"dim": 768, "space": "innerproduct", "compression": "16x", "format": "bin"},
+    "gist": {"dim": 960, "space": "l2", "compression": "16x", "format": "bin"},
+    "glove": {"dim": 200, "space": "cosinesimil", "compression": "16x", "format": "hdf5", "file": "glove-200-angular.hdf5"},
+    "flicker": {"dim": 512, "space": "innerproduct", "compression": "16x", "format": "hdf5", "file": "FlickrImagesTextQueries.hdf5"},
+    "mbread": {"dim": 1024, "space": "innerproduct", "compression": "16x", "format": "hdf5", "file": "mbread_msmarco.hdf5"},
+    "mpnetMarco": {"dim": 768, "space": "innerproduct", "compression": "16x", "format": "hdf5", "file": "mpnet_marco.hdf5"},
+    "tasb": {"dim": 768, "space": "innerproduct", "compression": "16x", "format": "hdf5", "file": "marco_tasb.hdf5"},
 }
 
 OVERSAMPLE_FACTORS = [2.0, 3.0, 5.0]
@@ -28,21 +33,34 @@ def read_gt(f):
         k = struct.unpack('i', fh.read(4))[0]
         return np.fromfile(fh, dtype=np.int32, count=c * k).reshape(c, k)
 
+def load_dataset(name, cfg):
+    data_path = f"{DATA_DIR}/{name}"
+    if cfg.get("format") == "hdf5":
+        import h5py
+        f = h5py.File(f"{data_path}/{cfg['file']}", 'r')
+        base = np.array(f['train'], dtype=np.float32)
+        queries = np.array(f['test'], dtype=np.float32)
+        gt = np.array(f['neighbors'], dtype=np.int32)
+        f.close()
+    else:
+        base = read_bin(f"{data_path}/base.bin")
+        queries = read_bin(f"{data_path}/query.bin")
+        gt = read_gt(f"{data_path}/groundtruth.bin")
+    return base, queries, gt
+
 def run_benchmark(name, cfg, force_merge=True):
     INDEX = f"clusterann-{name}"
     FIELD = "vector"
     dim = cfg["dim"]
     data_path = f"{DATA_DIR}/{name}"
 
-    if not os.path.exists(f"{data_path}/base.bin"):
+    if not os.path.exists(data_path):
         print(f"[{name}] SKIP — no data at {data_path}")
         return
 
     print(f"\n{'='*70}")
     print(f"[{name}] Loading {data_path}...")
-    base = read_bin(f"{data_path}/base.bin")
-    queries = read_bin(f"{data_path}/query.bin")
-    gt = read_gt(f"{data_path}/groundtruth.bin")
+    base, queries, gt = load_dataset(name, cfg)
     print(f"[{name}] Base: {base.shape}, Queries: {queries.shape}, GT: {gt.shape}")
 
     # Create index
