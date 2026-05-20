@@ -195,7 +195,7 @@ public final class QuantizedVectorReader {
                 adcSimilarity = 1.0f / (1.0f + Math.max(score, 0f));
             } else {
                 score += currentQueryAdditionalCorrection + blockAdd[j];
-                adcSimilarity = (1.0f + Math.clamp(score, -1f, 1f)) / 2.0f;
+                adcSimilarity = (1.0f + score) / 2.0f;
             }
 
             candidates.add(ordBuf[blockStart + j], adcSimilarity);

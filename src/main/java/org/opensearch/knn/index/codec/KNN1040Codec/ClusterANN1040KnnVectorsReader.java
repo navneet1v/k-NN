@@ -123,9 +123,16 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         VectorSimilarityFunction simFunc = getSimFunc(field);
         boolean useADC = fieldState.docBits > 0 && fieldState.numVectors > MIN_ADC_VECTORS;
 
+        // Transform query for ADC scoring (randomRotation redistributes variance for better quantization)
+        float[] adcTarget = target;
+        if (useADC && fieldState.randomRotation != null) {
+            adcTarget = new float[target.length];
+            fieldState.randomRotation.transform(target, adcTarget);
+        }
+
         QuantizedVectorReader adcReader = null;
         if (useADC) {
-            adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, target, k);
+            adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, k);
             adcReader.setCollector(knnCollector);
         }
 

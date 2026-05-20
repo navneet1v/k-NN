@@ -52,6 +52,8 @@ public final class ClusterANNFieldState {
     // Lazy-loaded (large: dimension floats per centroid)
     public float[][] centroids;
     public long[] centroidOffsets;
+    public org.opensearch.knn.index.clusterann.algorithm.RandomRotation randomRotation;
+    public float[][] transformedCentroids;
 
     private final long centroidsFilePos;
 
@@ -102,6 +104,19 @@ public final class ClusterANNFieldState {
 
         centroidOffsets = new long[numCentroids];
         metaInput.readLongs(centroidOffsets, 0, numCentroids);
+
+        // Read randomRotation
+        randomRotation = org.opensearch.knn.index.clusterann.algorithm.RandomRotation.read(metaInput);
+
+        // Read transformed centroids (used for ADC scoring)
+        int totalFloats2 = numCentroids * dimension;
+        float[] flat2 = new float[totalFloats2];
+        metaInput.readFloats(flat2, 0, totalFloats2);
+        transformedCentroids = new float[numCentroids][];
+        for (int c = 0; c < numCentroids; c++) {
+            transformedCentroids[c] = new float[dimension];
+            System.arraycopy(flat2, c * dimension, transformedCentroids[c], 0, dimension);
+        }
     }
 
     public static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
@@ -136,16 +151,33 @@ public final class ClusterANNFieldState {
 
             long centroidsFilePos = metaInput.getFilePointer();
 
-            // Skip centroids + offset table (lazy loaded)
+            // Read centroids + offset table + randomRotation + transformed centroids eagerly
+            float[][] loadedCentroids = null;
+            long[] loadedOffsets = null;
+            org.opensearch.knn.index.clusterann.algorithm.RandomRotation loadedRandomRotation = null;
+            float[][] loadedTransformedCentroids = null;
             if (numCentroids > 0) {
-                long centroidBytes = (long) numCentroids * dimension * Float.BYTES;
-                long offsetBytes = (long) numCentroids * Long.BYTES;
-                metaInput.seek(centroidsFilePos + centroidBytes + offsetBytes);
+                int totalFloats = numCentroids * dimension;
+                float[] flat = new float[totalFloats];
+                metaInput.readFloats(flat, 0, totalFloats);
+                loadedCentroids = new float[numCentroids][];
+                for (int c = 0; c < numCentroids; c++) {
+                    loadedCentroids[c] = new float[dimension];
+                    System.arraycopy(flat, c * dimension, loadedCentroids[c], 0, dimension);
+                }
+                loadedOffsets = new long[numCentroids];
+                metaInput.readLongs(loadedOffsets, 0, numCentroids);
+                loadedRandomRotation = org.opensearch.knn.index.clusterann.algorithm.RandomRotation.read(metaInput);
+                float[] flat2 = new float[totalFloats];
+                metaInput.readFloats(flat2, 0, totalFloats);
+                loadedTransformedCentroids = new float[numCentroids][];
+                for (int c = 0; c < numCentroids; c++) {
+                    loadedTransformedCentroids[c] = new float[dimension];
+                    System.arraycopy(flat2, c * dimension, loadedTransformedCentroids[c], 0, dimension);
+                }
             }
 
-            fields.put(
-                fieldNumber,
-                new ClusterANNFieldState(
+            ClusterANNFieldState fs = new ClusterANNFieldState(
                     fieldNumber,
                     numVectors,
                     dimension,
@@ -157,8 +189,12 @@ public final class ClusterANNFieldState {
                     norms,
                     postingSizes,
                     centroidsFilePos
-                )
             );
+            fs.centroids = loadedCentroids;
+            fs.centroidOffsets = loadedOffsets;
+            fs.randomRotation = loadedRandomRotation;
+            fs.transformedCentroids = loadedTransformedCentroids;
+            fields.put(fieldNumber, fs);
         }
         return fields;
     }

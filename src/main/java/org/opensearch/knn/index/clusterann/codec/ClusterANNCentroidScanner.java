@@ -117,7 +117,7 @@ public final class ClusterANNCentroidScanner {
     }
 
     private int scoreADC(KnnCollector collector, int count, int validCount) throws IOException {
-        float[] centroid = fieldState.centroids[centroidIdx];
+        float[] centroid = fieldState.transformedCentroids != null ? fieldState.transformedCentroids[centroidIdx] : fieldState.centroids[centroidIdx];
         float centroidDp = 0f;
         if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
             centroidDp = VectorUtil.dotProduct(target, centroid);
