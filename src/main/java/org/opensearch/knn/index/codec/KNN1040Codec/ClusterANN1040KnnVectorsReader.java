@@ -125,7 +125,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         // Transform query for ADC scoring (randomRotation redistributes variance for better quantization)
         float[] adcTarget = target;
-        if (useADC && fieldState.randomRotation != null) {
+        if (useADC && fieldState.randomRotation != null && simFunc == VectorSimilarityFunction.EUCLIDEAN) {
             adcTarget = new float[target.length];
             fieldState.randomRotation.transform(target, adcTarget);
         }

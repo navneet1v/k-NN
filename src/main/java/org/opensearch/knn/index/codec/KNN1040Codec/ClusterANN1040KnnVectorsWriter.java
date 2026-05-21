@@ -147,11 +147,16 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();
 
-        // 1b. Create random rotation and transform centroids for quantization
+        // 1b. Create random rotation and transform centroids for quantization (L2 only)
+        boolean useRotation = fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
         RandomRotation randomRotation = RandomRotation.create(dimension);
         float[][] transformedCentroids = new float[numCentroids][dimension];
         for (int c = 0; c < numCentroids; c++) {
-            randomRotation.transform(centroids[c], transformedCentroids[c]);
+            if (useRotation) {
+                randomRotation.transform(centroids[c], transformedCentroids[c]);
+            } else {
+                System.arraycopy(centroids[c], 0, transformedCentroids[c], 0, dimension);
+            }
         }
 
         // 2. Spatial sort centroids (by first principal component)
@@ -173,9 +178,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 centroidOffsets[origIdx] = startPos;
 
                 // Primary posting list (quantize with transformed vectors + transformed centroids)
-                writePostingList(primaryPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, randomRotation);
+                writePostingList(primaryPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, useRotation ? randomRotation : null);
                 // SOAR posting list (adjacent)
-                writePostingList(soarPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, randomRotation);
+                writePostingList(soarPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, useRotation ? randomRotation : null);
 
                 postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
             }
@@ -269,8 +274,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         float[] transformedVec = new float[dim];
         qWriter.writeBlocked(ordinals, count, ord -> {
             float[] vec = vectors.vectorValue(ord);
-            randomRotation.transform(vec, transformedVec);
-            return transformedVec;
+            if (randomRotation != null) {
+                randomRotation.transform(vec, transformedVec);
+                return transformedVec;
+            }
+            return vec;
         }, centroid, postingsOutput);
     }
 

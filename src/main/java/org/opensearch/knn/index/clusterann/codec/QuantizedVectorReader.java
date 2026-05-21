@@ -8,6 +8,7 @@ package org.opensearch.knn.index.clusterann.codec;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.jni.SimdVectorComputeService;
@@ -69,6 +70,7 @@ public final class QuantizedVectorReader {
     private float currentQueryScale;
     private float currentQueryComponentSum;
     private float currentQueryAdditionalCorrection;
+    private float currentCentroidNormSq;
 
     public QuantizedVectorReader(
         RandomVectorScorer exactScorer,
@@ -194,8 +196,12 @@ public final class QuantizedVectorReader {
                 score = currentQueryAdditionalCorrection + blockAdd[j] - 2 * score;
                 adcSimilarity = 1.0f / (1.0f + Math.max(score, 0f));
             } else {
-                score += currentQueryAdditionalCorrection + blockAdd[j];
-                adcSimilarity = (1.0f + score) / 2.0f;
+                float rawDot = score + blockAdd[j] + centroidDp - currentCentroidNormSq;
+                if (simFunc == VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT) {
+                    adcSimilarity = rawDot >= 0 ? rawDot + 1 : 1f / (1f - rawDot);
+                } else {
+                    adcSimilarity = Math.max((1.0f + rawDot) / 2.0f, 0f);
+                }
             }
 
             candidates.add(ordBuf[blockStart + j], adcSimilarity);
@@ -209,7 +215,6 @@ public final class QuantizedVectorReader {
 
     /**
      * Drain ADC candidates into the KnnCollector.
-     * Query-level NativeEngineKnnVectorQuery handles exact rescoring.
      */
     public void finish(KnnCollector collector) {
         int count = candidates.count();
@@ -242,6 +247,7 @@ public final class QuantizedVectorReader {
         currentQueryScale = (qResult.upperInterval() - currentQueryLower) * FOUR_BIT_SCALE;
         currentQueryComponentSum = (float) qResult.quantizedComponentSum();
         currentQueryAdditionalCorrection = qResult.additionalCorrection();
+        currentCentroidNormSq = VectorUtil.dotProduct(centroid, centroid);
     }
 
     private static final boolean NATIVE_AVAILABLE = probeNative();
