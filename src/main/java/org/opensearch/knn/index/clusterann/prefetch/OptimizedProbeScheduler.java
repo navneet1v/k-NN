@@ -57,10 +57,11 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
 
     /** Get bytes read for ADC scan in the last query on this thread. */
     public static long getLastQueryAdcBytes() { return QUERY_BYTES.get()[0]; }
+    public static void resetQueryAdcBytes() { QUERY_BYTES.get()[0] = 0; }
 
     @Override
     public int execute(KnnCollector collector) throws IOException {
-        QUERY_BYTES.get()[0] = 0;
+        
         reorderByOffset(probes, nprobe, WINDOW_SIZE);
 
         double logN = Math.log10(Math.max(numVectors, 10));

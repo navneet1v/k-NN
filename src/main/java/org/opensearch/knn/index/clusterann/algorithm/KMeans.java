@@ -102,7 +102,7 @@ public final class KMeans {
                 config,
                 centroidProximityMap
             );
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, false);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, config.metric == DistanceMetric.COSINE);
             sanitizeCentroids(centroids, k, dim);
 
             if (config.rebalanceEmpty) {
@@ -116,7 +116,7 @@ public final class KMeans {
         // Final full pass: assign all vectors to converged centroids
         if (sampled) {
             assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, k, config, centroidProximityMap);
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, false);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, config.metric == DistanceMetric.COSINE);
             sanitizeCentroids(centroids, k, dim);
         }
 

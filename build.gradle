@@ -727,7 +727,7 @@ def commonIntegTestClusters(OpenSearchCluster cluster, _numNodes){
     // i.e. we have to use a custom property to flag when we want to debug opensearch JVM
     // since we also support multi node integration tests we increase debugPort per node
     cluster.nodes.forEach { node ->
-        node.jvmArgs("-Xmx512m")
+        node.jvmArgs("-Xmx32g")
     }
     if (System.getProperty("cluster.debug") != null) {
         def debugPort = 5005

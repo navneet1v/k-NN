@@ -103,11 +103,14 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         return nprobe;
     }
 
+    private static volatile int NPROBE_MULTIPLIER = Integer.getInteger("clusterann.nprobe.multiplier", 2);
+
+    public static void setNprobeMultiplier(int m) { NPROBE_MULTIPLIER = m; }
+    public static int getNprobeMultiplier() { return NPROBE_MULTIPLIER; }
+
     private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {
         if (numCentroids <= 10) return numCentroids;
-        // Use 2*sqrt for better recall on high-dim datasets.
-        // sqrt(2615)=51 → 2*51=102 probes. Scans ~4% of data.
-        int nprobe = Math.max(10, 4 * (int) Math.sqrt(numCentroids));
+        int nprobe = Math.max(10, NPROBE_MULTIPLIER * (int) Math.sqrt(numCentroids));
         return Math.min(nprobe, numCentroids);
     }
 }

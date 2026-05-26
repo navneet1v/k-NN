@@ -121,6 +121,7 @@ public class NativeEngineKnnVectorQuery extends Query {
         List<LeafReaderContext> leafReaderContexts = reader.leaves();
         List<PerLeafResult> perLeafResults;
         final int finalK = knnQuery.getK();
+        org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.resetQueryAdcBytes();
         if (isRescoreRequired(firstPassKFor2PhaseSearch) == false) {
             perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, finalK);
         } else {
@@ -134,7 +135,7 @@ public class NativeEngineKnnVectorQuery extends Query {
             long rescoreTime = stopWatch.stop().totalTime().millis();
             long adcBytes = org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.getLastQueryAdcBytes();
             long rescoreBytes = (long) firstPassKFor2PhaseSearch * knnQuery.getQueryVector().length * 4;
-            log.debug(
+            log.info(
                 "[ClusterANN-IO] adc_bytes={} rescore_bytes={} total_bytes={} rescore_ms={} oversample_k={}",
                 adcBytes, rescoreBytes, adcBytes + rescoreBytes, rescoreTime, firstPassKFor2PhaseSearch
             );
