@@ -204,7 +204,7 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
         // TODO: Fix this. This is hack for now
         FieldInfo fi = context.reader().getFieldInfos().fieldInfo(knnQuery.getField());
         boolean isCluster = FieldInfoExtractor.isClusterAnnIndex(fi);
-        log.info(
+        log.debug(
             "[ClusterANN-DEBUG] field={} isCluster={} attr={}",
             knnQuery.getField(),
             isCluster,

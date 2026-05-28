@@ -95,7 +95,7 @@ public class NativeEngineKnnVectorQuery extends Query {
         final boolean isShardLevelRescoringDisabled = KNNSettings.isShardLevelRescoringDisabledForDiskBasedVector(knnQuery.getIndexName());
         final Integer firstPassKFor2PhaseSearch = getFirstPassK(isShardLevelRescoringDisabled);
         RescoreContext rc = knnQuery.getRescoreContext();
-        log.info(
+        log.debug(
             "[ClusterANN-QUERY] k={} firstPassK={} shardRescoringDisabled={} oversample={}",
             knnQuery.getK(),
             firstPassKFor2PhaseSearch,
@@ -135,7 +135,7 @@ public class NativeEngineKnnVectorQuery extends Query {
             long rescoreTime = stopWatch.stop().totalTime().millis();
             long adcBytes = org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.getLastQueryAdcBytes();
             long rescoreBytes = (long) firstPassKFor2PhaseSearch * knnQuery.getQueryVector().length * 4;
-            log.info(
+            log.debug(
                 "[ClusterANN-IO] adc_bytes={} rescore_bytes={} total_bytes={} rescore_ms={} oversample_k={}",
                 adcBytes, rescoreBytes, adcBytes + rescoreBytes, rescoreTime, firstPassKFor2PhaseSearch
             );

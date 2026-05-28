@@ -32,7 +32,6 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  */
 public final class QuantizedVectorReader {
 
-    private static final int OVERSAMPLE = 20;
     private static final byte QUERY_BITS = 4;
     private static final float FOUR_BIT_SCALE = 1.0f / ((1 << QUERY_BITS) - 1);
 
@@ -43,8 +42,15 @@ public final class QuantizedVectorReader {
     private final ScalarBitEncoding encoding;
     private final int packedBytes;
     private final int k;
-    private final CandidateCollector candidates;
     private KnnCollector currentCollector;
+
+    // Bulk collection buffers
+    private final int[] bulkDocs;
+    private final float[] bulkScores;
+    private final int[] validOffsets;
+    private int bulkCount;
+    private float bulkMaxScore;
+    private long bytesRead;
 
     // Query quantization scratch
     private final OptimizedScalarQuantizer osq;
@@ -87,7 +93,11 @@ public final class QuantizedVectorReader {
         this.encoding = ScalarBitEncoding.fromDocBits(fieldState.docBits);
         this.packedBytes = encoding.docPackedBytes(fieldState.dimension);
         this.k = k;
-        this.candidates = new CandidateCollector(k * OVERSAMPLE);
+        this.bulkDocs = new int[BLOCK_SIZE];
+        this.bulkScores = new float[BLOCK_SIZE];
+        this.validOffsets = new int[BLOCK_SIZE];
+        this.bulkCount = 0;
+        this.bulkMaxScore = Float.NEGATIVE_INFINITY;
         this.osq = new OptimizedScalarQuantizer(simFunc);
         this.scratch = new byte[fieldState.dimension];
         this.destinations = new byte[][] { scratch };
@@ -142,14 +152,41 @@ public final class QuantizedVectorReader {
 
         ensureQueryQuantized(centroid);
 
-        // Bulk read codes
-        input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
-
-        // Bulk read corrections (4 calls total)
+        // Read corrections FIRST (small — 16 bytes per vector)
         readFloatsFromInts(input, blockLower, blockSize);
         readFloatsFromInts(input, blockUpper, blockSize);
         readFloatsFromInts(input, blockAdd, blockSize);
         input.readInts(blockSum, 0, blockSize);
+        long correctionsBytes = (long) blockSize * Integer.BYTES * 4;
+        bytesRead += correctionsBytes;
+
+        // Block-level early skip: compute upper bound from corrections alone
+        float blockThreshold = currentCollector.minCompetitiveSimilarity();
+        if (blockThreshold > Float.NEGATIVE_INFINITY && simFunc != VectorSimilarityFunction.EUCLIDEAN) {
+            float maxUpperBound = Float.NEGATIVE_INFINITY;
+            float docBitScaleCheck = encoding.docBitScale();
+            for (int j = 0; j < blockSize; j++) {
+                if (!validBuf[blockStart + j]) continue;
+                // Upper bound: assume max rawDot contribution (generous estimate)
+                float docScale = (blockUpper[j] - blockLower[j]) * docBitScaleCheck;
+                float maxScore = blockLower[j] * currentQueryLower * fieldState.dimension
+                    + Math.abs(currentQueryLower) * docScale * Math.abs(blockSum[j])
+                    + Math.abs(blockLower[j]) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
+                    + docScale * Math.abs(currentQueryScale) * packedBytes * 4f;
+                float upperBound = maxScore + blockAdd[j] + centroidDp - currentCentroidNormSq;
+                if (upperBound > maxUpperBound) maxUpperBound = upperBound;
+            }
+            float upperSimilarity = maxUpperBound >= 0 ? maxUpperBound + 1 : 1f / (1f - maxUpperBound);
+            if (upperSimilarity <= blockThreshold) {
+                // Skip codes entirely — this block can't compete
+                input.skipBytes((long) blockSize * packedBytes);
+                return;
+            }
+        }
+
+        // Read codes (only if block is potentially competitive)
+        input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
+        bytesRead += (long) blockSize * packedBytes;
 
         // Bulk dot product
         if (NATIVE_AVAILABLE) {
@@ -162,41 +199,52 @@ public final class QuantizedVectorReader {
                 fieldState.docBits
             );
         } else {
-            // Java fallback: offset-based dot product (no per-vector copy)
+            // Compact valid entries — enables branchless dot product loop
+            int validCount = 0;
             for (int j = 0; j < blockSize; j++) {
-                if (!validBuf[blockStart + j]) {
-                    rawDotBuf[j] = 0;
-                    continue;
+                if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
+            }
+            // Dot product over valid entries only
+            if (fieldState.docBits == 1) {
+                for (int v = 0; v < validCount; v++) {
+                    int j = validOffsets[v];
+                    rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
                 }
-                int offset = j * packedBytes;
-                if (fieldState.docBits == 1) {
-                    rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
-                } else if (fieldState.docBits == 2) {
-                    rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
-                } else {
-                    rawDotBuf[j] = int4NibbleDotProductOffset(currentTransposed, flatCodesBuf, offset, packedBytes);
+            } else if (fieldState.docBits == 2) {
+                for (int v = 0; v < validCount; v++) {
+                    int j = validOffsets[v];
+                    rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
+                }
+            } else {
+                for (int v = 0; v < validCount; v++) {
+                    int j = validOffsets[v];
+                    rawDotBuf[j] = int4NibbleDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
                 }
             }
         }
 
-        // Collect all ADC scores — don't use competitive threshold to reject
-        // because ADC scores are noisy and rejecting based on them loses good candidates.
-        // The KnnCollector's internal heap handles eviction correctly.
+        // Bulk score and collect directly into KnnCollector
         float docBitScale = encoding.docBitScale();
         int dim = fieldState.dimension;
+        // Precompute constants (invariant across vectors in this block)
+        float qLowerDim = currentQueryLower * dim;
+        float qScaleCompSum = currentQueryScale * currentQueryComponentSum;
+        float dpMinusNorm = centroidDp - currentCentroidNormSq;
+        bulkCount = 0;
+        bulkMaxScore = Float.NEGATIVE_INFINITY;
         for (int j = 0; j < blockSize; j++) {
             if (!validBuf[blockStart + j]) continue;
 
             float docScale = (blockUpper[j] - blockLower[j]) * docBitScale;
-            float score = blockLower[j] * currentQueryLower * dim + currentQueryLower * docScale * blockSum[j] + blockLower[j]
-                * currentQueryScale * currentQueryComponentSum + docScale * currentQueryScale * rawDotBuf[j];
+            float score = blockLower[j] * qLowerDim + currentQueryLower * docScale * blockSum[j] + blockLower[j]
+                * qScaleCompSum + docScale * currentQueryScale * rawDotBuf[j];
 
             float adcSimilarity;
             if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {
                 score = currentQueryAdditionalCorrection + blockAdd[j] - 2 * score;
                 adcSimilarity = 1.0f / (1.0f + Math.max(score, 0f));
             } else {
-                float rawDot = score + blockAdd[j] + centroidDp - currentCentroidNormSq;
+                float rawDot = score + blockAdd[j] + dpMinusNorm;
                 if (simFunc == VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT) {
                     adcSimilarity = rawDot >= 0 ? rawDot + 1 : 1f / (1f - rawDot);
                 } else {
@@ -204,24 +252,34 @@ public final class QuantizedVectorReader {
                 }
             }
 
-            candidates.add(ordBuf[blockStart + j], adcSimilarity);
+            bulkDocs[bulkCount] = exactScorer.ordToDoc(ordBuf[blockStart + j]);
+            bulkScores[bulkCount] = adcSimilarity;
+            if (adcSimilarity > bulkMaxScore) bulkMaxScore = adcSimilarity;
+            bulkCount++;
+        }
+
+        // Bulk collect: one threshold check for entire block
+        if (bulkCount > 0 && bulkMaxScore > currentCollector.minCompetitiveSimilarity()) {
+            for (int j = 0; j < bulkCount; j++) {
+                currentCollector.collect(bulkDocs[j], bulkScores[j]);
+            }
         }
     }
 
     /** Set the collector for this search. Must be called before scoreBlock. */
     public void setCollector(KnnCollector collector) {
         this.currentCollector = collector;
+        this.bytesRead = 0;
     }
 
+    /** Actual bytes read during ADC scoring (excludes skipped blocks). */
+    public long getBytesRead() { return bytesRead; }
+
     /**
-     * Drain ADC candidates into the KnnCollector.
+     * No-op — collection happens directly during scoreBlock.
      */
     public void finish(KnnCollector collector) {
-        int count = candidates.count();
-        for (int i = 0; i < count; i++) {
-            int ord = candidates.ordinal(i);
-            collector.collect(exactScorer.ordToDoc(ord), candidates.score(i));
-        }
+        // Direct collection eliminates the need for drain
     }
 
     private void readFloatsFromInts(IndexInput input, float[] out, int count) throws IOException {
@@ -272,15 +330,27 @@ public final class QuantizedVectorReader {
     // ===== Offset-based dot products (no per-vector array copy) =====
 
     /** 1-bit doc × 4-bit query: VectorUtil delegates with offset. */
+    private static final java.lang.invoke.VarHandle LONG_LE =
+        java.lang.invoke.MethodHandles.byteArrayViewVarHandle(long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+
     private static float int4BitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
-        long sum = 0;
-        for (int i = 0; i < len; i++) {
-            int q0 = query[i] & 0xFF, q1 = query[i + len] & 0xFF;
-            int q2 = query[i + len * 2] & 0xFF, q3 = query[i + len * 3] & 0xFF;
-            int d = docs[offset + i] & 0xFF;
-            sum += Integer.bitCount(q0 & d) + Integer.bitCount(q1 & d) * 2L + Integer.bitCount(q2 & d) * 4L + Integer.bitCount(q3 & d) * 8L;
+        long sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+        int r = 0;
+        for (final int upperBound = len & -Long.BYTES; r < upperBound; r += Long.BYTES) {
+            long d = (long) LONG_LE.get(docs, offset + r);
+            sum0 += Long.bitCount((long) LONG_LE.get(query, r) & d);
+            sum1 += Long.bitCount((long) LONG_LE.get(query, r + len) & d);
+            sum2 += Long.bitCount((long) LONG_LE.get(query, r + len * 2) & d);
+            sum3 += Long.bitCount((long) LONG_LE.get(query, r + len * 3) & d);
         }
-        return sum;
+        for (; r < len; r++) {
+            int d = docs[offset + r] & 0xFF;
+            sum0 += Integer.bitCount((query[r] & d) & 0xFF);
+            sum1 += Integer.bitCount((query[r + len] & d) & 0xFF);
+            sum2 += Integer.bitCount((query[r + len * 2] & d) & 0xFF);
+            sum3 += Integer.bitCount((query[r + len * 3] & d) & 0xFF);
+        }
+        return sum0 + sum1 * 2L + sum2 * 4L + sum3 * 8L;
     }
 
     /** 2-bit doc × 4-bit query with offset. */

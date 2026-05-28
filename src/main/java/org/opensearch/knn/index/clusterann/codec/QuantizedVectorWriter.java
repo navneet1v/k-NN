@@ -89,9 +89,7 @@ public final class QuantizedVectorWriter implements Closeable {
                 quantizeOne(vec, centroidCopy, j);
             }
 
-            // Single bulk write for codes
-            output.writeBytes(flatCodesBuf, 0, blockSize * packedBytes);
-            // Write corrections
+            // Write corrections FIRST (enables early skip during search)
             for (int j = 0; j < blockSize; j++)
                 output.writeInt(blockLowerBits[j]);
             for (int j = 0; j < blockSize; j++)
@@ -100,6 +98,8 @@ public final class QuantizedVectorWriter implements Closeable {
                 output.writeInt(blockAddBits[j]);
             for (int j = 0; j < blockSize; j++)
                 output.writeInt(blockSum[j]);
+            // Codes last (can be skipped if block is non-competitive)
+            output.writeBytes(flatCodesBuf, 0, blockSize * packedBytes);
 
             pos += blockSize;
         }

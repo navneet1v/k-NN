@@ -79,7 +79,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             }
         }
 
-        log.info("[ClusterANN] reader created: {} fields with IVF index", fieldStates.size());
+        log.debug("[ClusterANN] reader created: {} fields with IVF index", fieldStates.size());
     }
 
     @Override
@@ -97,6 +97,8 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         return flatVectorsReader.getByteVectorValues(field);
     }
 
+    private static final int MIN_IVF_VECTORS = 100;
+
     @Override
     public void search(String field, float[] target, KnnCollector knnCollector, AcceptDocs acceptDocs) throws IOException {
         Integer fieldNumber = fieldNameToNumber.get(field);
@@ -109,9 +111,15 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
         fieldState.ensureLoaded(metaInput);
 
+        // Skip IVF for tiny segments — brute force is faster than IVF overhead
+        if (fieldState.numVectors < MIN_IVF_VECTORS) {
+            bruteForceSearch(field, target, knnCollector, acceptDocs);
+            return;
+        }
+
         int k = knnCollector.k();
         long t0 = System.nanoTime();
-        log.info("[ClusterANN-SEARCH] collector.k={}", k);
+        log.debug("[ClusterANN-SEARCH] collector.k={}", k);
         IndexInput postingsClone = postingsInput.clone();
         Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
@@ -168,13 +176,17 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             adcReader.finish(knnCollector);
         }
         long t3 = System.nanoTime();
-        log.info(
-            "[ClusterANN-SEARCH] nprobe={} centroidDist={}ms scan={}ms drain={}ms total={}ms",
+        long actualAdcBytes = adcReader != null ? adcReader.getBytesRead() : 0;
+        // Accumulate actual bytes (not estimated) into query-level counter
+        OptimizedProbeScheduler.addActualBytes(actualAdcBytes);
+        log.debug(
+            "[ClusterANN-SEARCH] nprobe={} centroidDist={}ms scan={}ms drain={}ms total={}ms adcBytes={}",
             nearest.nprobe(),
             (t1 - t0) / 1_000_000,
             (t2 - t1) / 1_000_000,
             (t3 - t2) / 1_000_000,
-            (t3 - t0) / 1_000_000
+            (t3 - t0) / 1_000_000,
+            actualAdcBytes
         );
     }
 

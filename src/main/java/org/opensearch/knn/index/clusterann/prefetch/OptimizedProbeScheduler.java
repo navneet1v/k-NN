@@ -21,8 +21,8 @@ import java.util.Arrays;
  */
 public final class OptimizedProbeScheduler implements ProbeScheduler {
 
-    private static final int WINDOW_SIZE = 4;
-    private static final int LOOKAHEAD = 4;
+    private static final int WINDOW_SIZE = 8;
+    private static final int LOOKAHEAD = 8;
 
     private final ProbeTarget[] probes;
     private final int nprobe;
@@ -58,16 +58,24 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     /** Get bytes read for ADC scan in the last query on this thread. */
     public static long getLastQueryAdcBytes() { return QUERY_BYTES.get()[0]; }
     public static void resetQueryAdcBytes() { QUERY_BYTES.get()[0] = 0; }
+    public static void addActualBytes(long bytes) { QUERY_BYTES.get()[0] += bytes; }
 
     @Override
     public int execute(KnnCollector collector) throws IOException {
         
         reorderByOffset(probes, nprobe, WINDOW_SIZE);
 
-        double logN = Math.log10(Math.max(numVectors, 10));
-        long budget = Math.max(k * 4L, (long) (2.0 * logN * logN * k));
+        // Hybrid termination: soft budget + contribution-based override
+        // Budget = expected vectors in probed clusters (nprobe/numCentroids of segment)
+        // Soft budget = half the expected vectors in probed clusters
+        long softBudget = Math.max(k * 4L, (long) numVectors * nprobe / Math.max(centroidDocCounts.length * 2, 1));
+
         float filterSelectivity = numVectors > 0 ? (float) filterCost / numVectors : 1.0f;
         boolean filterActive = filterSelectivity < 0.10f && filterSelectivity > 0;
+
+        // Contribution-based early termination
+        float closestDist = nprobe > 0 ? probes[0].centroidDist() : 0f;
+        int consecutiveEmpty = 0;
 
         // Prefetch initial window
         int prefetchedUpTo = Math.min(LOOKAHEAD, nprobe - 1);
@@ -75,7 +83,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             issueReadAhead(probes[i]);
         }
 
-        long docsExpected = 0;
+        
         long docsScored = 0;
         int totalScored = 0;
 
@@ -93,30 +101,46 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 }
             }
 
-            if (docsScored >= k && docsExpected >= budget && collector.minCompetitiveSimilarity() != Float.NEGATIVE_INFINITY) {
-                break;
-            }
-
             // Prefetch next probes
             while (prefetchedUpTo + 1 < nprobe && prefetchedUpTo < i + LOOKAHEAD) {
                 prefetchedUpTo++;
                 issueReadAhead(probes[prefetchedUpTo]);
             }
 
+            float thresholdBefore = collector.minCompetitiveSimilarity();
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
-            QUERY_BYTES.get()[0] += probe.postingBytes();
-            docsExpected += centroidDocCounts[probe.centroidIdx()];
+            // Actual bytes tracked by QuantizedVectorReader.getBytesRead()
+            
             docsScored += scored;
             totalScored += scored;
 
             if (collector.earlyTerminated()) break;
+
+            // Hybrid termination
+            if (i >= 2 && docsScored >= k * 2) {
+                float thresholdAfter = collector.minCompetitiveSimilarity();
+                boolean improving = thresholdAfter > thresholdBefore && thresholdBefore != Float.NEGATIVE_INFINITY;
+                if (improving) {
+                    consecutiveEmpty = 0;
+                } else if (thresholdBefore != Float.NEGATIVE_INFINITY) {
+                    consecutiveEmpty++;
+                }
+
+                // Stop if: past soft budget AND (cluster not contributing OR far away)
+                if (docsScored >= softBudget && thresholdAfter != Float.NEGATIVE_INFINITY) {
+                    float distRatio = closestDist > 0 ? probe.centroidDist() / closestDist : 1f;
+                    if (consecutiveEmpty >= 1 || distRatio > 1.5f) {
+                        break;
+                    }
+                }
+            }
         }
 
         return totalScored;
     }
 
-    private static final int L2_CACHE_THRESHOLD = 256 * 1024;
+    private static final int L2_CACHE_THRESHOLD = 2 * 1024 * 1024;
 
     private void issueReadAhead(ProbeTarget probe) throws IOException {
         long offset = probe.fileOffset();
