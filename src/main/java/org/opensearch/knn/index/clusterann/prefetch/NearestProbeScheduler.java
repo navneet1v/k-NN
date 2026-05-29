@@ -110,7 +110,25 @@ public final class NearestProbeScheduler implements ProbeScheduler {
 
     private static int calculateNprobe(float[] sortedDists, int numCentroids, int k) {
         if (numCentroids <= 10) return numCentroids;
-        int nprobe = Math.max(10, NPROBE_MULTIPLIER * (int) Math.sqrt(numCentroids));
-        return Math.min(nprobe, numCentroids);
+
+        int maxNprobe = Math.min(NPROBE_MULTIPLIER * (int) Math.sqrt(numCentroids), numCentroids);
+        int minNprobe = Math.max(10, (int) Math.sqrt(numCentroids));
+
+        // Adaptive: use the "knee" in the distance curve
+        float closestDist = sortedDists[0];
+        float range = sortedDists[maxNprobe - 1] - closestDist;
+        if (range <= 0) return maxNprobe;
+
+        float avgStep = range / maxNprobe;
+        int adaptiveNprobe = maxNprobe;
+        for (int i = minNprobe; i < maxNprobe - 1; i++) {
+            float step = sortedDists[i + 1] - sortedDists[i];
+            if (step > avgStep * 3.0f) {
+                adaptiveNprobe = i + 1;
+                break;
+            }
+        }
+
+        return Math.max(minNprobe, adaptiveNprobe);
     }
 }

@@ -68,13 +68,11 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         // Hybrid termination: soft budget + contribution-based override
         // Budget = expected vectors in probed clusters (nprobe/numCentroids of segment)
         // Soft budget = half the expected vectors in probed clusters
-        long softBudget = Math.max(k * 4L, (long) numVectors * nprobe / Math.max(centroidDocCounts.length * 2, 1));
 
         float filterSelectivity = numVectors > 0 ? (float) filterCost / numVectors : 1.0f;
         boolean filterActive = filterSelectivity < 0.10f && filterSelectivity > 0;
 
         // Contribution-based early termination
-        float closestDist = nprobe > 0 ? probes[0].centroidDist() : 0f;
         int consecutiveEmpty = 0;
 
         // Prefetch initial window
@@ -117,8 +115,8 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
 
             if (collector.earlyTerminated()) break;
 
-            // Hybrid termination
-            if (i >= 2 && docsScored >= k * 2) {
+            // Contribution-based termination: stop when clusters stop helping
+            if (i >= 2 && docsScored >= k * 3) {
                 float thresholdAfter = collector.minCompetitiveSimilarity();
                 boolean improving = thresholdAfter > thresholdBefore && thresholdBefore != Float.NEGATIVE_INFINITY;
                 if (improving) {
@@ -127,12 +125,8 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                     consecutiveEmpty++;
                 }
 
-                // Stop if: past soft budget AND (cluster not contributing OR far away)
-                if (docsScored >= softBudget && thresholdAfter != Float.NEGATIVE_INFINITY) {
-                    float distRatio = closestDist > 0 ? probe.centroidDist() / closestDist : 1f;
-                    if (consecutiveEmpty >= 1 || distRatio > 1.5f) {
-                        break;
-                    }
+                if (consecutiveEmpty >= 2 && thresholdAfter != Float.NEGATIVE_INFINITY) {
+                    break;
                 }
             }
         }
