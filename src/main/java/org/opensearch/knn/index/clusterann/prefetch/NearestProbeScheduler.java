@@ -13,6 +13,7 @@ import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.logging.Logger;
 
 /**
  * Core search stage: selects nearest centroids and scans them.
@@ -28,6 +29,8 @@ import java.util.Arrays;
  * </ul>
  */
 public final class NearestProbeScheduler implements ProbeScheduler {
+
+    private static final Logger LOG = Logger.getLogger(NearestProbeScheduler.class.getName());
 
     private final ProbeTarget[] probes;
     private final int nprobe;
@@ -104,6 +107,10 @@ public final class NearestProbeScheduler implements ProbeScheduler {
     }
 
     private static volatile int NPROBE_MULTIPLIER = Integer.getInteger("clusterann.nprobe.multiplier", 2);
+
+    static {
+        LOG.info("ClusterANN nprobe config: clusterann.nprobe.multiplier=" + NPROBE_MULTIPLIER);
+    }
 
     public static void setNprobeMultiplier(int m) { NPROBE_MULTIPLIER = m; }
     public static int getNprobeMultiplier() { return NPROBE_MULTIPLIER; }

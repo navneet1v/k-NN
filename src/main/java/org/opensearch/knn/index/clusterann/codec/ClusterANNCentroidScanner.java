@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.clusterann.codec;
 
+import lombok.extern.log4j.Log4j2;
 import org.opensearch.knn.index.clusterann.prefetch.ProbeTarget;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
@@ -22,7 +23,13 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  * Reads one centroid's columnar posting data (primary + SOAR), filters, scores, collects.
  * Quantized section uses block-columnar layout (BLOCK_SIZE=32) for SIMD scoring.
  */
+@Log4j2
 public final class ClusterANNCentroidScanner {
+
+    private static final boolean SIMD_OPTIMIZED = Boolean.getBoolean("clusterann.scoring.simd_optimized");
+    static {
+        log.info("Using Bulk SIMD: {}", SIMD_OPTIMIZED);
+    }
 
     private final IndexInput postingsInput;
     private final ClusterANNFieldState fieldState;
@@ -72,6 +79,10 @@ public final class ClusterANNCentroidScanner {
         return 0;
     }
 
+    /**
+     * Scans both posting lists (primary + SOAR) stored adjacently for this centroid.
+     * Must be called after {@link #prepare(ProbeTarget)} positions the input.
+     */
     public int scan(KnnCollector collector) throws IOException {
         int totalScored = 0;
         totalScored += scanOnePosting(collector);
@@ -122,12 +133,14 @@ public final class ClusterANNCentroidScanner {
         if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
             centroidDp = VectorUtil.dotProduct(target, centroid);
         }
+        // quantize query once that it.
+        adcReader.ensureQueryQuantized(centroid);
 
         int scored = 0;
         int pos = 0;
         while (pos < count) {
             int blockSize = Math.min(BLOCK_SIZE, count - pos);
-            adcReader.scoreBlock(postingsInput, pos, blockSize, docIdBuf, ordBuf, validBuf, centroid, centroidDp);
+            adcReader.scoreBlock(postingsInput, pos, blockSize, docIdBuf, ordBuf, validBuf, centroidDp, SIMD_OPTIMIZED);
             for (int j = 0; j < blockSize; j++) {
                 if (validBuf[pos + j]) scored++;
             }

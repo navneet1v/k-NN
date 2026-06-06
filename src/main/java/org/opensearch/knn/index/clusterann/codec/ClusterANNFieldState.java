@@ -83,6 +83,14 @@ public final class ClusterANNFieldState {
         this.centroidsFilePos = centroidsFilePos;
     }
 
+    /**
+     * Minimal constructor for tests and benchmarks — only dimension and docBits are needed
+     * by QuantizedVectorReader.
+     */
+    public ClusterANNFieldState(int dimension, byte docBits) {
+        this(0, 0, dimension, 0, DistanceMetric.L2, docBits, 0L, new int[0], new float[0], new int[0], 0L);
+    }
+
     public boolean isEmpty() {
         return numVectors == 0;
     }

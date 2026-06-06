@@ -1,0 +1,81 @@
+plugins {
+    id 'java-library'
+}
+
+description = 'OpenSearch k-NN JMH micro-benchmarks'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url "https://ci.opensearch.org/ci/dbc/snapshots/maven/" }
+}
+
+dependencies {
+    implementation project(':')
+    implementation 'org.openjdk.jmh:jmh-core:1.37'
+    annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+compileJava {
+    options.compilerArgs += ['--add-modules=jdk.incubator.vector', '--enable-preview']
+    options.fork = true
+    options.forkOptions.jvmArgs += ['--enable-preview']
+}
+
+// Produce a fat JAR with all dependencies bundled
+task jmhJar(type: Jar) {
+    dependsOn ':jar', ':remote-index-build-client:jar'
+    archiveClassifier = 'jmh'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    manifest {
+        attributes 'Main-Class': 'org.opensearch.knn.benchmark.Main'
+    }
+
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}
+
+// Quick-run task: ./gradlew :jmh-benchmarks:jmh -Pjmh.args="ScoreBlock -f 1 -wi 2 -i 3"
+task jmh(type: JavaExec) {
+    dependsOn classes
+    mainClass = 'org.opensearch.knn.benchmark.Main'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs '--add-modules=jdk.incubator.vector', '--enable-preview'
+    jvmArgs '-Xmx2g', '-Xms2g'
+    systemProperty "java.library.path", "${rootDir}/jni/build/release"
+
+    if (project.hasProperty('jmh.args')) {
+        args((project.property('jmh.args') as String).split(' '))
+    }
+}
+
+assemble {
+    dependsOn jmhJar
+    doLast {
+        logger.lifecycle("""
+JMH benchmarks compiled. Run with:
+
+  java --add-modules=jdk.incubator.vector -jar ${project.buildDir}/libs/${project.name}-${project.version}-jmh.jar
+
+Or via Gradle:
+
+  ./gradlew :jmh-benchmarks:jmh -Pjmh.args="ScoreBlock -f 1 -wi 2 -i 3"
+
+JMH options:
+  -h      displays verbose help
+  -l      list available benchmarks
+  -f N    number of forks
+  -wi N   warmup iterations
+  -i N    measurement iterations
+  regexp  run benchmarks matching regex
+""")
+    }
+}

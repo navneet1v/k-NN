@@ -5,16 +5,25 @@
 
 package org.opensearch.knn.index.clusterann.codec;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.MemorySegmentAccessInput;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.knn.jni.SimdVectorComputeService;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.util.Arrays;
+
+import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.LongVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
 
 import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.BLOCK_SIZE;
 
@@ -30,6 +39,7 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  *   sum[0..BS-1]    ← bulk readInts
  * </pre>
  */
+@Log4j2
 public final class QuantizedVectorReader {
 
     private static final byte QUERY_BITS = 4;
@@ -51,6 +61,7 @@ public final class QuantizedVectorReader {
     private int bulkCount;
     private float bulkMaxScore;
     private long bytesRead;
+
 
     // Query quantization scratch
     private final OptimizedScalarQuantizer osq;
@@ -123,8 +134,19 @@ public final class QuantizedVectorReader {
         return (long) blockSize * packedBytes + (long) blockSize * Integer.BYTES * 4;
     }
 
+    public void scoreBlock(IndexInput input,
+                      int blockStart,
+                      int blockSize,
+                      int[] docIdBuf,
+                      int[] ordBuf,
+                      boolean[] validBuf,
+                      float centroidDp) throws IOException {
+        scoreBlock(input, blockStart, blockSize, docIdBuf, ordBuf, validBuf, centroidDp, false);
+    }
+
     /**
      * Score a block of vectors from current input position.
+     * Caller must invoke {@link #ensureQueryQuantized(float[])} before the first call.
      */
     public void scoreBlock(
         IndexInput input,
@@ -133,8 +155,8 @@ public final class QuantizedVectorReader {
         int[] docIdBuf,
         int[] ordBuf,
         boolean[] validBuf,
-        float[] centroid,
-        float centroidDp
+        float centroidDp,
+        boolean useBulkSIMD
     ) throws IOException {
         // Count valid entries without separate loop — check while reading
         boolean anyValid = false;
@@ -149,8 +171,6 @@ public final class QuantizedVectorReader {
             input.skipBytes(blockBytes(blockSize));
             return;
         }
-
-        ensureQueryQuantized(centroid);
 
         // Read corrections FIRST (small — 16 bytes per vector)
         readFloatsFromInts(input, blockLower, blockSize);
@@ -184,27 +204,40 @@ public final class QuantizedVectorReader {
             }
         }
 
-        // Read codes (only if block is potentially competitive)
-        input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
         bytesRead += (long) blockSize * packedBytes;
-
-        // Bulk dot product
-        if (NATIVE_AVAILABLE) {
-            SimdVectorComputeService.bulkQuantizedDotProduct(
-                currentTransposed,
-                flatCodesBuf,
-                rawDotBuf,
-                packedBytes,
-                blockSize,
-                fieldState.docBits
-            );
-        } else {
-            // Compact valid entries — enables branchless dot product loop
+        if (useBulkSIMD) {
+            // MemorySegment + bulk4: process 4 vectors at a time, zero-copy from mmap
             int validCount = 0;
             for (int j = 0; j < blockSize; j++) {
                 if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
             }
-            // Dot product over valid entries only
+            final MemorySegment memorySegment = ((MemorySegmentAccessInput) input)
+                .segmentSliceOrNull(input.getFilePointer(), (long) blockSize * packedBytes);
+            if (memorySegment == null) {
+                throw new IllegalStateException("MemorySegment unavailable — MMapDirectory required for bulk SIMD path");
+            }
+            if (fieldState.docBits == 1) {
+                int v = 0;
+                for (; v + 3 < validCount; v += 4) {
+                    int j0 = validOffsets[v], j1 = validOffsets[v + 1], j2 = validOffsets[v + 2], j3 = validOffsets[v + 3];
+                    int4BitDotProductBulk4(currentTransposed, memorySegment,
+                        (long) j0 * packedBytes, (long) j1 * packedBytes,
+                        (long) j2 * packedBytes, (long) j3 * packedBytes,
+                        packedBytes, rawDotBuf, j0, j1, j2, j3);
+                }
+                for (; v < validCount; v++) {
+                    int j = validOffsets[v];
+                    rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, memorySegment, (long) j * packedBytes, packedBytes);
+                }
+            }
+            input.skipBytes((long) blockSize * packedBytes);
+        } else {
+            // Baseline: readBytes into byte[] + single-vector dot product
+            input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
+            int validCount = 0;
+            for (int j = 0; j < blockSize; j++) {
+                if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
+            }
             if (fieldState.docBits == 1) {
                 for (int v = 0; v < validCount; v++) {
                     int j = validOffsets[v];
@@ -288,8 +321,8 @@ public final class QuantizedVectorReader {
             out[i] = Float.intBitsToFloat(intBuf[i]);
     }
 
-    /** Cache query quantization per centroid — skip if same centroid reference. */
-    private void ensureQueryQuantized(float[] centroid) {
+    /** Quantize the query against a centroid. Cached — no-op if same centroid reference. */
+    public void ensureQueryQuantized(float[] centroid) {
         if (centroid == cachedCentroid) return;
         cachedCentroid = centroid;
 
@@ -308,18 +341,6 @@ public final class QuantizedVectorReader {
         currentCentroidNormSq = VectorUtil.dotProduct(centroid, centroid);
     }
 
-    private static final boolean NATIVE_AVAILABLE = probeNative();
-
-    private static boolean probeNative() {
-        try {
-            Class.forName("org.opensearch.knn.jni.SimdVectorComputeService");
-            SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
     // ===== Public static dot product for tests =====
 
     /** 4-bit × 4-bit transposed dot product (full array). */
@@ -333,9 +354,31 @@ public final class QuantizedVectorReader {
     private static final java.lang.invoke.VarHandle LONG_LE =
         java.lang.invoke.MethodHandles.byteArrayViewVarHandle(long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
 
+    /**
+     * Computes the 4-bit query × 1-bit doc asymmetric dot product from a heap byte[].
+     *
+     * <p>The query is transposed into 4 bit-plane stripes of length {@code len}, stored
+     * consecutively: stripe0 at [0..len), stripe1 at [len..2*len), etc. Each stripe holds
+     * one bit-plane of the 4-bit quantized query. The doc vector is a single 1-bit packed
+     * array of length {@code len}.
+     *
+     * <p>For each byte position, we AND the doc byte with each query stripe byte and popcount
+     * the result. The final score weights the 4 stripes by powers of 2 (1, 2, 4, 8) to
+     * reconstruct the 4-bit dot product value.
+     *
+     * <p>The main loop processes 8 bytes at a time using VarHandle long reads for throughput.
+     * A scalar tail handles the remaining 0-7 bytes.
+     *
+     * @param query  transposed query bit-planes: 4 stripes of {@code len} bytes each
+     * @param docs   flat doc codes buffer
+     * @param offset byte offset of this doc vector within {@code docs}
+     * @param len    packed byte length per doc vector (e.g., 96 at dim=768, 1-bit)
+     * @return weighted popcount sum: sum0 + sum1*2 + sum2*4 + sum3*8
+     */
     private static float int4BitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
         long sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
         int r = 0;
+        // Main loop: process 8 bytes per iteration via VarHandle long reads
         for (final int upperBound = len & -Long.BYTES; r < upperBound; r += Long.BYTES) {
             long d = (long) LONG_LE.get(docs, offset + r);
             sum0 += Long.bitCount((long) LONG_LE.get(query, r) & d);
@@ -343,6 +386,7 @@ public final class QuantizedVectorReader {
             sum2 += Long.bitCount((long) LONG_LE.get(query, r + len * 2) & d);
             sum3 += Long.bitCount((long) LONG_LE.get(query, r + len * 3) & d);
         }
+        // Scalar tail for remaining bytes not aligned to 8
         for (; r < len; r++) {
             int d = docs[offset + r] & 0xFF;
             sum0 += Integer.bitCount((query[r] & d) & 0xFF);
@@ -351,6 +395,147 @@ public final class QuantizedVectorReader {
             sum3 += Integer.bitCount((query[r + len * 3] & d) & 0xFF);
         }
         return sum0 + sum1 * 2L + sum2 * 4L + sum3 * 8L;
+    }
+
+    private static final VectorSpecies<Byte> BYTE_SPECIES = ByteVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
+    private static final int VECTOR_BYTE_SIZE = BYTE_SPECIES.vectorByteSize();
+
+    /**
+     * Panama Vector API variant: 4-bit query × 1-bit doc dot product reading directly from MemorySegment.
+     *
+     * <p>Same logic as the byte[] overload but uses {@code ByteVector.fromMemorySegment()} for
+     * zero-copy SIMD loads from mmap'd storage. Doc bytes are loaded directly from the mapped
+     * page cache into SIMD registers — no intermediate heap copy. Query stripes are loaded
+     * from the heap byte[] via {@code ByteVector.fromArray()}.
+     *
+     * <p>Each iteration: AND query stripe with doc vector, vectorized BIT_COUNT, accumulate
+     * into LongVector accumulators. After the main loop, reduceLanes sums each accumulator
+     * and a scalar tail handles the remaining bytes.
+     *
+     * @param query  transposed query bit-planes: 4 stripes of {@code len} bytes each (heap)
+     * @param docs   MemorySegment backed by mmap'd file (zero-copy access)
+     * @param offset byte offset of this doc vector within the segment
+     * @param len    packed byte length per doc vector
+     * @return weighted popcount sum: sum0 + sum1*2 + sum2*4 + sum3*8
+     */
+    static float int4BitDotProductOffset(byte[] query, MemorySegment docs, long offset, int len) {
+        LongVector acc0 = LongVector.zero(LONG_SPECIES);
+        LongVector acc1 = LongVector.zero(LONG_SPECIES);
+        LongVector acc2 = LongVector.zero(LONG_SPECIES);
+        LongVector acc3 = LongVector.zero(LONG_SPECIES);
+
+        int r = 0;
+        for (final int upperBound = BYTE_SPECIES.loopBound(len); r < upperBound; r += VECTOR_BYTE_SIZE) {
+            LongVector d = ByteVector.fromMemorySegment(BYTE_SPECIES, docs, offset + r, ByteOrder.LITTLE_ENDIAN)
+                .reinterpretAsLongs();
+            LongVector q0 = ByteVector.fromArray(BYTE_SPECIES, query, r).reinterpretAsLongs();
+            LongVector q1 = ByteVector.fromArray(BYTE_SPECIES, query, r + len).reinterpretAsLongs();
+            LongVector q2 = ByteVector.fromArray(BYTE_SPECIES, query, r + len * 2).reinterpretAsLongs();
+            LongVector q3 = ByteVector.fromArray(BYTE_SPECIES, query, r + len * 3).reinterpretAsLongs();
+
+            acc0 = acc0.add(q0.and(d).lanewise(VectorOperators.BIT_COUNT));
+            acc1 = acc1.add(q1.and(d).lanewise(VectorOperators.BIT_COUNT));
+            acc2 = acc2.add(q2.and(d).lanewise(VectorOperators.BIT_COUNT));
+            acc3 = acc3.add(q3.and(d).lanewise(VectorOperators.BIT_COUNT));
+        }
+
+        long sum0 = acc0.reduceLanes(VectorOperators.ADD);
+        long sum1 = acc1.reduceLanes(VectorOperators.ADD);
+        long sum2 = acc2.reduceLanes(VectorOperators.ADD);
+        long sum3 = acc3.reduceLanes(VectorOperators.ADD);
+
+        for (; r < len; r++) {
+            int d = docs.get(ValueLayout.JAVA_BYTE, offset + r) & 0xFF;
+            sum0 += Integer.bitCount((query[r] & d) & 0xFF);
+            sum1 += Integer.bitCount((query[r + len] & d) & 0xFF);
+            sum2 += Integer.bitCount((query[r + len * 2] & d) & 0xFF);
+            sum3 += Integer.bitCount((query[r + len * 3] & d) & 0xFF);
+        }
+        return sum0 + sum1 * 2L + sum2 * 4L + sum3 * 8L;
+    }
+
+    static void int4BitDotProductBulk4(
+        byte[] query, MemorySegment docs,
+        long off0, long off1, long off2, long off3,
+        int len, float[] results, int ri0, int ri1, int ri2, int ri3
+    ) {
+        LongVector a0_0 = LongVector.zero(LONG_SPECIES), a0_1 = LongVector.zero(LONG_SPECIES);
+        LongVector a0_2 = LongVector.zero(LONG_SPECIES), a0_3 = LongVector.zero(LONG_SPECIES);
+        LongVector a1_0 = LongVector.zero(LONG_SPECIES), a1_1 = LongVector.zero(LONG_SPECIES);
+        LongVector a1_2 = LongVector.zero(LONG_SPECIES), a1_3 = LongVector.zero(LONG_SPECIES);
+        LongVector a2_0 = LongVector.zero(LONG_SPECIES), a2_1 = LongVector.zero(LONG_SPECIES);
+        LongVector a2_2 = LongVector.zero(LONG_SPECIES), a2_3 = LongVector.zero(LONG_SPECIES);
+        LongVector a3_0 = LongVector.zero(LONG_SPECIES), a3_1 = LongVector.zero(LONG_SPECIES);
+        LongVector a3_2 = LongVector.zero(LONG_SPECIES), a3_3 = LongVector.zero(LONG_SPECIES);
+
+        int r = 0;
+        for (final int upperBound = BYTE_SPECIES.loopBound(len); r < upperBound; r += VECTOR_BYTE_SIZE) {
+            LongVector q0 = ByteVector.fromArray(BYTE_SPECIES, query, r).reinterpretAsLongs();
+            LongVector q1 = ByteVector.fromArray(BYTE_SPECIES, query, r + len).reinterpretAsLongs();
+            LongVector q2 = ByteVector.fromArray(BYTE_SPECIES, query, r + len * 2).reinterpretAsLongs();
+            LongVector q3 = ByteVector.fromArray(BYTE_SPECIES, query, r + len * 3).reinterpretAsLongs();
+
+            LongVector d0 = ByteVector.fromMemorySegment(BYTE_SPECIES, docs, off0 + r, ByteOrder.LITTLE_ENDIAN).reinterpretAsLongs();
+            LongVector d1 = ByteVector.fromMemorySegment(BYTE_SPECIES, docs, off1 + r, ByteOrder.LITTLE_ENDIAN).reinterpretAsLongs();
+            LongVector d2 = ByteVector.fromMemorySegment(BYTE_SPECIES, docs, off2 + r, ByteOrder.LITTLE_ENDIAN).reinterpretAsLongs();
+            LongVector d3 = ByteVector.fromMemorySegment(BYTE_SPECIES, docs, off3 + r, ByteOrder.LITTLE_ENDIAN).reinterpretAsLongs();
+
+            a0_0 = a0_0.add(q0.and(d0).lanewise(VectorOperators.BIT_COUNT));
+            a0_1 = a0_1.add(q1.and(d0).lanewise(VectorOperators.BIT_COUNT));
+            a0_2 = a0_2.add(q2.and(d0).lanewise(VectorOperators.BIT_COUNT));
+            a0_3 = a0_3.add(q3.and(d0).lanewise(VectorOperators.BIT_COUNT));
+
+            a1_0 = a1_0.add(q0.and(d1).lanewise(VectorOperators.BIT_COUNT));
+            a1_1 = a1_1.add(q1.and(d1).lanewise(VectorOperators.BIT_COUNT));
+            a1_2 = a1_2.add(q2.and(d1).lanewise(VectorOperators.BIT_COUNT));
+            a1_3 = a1_3.add(q3.and(d1).lanewise(VectorOperators.BIT_COUNT));
+
+            a2_0 = a2_0.add(q0.and(d2).lanewise(VectorOperators.BIT_COUNT));
+            a2_1 = a2_1.add(q1.and(d2).lanewise(VectorOperators.BIT_COUNT));
+            a2_2 = a2_2.add(q2.and(d2).lanewise(VectorOperators.BIT_COUNT));
+            a2_3 = a2_3.add(q3.and(d2).lanewise(VectorOperators.BIT_COUNT));
+
+            a3_0 = a3_0.add(q0.and(d3).lanewise(VectorOperators.BIT_COUNT));
+            a3_1 = a3_1.add(q1.and(d3).lanewise(VectorOperators.BIT_COUNT));
+            a3_2 = a3_2.add(q2.and(d3).lanewise(VectorOperators.BIT_COUNT));
+            a3_3 = a3_3.add(q3.and(d3).lanewise(VectorOperators.BIT_COUNT));
+        }
+
+        long s0_0 = a0_0.reduceLanes(VectorOperators.ADD), s0_1 = a0_1.reduceLanes(VectorOperators.ADD);
+        long s0_2 = a0_2.reduceLanes(VectorOperators.ADD), s0_3 = a0_3.reduceLanes(VectorOperators.ADD);
+        long s1_0 = a1_0.reduceLanes(VectorOperators.ADD), s1_1 = a1_1.reduceLanes(VectorOperators.ADD);
+        long s1_2 = a1_2.reduceLanes(VectorOperators.ADD), s1_3 = a1_3.reduceLanes(VectorOperators.ADD);
+        long s2_0 = a2_0.reduceLanes(VectorOperators.ADD), s2_1 = a2_1.reduceLanes(VectorOperators.ADD);
+        long s2_2 = a2_2.reduceLanes(VectorOperators.ADD), s2_3 = a2_3.reduceLanes(VectorOperators.ADD);
+        long s3_0 = a3_0.reduceLanes(VectorOperators.ADD), s3_1 = a3_1.reduceLanes(VectorOperators.ADD);
+        long s3_2 = a3_2.reduceLanes(VectorOperators.ADD), s3_3 = a3_3.reduceLanes(VectorOperators.ADD);
+
+        for (; r < len; r++) {
+            int q0 = query[r] & 0xFF;
+            int q1 = query[r + len] & 0xFF;
+            int q2 = query[r + len * 2] & 0xFF;
+            int q3 = query[r + len * 3] & 0xFF;
+
+            int d0 = docs.get(ValueLayout.JAVA_BYTE, off0 + r) & 0xFF;
+            int d1 = docs.get(ValueLayout.JAVA_BYTE, off1 + r) & 0xFF;
+            int d2 = docs.get(ValueLayout.JAVA_BYTE, off2 + r) & 0xFF;
+            int d3 = docs.get(ValueLayout.JAVA_BYTE, off3 + r) & 0xFF;
+
+            s0_0 += Integer.bitCount(q0 & d0); s0_1 += Integer.bitCount(q1 & d0);
+            s0_2 += Integer.bitCount(q2 & d0); s0_3 += Integer.bitCount(q3 & d0);
+            s1_0 += Integer.bitCount(q0 & d1); s1_1 += Integer.bitCount(q1 & d1);
+            s1_2 += Integer.bitCount(q2 & d1); s1_3 += Integer.bitCount(q3 & d1);
+            s2_0 += Integer.bitCount(q0 & d2); s2_1 += Integer.bitCount(q1 & d2);
+            s2_2 += Integer.bitCount(q2 & d2); s2_3 += Integer.bitCount(q3 & d2);
+            s3_0 += Integer.bitCount(q0 & d3); s3_1 += Integer.bitCount(q1 & d3);
+            s3_2 += Integer.bitCount(q2 & d3); s3_3 += Integer.bitCount(q3 & d3);
+        }
+
+        results[ri0] = s0_0 + s0_1 * 2L + s0_2 * 4L + s0_3 * 8L;
+        results[ri1] = s1_0 + s1_1 * 2L + s1_2 * 4L + s1_3 * 8L;
+        results[ri2] = s2_0 + s2_1 * 2L + s2_2 * 4L + s2_3 * 8L;
+        results[ri3] = s3_0 + s3_1 * 2L + s3_2 * 4L + s3_3 * 8L;
     }
 
     /** 2-bit doc × 4-bit query with offset. */

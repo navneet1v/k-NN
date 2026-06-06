@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * Factory interface for creating engine-less field mappers. Each engine-less algorithm
- * registers a factory in {@link KNNVectorFieldMapper#ENGINE_LESS_MAPPER_FACTORIES}.
+ * registers a factory in KNNVectorFieldMapper.
  */
 @FunctionalInterface
 public interface EngineLessMapperFactory {
