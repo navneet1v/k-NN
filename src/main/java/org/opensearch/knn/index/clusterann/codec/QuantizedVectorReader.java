@@ -11,7 +11,6 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.knn.jni.SimdVectorComputeService;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -188,38 +187,26 @@ public final class QuantizedVectorReader {
         input.readBytes(flatCodesBuf, 0, blockSize * packedBytes);
         bytesRead += (long) blockSize * packedBytes;
 
-        // Bulk dot product
-        if (NATIVE_AVAILABLE) {
-            SimdVectorComputeService.bulkQuantizedDotProduct(
-                currentTransposed,
-                flatCodesBuf,
-                rawDotBuf,
-                packedBytes,
-                blockSize,
-                fieldState.docBits
-            );
-        } else {
-            // Compact valid entries — enables branchless dot product loop
-            int validCount = 0;
-            for (int j = 0; j < blockSize; j++) {
-                if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
+        // Compact valid entries — enables branchless dot product loop
+        int validCount = 0;
+        for (int j = 0; j < blockSize; j++) {
+            if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
+        }
+        // Dot product over valid entries only
+        if (fieldState.docBits == 1) {
+            for (int v = 0; v < validCount; v++) {
+                int j = validOffsets[v];
+                rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
             }
-            // Dot product over valid entries only
-            if (fieldState.docBits == 1) {
-                for (int v = 0; v < validCount; v++) {
-                    int j = validOffsets[v];
-                    rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
-                }
-            } else if (fieldState.docBits == 2) {
-                for (int v = 0; v < validCount; v++) {
-                    int j = validOffsets[v];
-                    rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
-                }
-            } else {
-                for (int v = 0; v < validCount; v++) {
-                    int j = validOffsets[v];
-                    rawDotBuf[j] = int4NibbleDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
-                }
+        } else if (fieldState.docBits == 2) {
+            for (int v = 0; v < validCount; v++) {
+                int j = validOffsets[v];
+                rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
+            }
+        } else {
+            for (int v = 0; v < validCount; v++) {
+                int j = validOffsets[v];
+                rawDotBuf[j] = int4NibbleDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
             }
         }
 
@@ -308,17 +295,6 @@ public final class QuantizedVectorReader {
         currentCentroidNormSq = VectorUtil.dotProduct(centroid, centroid);
     }
 
-    private static final boolean NATIVE_AVAILABLE = probeNative();
-
-    private static boolean probeNative() {
-        try {
-            Class.forName("org.opensearch.knn.jni.SimdVectorComputeService");
-            SimdVectorComputeService.bulkQuantizedDotProduct(new byte[0], new byte[0], new float[0], 0, 0, 1);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
 
     // ===== Public static dot product for tests =====
 

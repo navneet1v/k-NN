@@ -6,10 +6,9 @@
 package org.opensearch.knn.index.clusterann.algorithm;
 
 import org.apache.lucene.util.VectorUtil;
-import org.opensearch.knn.jni.SimdVectorComputeService;
 
 /**
- * SIMD-accelerated vector distance utilities for ClusterANN algorithms.
+ * Vector distance utilities for ClusterANN algorithms.
  *
  * <p>Single-pair methods delegate to Lucene's {@link VectorUtil} which uses Panama SIMD
  * on capable JVMs via Lucene's {@code VectorizationProvider}.
@@ -20,21 +19,6 @@ import org.opensearch.knn.jni.SimdVectorComputeService;
 public final class ClusterANNVectorUtil {
 
     private static final BulkVectorOps BULK = ClusterANNVectorizationProvider.getInstance();
-    private static final boolean NATIVE_AVAILABLE = probeNative();
-
-    private static boolean probeNative() {
-        try {
-            SimdVectorComputeService.bulkCentroidDistance(new float[1], new float[1], new float[1], 1, 1, 0);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /** Whether native SIMD library is available. Checked once at class load. */
-    public static boolean isNativeAvailable() {
-        return NATIVE_AVAILABLE;
-    }
 
     private ClusterANNVectorUtil() {}
 
@@ -116,8 +100,7 @@ public final class ClusterANNVectorUtil {
     }
 
     /**
-     * Find nearest centroid using native SIMD bulk distance.
-     * Falls back to scalar if native unavailable.
+     * Find nearest centroid using bulk distance computation.
      */
     public static int findNearestCentroidBulk(
         float[] vector,
@@ -127,9 +110,6 @@ public final class ClusterANNVectorUtil {
         float[] distances,
         int metricOrd
     ) {
-        if (NATIVE_AVAILABLE) {
-            return SimdVectorComputeService.bulkCentroidDistance(vector, flatCentroids, distances, dimension, k, metricOrd);
-        }
         int bestIdx = 0;
         float bestDist = Float.MAX_VALUE;
         for (int c = 0; c < k; c++) {

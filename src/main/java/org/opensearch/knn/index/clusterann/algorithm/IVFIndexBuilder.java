@@ -6,7 +6,6 @@
 package org.opensearch.knn.index.clusterann.algorithm;
 
 import org.opensearch.knn.index.clusterann.*;
-import org.opensearch.knn.jni.SimdVectorComputeService;
 import org.apache.lucene.index.FloatVectorValues;
 
 import java.io.IOException;
@@ -149,9 +148,7 @@ public final class IVFIndexBuilder {
             }
 
             float[] dists = tlDists.get();
-            if (ClusterANNVectorUtil.isNativeAvailable()) {
-                SimdVectorComputeService.bulkSOARDistance(vec, primaryCentroid, flatCandidates, dists, dim, numCandidates, soarLambda);
-            } else {
+            {
                 float residualNormSq = 0f;
                 for (int d = 0; d < dim; d++) {
                     float r = vec[d] - primaryCentroid[d];
