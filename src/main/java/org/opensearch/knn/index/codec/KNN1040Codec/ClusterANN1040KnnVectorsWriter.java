@@ -59,6 +59,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     private final IndexOutput metaOutput;
     private final IndexOutput postingsOutput;
+    private final IndexOutput filterOutput;
 
     private static class FieldWriterInfo {
         final FieldInfo fieldInfo;
@@ -79,6 +80,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         try {
             metaOutput = createOutput(META_EXTENSION);
             postingsOutput = createOutput(POSTINGS_EXTENSION);
+            filterOutput = createOutput(FILTER_EXTENSION);
             success = true;
         } finally {
             if (!success) {
@@ -234,6 +236,24 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 metaOutput.writeInt(Float.floatToIntBits(transformedCentroids[c][d]));
             }
         }
+        // 5. Write .claf: centroid assignment per ordinal (for filter-aware search)
+        // Format: [fieldNumber:int][numVectors:int][numCentroids:int][assignments: numVectors × short]
+        filterOutput.writeInt(fieldInfo.number);
+        filterOutput.writeInt(numVectors);
+        filterOutput.writeInt(numCentroids);
+        short[] ordToCentroid = new short[numVectors];
+        for (int c = 0; c < numCentroids; c++) {
+            for (int ord : primaryPostings[c]) {
+                ordToCentroid[ord] = (short) c;
+            }
+        }
+        byte[] buf = new byte[numVectors * Short.BYTES];
+        for (int i = 0; i < numVectors; i++) {
+            buf[i * 2] = (byte) (ordToCentroid[i] >> 8);
+            buf[i * 2 + 1] = (byte) ordToCentroid[i];
+        }
+        filterOutput.writeBytes(buf, buf.length);
+
         log.info(
             "[ClusterANN-WRITE] field={} vectors={} centroids={} dim={} clapSize={}",
             fieldInfo.name,
@@ -290,11 +310,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(END_OF_FIELDS);
         CodecUtil.writeFooter(metaOutput);
         CodecUtil.writeFooter(postingsOutput);
+        CodecUtil.writeFooter(filterOutput);
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput);
+        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput);
     }
 
     @Override

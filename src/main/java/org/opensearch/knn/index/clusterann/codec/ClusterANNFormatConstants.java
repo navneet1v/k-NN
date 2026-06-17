@@ -19,6 +19,8 @@ public final class ClusterANNFormatConstants {
     // File extensions
     public static final String META_EXTENSION = "clam";
     public static final String POSTINGS_EXTENSION = "clap";
+    public static final String CENTROIDS_EXTENSION = "clac";
+    public static final String FILTER_EXTENSION = "claf";
 
     // Codec identity
     public static final String CODEC_NAME = "ClusterANN1040";
@@ -30,6 +32,10 @@ public final class ClusterANNFormatConstants {
     public static final int MIN_ADC_VECTORS = 32;
     public static final int TARGET_CLUSTER_SIZE = 512;
     public static final float SOAR_LAMBDA = 1.0f;
+
+    // Filtering: max filterCost * dimension to use exact scoring (Tier 1)
+    // At 768d: threshold / 768 ≈ 2666 docs per segment triggers exact path
+    public static final long EXACT_FILTER_THRESHOLD = 2_048_000L;
 
     // SIMD block size for quantized scoring
     public static final int BLOCK_SIZE = 32;

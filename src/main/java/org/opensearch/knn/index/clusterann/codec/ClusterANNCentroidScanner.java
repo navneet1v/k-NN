@@ -33,6 +33,7 @@ public final class ClusterANNCentroidScanner {
     private final BitSet visited;
     private final boolean useADC;
     private final int packedBytes;
+    private boolean forceExact;
 
     // Reusable buffers
     private int[] docIdBuf = new int[1024];
@@ -72,6 +73,11 @@ public final class ClusterANNCentroidScanner {
         return 0;
     }
 
+    /** Adaptive precision: force exact scoring for this cluster (sparse filter matches). */
+    public void setForceExact(boolean force) {
+        this.forceExact = force;
+    }
+
     public int scan(KnnCollector collector) throws IOException {
         int totalScored = 0;
         totalScored += scanOnePosting(collector);
@@ -109,7 +115,7 @@ public final class ClusterANNCentroidScanner {
             return 0;
         }
 
-        if (useADC && adcReader != null) {
+        if (useADC && adcReader != null && !forceExact) {
             return scoreADC(collector, count, validCount);
         } else {
             return scoreExact(collector, count);

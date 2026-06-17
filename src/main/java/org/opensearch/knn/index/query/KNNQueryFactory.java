@@ -174,10 +174,16 @@ public class KNNQueryFactory extends BaseQueryFactory {
 
     private static Query validateFilterQuerySupport(final Query filterQuery, final KNNEngine knnEngine) {
         log.debug("filter query {}, knnEngine {}", filterQuery, knnEngine);
-        if (filterQuery != null && KNNEngine.getEnginesThatSupportsFilters().contains(knnEngine)) {
-            return filterQuery;
+        if (filterQuery == null) {
+            return null;
         }
-        return null;
+        // Only NMSLIB lacks filter support (JNI-based, no AcceptDocs).
+        // All other engines (Lucene, Faiss) and engine-less methods (ClusterANN)
+        // handle filters natively via AcceptDocs in the codec search path.
+        if (knnEngine == KNNEngine.NMSLIB) {
+            return null;
+        }
+        return filterQuery;
     }
 
     private static boolean shouldRescore(RescoreContext rescoreContext) {

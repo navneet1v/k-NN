@@ -7,6 +7,7 @@ package org.opensearch.knn.index.clusterann.prefetch;
 
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.util.VectorUtil;
+import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
@@ -76,6 +77,79 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         }
 
         this.nprobe = calculateNprobe(sortedDists, numCentroids, k);
+
+        this.probes = new ProbeTarget[nprobe];
+        for (int i = 0; i < nprobe; i++) {
+            int c = sortedIndices[i];
+            this.probes[i] = new ProbeTarget(c, offsets[c], postingSizes[c], dists[c]);
+        }
+    }
+
+    /**
+     * Filter-aware constructor: ranks centroids by distance / matchCount.
+     * Centroids with zero matches are skipped entirely.
+     * Centroids with more filter matches are prioritized (probed earlier).
+     */
+    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k,
+                                 ClusterANNCentroidScanner scanner,
+                                 FixedBitSet acceptCentroids, int[] matchCounts) {
+        this.scanner = scanner;
+        float[][] centroids = fieldState.centroids;
+        long[] offsets = fieldState.centroidOffsets;
+        int[] postingSizes = fieldState.postingSizes;
+        int numCentroids = fieldState.numCentroids;
+        DistanceMetric metric = fieldState.metric;
+
+        // Compute distances
+        float[] dists = new float[numCentroids];
+        if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
+            float queryNormSq = VectorUtil.dotProduct(query, query);
+            for (int c = 0; c < numCentroids; c++) {
+                float dot = VectorUtil.dotProduct(query, centroids[c]);
+                dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
+            }
+        } else {
+            for (int c = 0; c < numCentroids; c++) {
+                dists[c] = metric.distance(query, centroids[c]);
+            }
+        }
+
+        // Count valid centroids (those with filter matches)
+        int validCount = acceptCentroids.cardinality();
+        if (validCount == 0) {
+            this.nprobe = 0;
+            this.probes = new ProbeTarget[0];
+            return;
+        }
+
+        // Rank by adjustedScore = dist / log2(1 + matchCount)
+        // This prioritizes clusters that are both close AND have many matching docs
+        long[] packed = new long[validCount];
+        int[] validCentroids = new int[validCount];
+        int vi = 0;
+        for (int c = acceptCentroids.nextSetBit(0); c != -1; c = acceptCentroids.nextSetBit(c + 1)) {
+            validCentroids[vi] = c;
+            float adjustedDist = dists[c] / (float) Math.log1p(matchCounts[c]);
+            int floatBits = Float.floatToIntBits(adjustedDist);
+            long sortKey = floatBits ^ (floatBits >> 31) | 0x80000000;
+            packed[vi] = (sortKey << 32) | (c & 0xFFFFFFFFL);
+            vi++;
+        }
+        Arrays.sort(packed);
+
+        // Use adaptive nprobe on filtered set, but ensure we probe enough to get k results
+        float[] sortedDists = new float[validCount];
+        int[] sortedIndices = new int[validCount];
+        for (int i = 0; i < validCount; i++) {
+            int c = (int) packed[i];
+            sortedIndices[i] = c;
+            sortedDists[i] = dists[c];
+        }
+
+        // For filtered search: probe ALL matching centroids.
+        // The filter already bounds the work — if only 20 centroids have matches, probe all 20.
+        // This matches the "keep going until k results" approach without artificial caps.
+        this.nprobe = validCount;
 
         this.probes = new ProbeTarget[nprobe];
         for (int i = 0; i < nprobe; i++) {

@@ -32,6 +32,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     private final int numVectors;
     private final int k;
     private final long filterCost;
+    private final int[] filterMatchCounts;
 
     public OptimizedProbeScheduler(
         NearestProbeScheduler nearest,
@@ -42,6 +43,19 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         int k,
         long filterCost
     ) {
+        this(nearest, scanner, postingsInput, centroidDocCounts, numVectors, k, filterCost, null);
+    }
+
+    public OptimizedProbeScheduler(
+        NearestProbeScheduler nearest,
+        ClusterANNCentroidScanner scanner,
+        IndexInput postingsInput,
+        int[] centroidDocCounts,
+        int numVectors,
+        int k,
+        long filterCost,
+        int[] filterMatchCounts
+    ) {
         this.probes = nearest.probes().clone();
         this.nprobe = nearest.nprobe();
         this.scanner = scanner;
@@ -50,6 +64,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         this.numVectors = numVectors;
         this.k = k;
         this.filterCost = filterCost;
+        this.filterMatchCounts = filterMatchCounts;
     }
 
     /** Per-query I/O bytes counter (ADC scan portion). */
@@ -106,6 +121,11 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             }
 
             float thresholdBefore = collector.minCompetitiveSimilarity();
+            // Adaptive scoring precision: exact score sparse clusters, ADC for dense ones
+            if (filterMatchCounts != null) {
+                int matches = filterMatchCounts[probe.centroidIdx()];
+                scanner.setForceExact(matches < k);
+            }
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
             // Actual bytes tracked by QuantizedVectorReader.getBytesRead()
@@ -114,6 +134,12 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             totalScored += scored;
 
             if (collector.earlyTerminated()) break;
+
+            // Filter-aware early termination: stop once we've accumulated enough filter matches
+            if (filterMatchCounts != null && docsScored >= k * 3
+                    && collector.minCompetitiveSimilarity() != Float.NEGATIVE_INFINITY) {
+                break;
+            }
 
             // Contribution-based termination: stop when clusters stop helping
             if (i >= 2 && docsScored >= k * 3) {

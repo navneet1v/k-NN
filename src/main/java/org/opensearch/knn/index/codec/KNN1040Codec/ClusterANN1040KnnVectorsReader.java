@@ -21,6 +21,7 @@ import org.apache.lucene.search.AcceptDocs;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 
 import java.io.IOException;
@@ -49,6 +50,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
     private final IndexInput metaInput;
     private final IndexInput postingsInput;
+    private CentroidAssignmentReader filterReader;
 
     public ClusterANN1040KnnVectorsReader(FlatVectorsReader flatVectorsReader, SegmentReadState state) throws IOException {
         this.flatVectorsReader = flatVectorsReader;
@@ -56,11 +58,19 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         boolean success = false;
         IndexInput metaIn = null;
         IndexInput postIn = null;
+        IndexInput filterIn = null;
         try {
             metaIn = openInput(state, META_EXTENSION);
             postIn = openInput(state, POSTINGS_EXTENSION);
+            filterIn = openInput(state, FILTER_EXTENSION);
 
             this.fieldStates = ClusterANNFieldState.readAll(metaIn, state);
+
+            // Open filter reader for the first field
+            if (!fieldStates.isEmpty()) {
+                int firstField = fieldStates.keySet().iterator().next();
+                this.filterReader = new CentroidAssignmentReader(filterIn, firstField);
+            }
 
             this.fieldNameToNumber = new HashMap<>();
             for (FieldInfo fi : state.fieldInfos) {
@@ -75,7 +85,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             success = true;
         } finally {
             if (!success) {
-                IOUtils.closeWhileHandlingException(metaIn, postIn, flatVectorsReader);
+                IOUtils.closeWhileHandlingException(metaIn, postIn, filterIn, flatVectorsReader);
             }
         }
 
@@ -138,6 +148,25 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             fieldState.randomRotation.transform(target, adcTarget);
         }
 
+        // === Three-tier adaptive filtering ===
+        // Tier 1: Strict filter — exact score all matching docs (skip IVF)
+        // Tier 2: Moderate filter — density-weighted centroid probing
+        // Tier 3: Loose/no filter — normal adaptive nprobe
+        if (acceptBits != null && filterCost < fieldState.numVectors) {
+            long filterDimProduct = filterCost * (long) fieldState.dimension;
+            if (filterDimProduct <= EXACT_FILTER_THRESHOLD) {
+                // Tier 1: few matching docs — exact score them all
+                int limit = Math.min(fieldState.numVectors, acceptBits.length());
+                for (int ord = 0; ord < limit; ord++) {
+                    if (acceptBits.get(ord)) {
+                        float score = exactScorer.score(ord);
+                        knnCollector.collect(ord, score);
+                    }
+                }
+                return;
+            }
+        }
+
         QuantizedVectorReader adcReader = null;
         if (useADC) {
             adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, k);
@@ -157,8 +186,29 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             useADC
         );
 
-        // Build and execute search pipeline (push-based, single execute() call)
-        NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, k, scanner);
+        NearestProbeScheduler nearest;
+        int[] filterMatchCounts = null;
+        if (acceptBits != null && filterReader != null && filterCost < fieldState.numVectors
+                ) {
+            // Tier 2: moderate filter with few matches — density-weighted probing
+            try {
+                FixedBitSet acceptedOrds = new FixedBitSet(fieldState.numVectors);
+                int limit = Math.min(fieldState.numVectors, acceptBits.length());
+                for (int doc = 0; doc < limit; doc++) {
+                    if (acceptBits.get(doc)) acceptedOrds.set(doc);
+                }
+                filterMatchCounts = new int[fieldState.numCentroids];
+                FixedBitSet acceptCentroids = filterReader.computeCentroidFilter(acceptedOrds, filterMatchCounts);
+                nearest = new NearestProbeScheduler(target, fieldState, k, scanner, acceptCentroids, filterMatchCounts);
+            } catch (Exception e) {
+                // Fallback to normal probing if .claf is incompatible
+                nearest = new NearestProbeScheduler(target, fieldState, k, scanner);
+                filterMatchCounts = null;
+            }
+        } else {
+            // Tier 3: no filter or loose filter — normal adaptive nprobe
+            nearest = new NearestProbeScheduler(target, fieldState, k, scanner);
+        }
         long t1 = System.nanoTime();
         OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
             nearest,
@@ -167,7 +217,8 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             fieldState.centroidDocCounts,
             fieldState.numVectors,
             k,
-            filterCost
+            filterCost,
+            filterMatchCounts
         );
         pipeline.execute(knnCollector);
         long t2 = System.nanoTime();
@@ -221,7 +272,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsReader, metaInput, postingsInput);
+        IOUtils.close(flatVectorsReader, metaInput, postingsInput, filterReader);
     }
 
     // ========== Brute Force Fallback ==========
