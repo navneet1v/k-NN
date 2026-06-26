@@ -8,6 +8,8 @@ package org.opensearch.knn.memoryoptsearch.faiss.vectorvalues;
 import org.apache.lucene.codecs.lucene95.HasIndexSlice;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.packed.DirectMonotonicReader;
 
 import java.io.IOException;
 
@@ -92,4 +94,154 @@ public class FaissByteVectorValues extends ByteVectorValues implements HasIndexS
     public IndexInput getSlice() {
         return indexInput;
     }
+
+    /**
+     * A {@link ByteVectorValues} wrapper for sparse or nested cases that maps internal vector IDs
+     * to Lucene document IDs via a {@link DirectMonotonicReader}.
+     * <p>
+     * Delegates vector reads to the wrapped {@link ByteVectorValues} and translates ordinals
+     * in {@link #ordToDoc(int)} and {@link #getAcceptOrds(Bits)}.
+     * <p>
+     * This class does NOT implement {@link HasIndexSlice} because the underlying byte values
+     * may apply reconstruction (e.g., scalar quantized vectors). For binary indices where raw
+     * bytes are the final values, use {@link SparseBinaryVectorValuesImpl} instead.
+     */
+    public static class SparseByteVectorValuesImpl extends ByteVectorValues {
+
+        private final ByteVectorValues byteVectorValues;
+        private final DirectMonotonicReader idMappingReader;
+        private final int oneVectorByteSize;
+
+        public SparseByteVectorValuesImpl(final ByteVectorValues byteVectorValues, final DirectMonotonicReader idMappingReader, int oneVectorByteSize) {
+            this.byteVectorValues = byteVectorValues;
+            this.idMappingReader = idMappingReader;
+            this.oneVectorByteSize = oneVectorByteSize;
+        }
+
+
+        @Override
+        public byte[] vectorValue(int internalVectorId) throws IOException {
+            return byteVectorValues.vectorValue(internalVectorId);
+        }
+
+        @Override
+        public int dimension() {
+            return byteVectorValues.dimension();
+        }
+
+        @Override
+        public int ordToDoc(int internalVectorId) {
+            return (int) idMappingReader.get(internalVectorId);
+        }
+
+        @Override
+        public Bits getAcceptOrds(final Bits acceptDocs) {
+            if (acceptDocs != null) {
+                return new Bits() {
+                    @Override
+                    public boolean get(int internalVectorId) {
+                        return acceptDocs.get((int) idMappingReader.get(internalVectorId));
+                    }
+
+                    @Override
+                    public int length() {
+                        return byteVectorValues.size();
+                    }
+                };
+            }
+
+            return null;
+        }
+
+        @Override
+        public int size() {
+            return byteVectorValues.size();
+        }
+
+        @Override
+        public int getVectorByteLength() {
+            return oneVectorByteSize;
+        }
+
+        @Override
+        public ByteVectorValues copy() throws IOException {
+            return new SparseByteVectorValuesImpl(byteVectorValues.copy(), idMappingReader, oneVectorByteSize);
+        }
+    }
+
+    /**
+     * A {@link ByteVectorValues} wrapper for sparse binary index cases that maps internal vector IDs
+     * to Lucene document IDs via a {@link DirectMonotonicReader}.
+     * <p>
+     * This class implements {@link HasIndexSlice} because binary indices store raw bytes without
+     * any reconstruction — direct memory segment access produces correct results.
+     */
+    public static class SparseBinaryVectorValuesImpl extends ByteVectorValues implements HasIndexSlice {
+
+        private final ByteVectorValues byteVectorValues;
+        private final DirectMonotonicReader idMappingReader;
+        private final int oneVectorByteSize;
+
+        public SparseBinaryVectorValuesImpl(final ByteVectorValues byteVectorValues, final DirectMonotonicReader idMappingReader, int oneVectorByteSize) {
+            this.byteVectorValues = byteVectorValues;
+            this.idMappingReader = idMappingReader;
+            this.oneVectorByteSize = oneVectorByteSize;
+        }
+
+
+        @Override
+        public byte[] vectorValue(int internalVectorId) throws IOException {
+            return byteVectorValues.vectorValue(internalVectorId);
+        }
+
+        @Override
+        public int dimension() {
+            return byteVectorValues.dimension();
+        }
+
+        @Override
+        public int ordToDoc(int internalVectorId) {
+            return (int) idMappingReader.get(internalVectorId);
+        }
+
+        @Override
+        public Bits getAcceptOrds(final Bits acceptDocs) {
+            if (acceptDocs != null) {
+                return new Bits() {
+                    @Override
+                    public boolean get(int internalVectorId) {
+                        return acceptDocs.get((int) idMappingReader.get(internalVectorId));
+                    }
+
+                    @Override
+                    public int length() {
+                        return byteVectorValues.size();
+                    }
+                };
+            }
+
+            return null;
+        }
+
+        @Override
+        public int size() {
+            return byteVectorValues.size();
+        }
+
+        @Override
+        public int getVectorByteLength() {
+            return oneVectorByteSize;
+        }
+
+        @Override
+        public ByteVectorValues copy() throws IOException {
+            return new SparseBinaryVectorValuesImpl(byteVectorValues.copy(), idMappingReader, oneVectorByteSize);
+        }
+
+        @Override
+        public IndexInput getSlice() {
+            return ((HasIndexSlice) byteVectorValues).getSlice();
+        }
+    }
+
 }

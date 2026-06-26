@@ -6,15 +6,14 @@
 package org.opensearch.knn.memoryoptsearch.faiss;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.opensearch.knn.memoryoptsearch.faiss.binary.FaissBinaryHnswIndex;
 import org.opensearch.knn.memoryoptsearch.faiss.binary.FaissBinaryIndex;
+import org.opensearch.knn.memoryoptsearch.faiss.vectorvalues.FaissByteVectorValues;
 import org.opensearch.knn.memoryoptsearch.faiss.vectorvalues.FaissFloatVectorValues;
 
 import java.io.IOException;
@@ -102,76 +101,14 @@ public class FaissIdMapIndex extends FaissBinaryIndex implements FaissHNSWProvid
         }
 
         // Re-mapping is required.
-        return sparseByteValues(indexInput);
-    }
-
-    /**
-     * For sparse or nested cases, {@link ByteVectorValues} needs to be wrapped to correctly map an internal vector ID to a
-     * Lucene document ID.
-     *
-     * @param indexInput A read stream to FAISS index file.
-     * @return {@link ByteVectorValues} which is a byte vector random accessor.
-     * @throws IOException
-     */
-    private ByteVectorValues sparseByteValues(IndexInput indexInput) throws IOException {
         final ByteVectorValues vectorValues = nestedIndex.getByteValues(indexInput);
-
-        @RequiredArgsConstructor
-        class SparseByteVectorValuesImpl extends ByteVectorValues {
-            private final ByteVectorValues vectorValues;
-
-            @Override
-            public byte[] vectorValue(int internalVectorId) throws IOException {
-                return vectorValues.vectorValue(internalVectorId);
-            }
-
-            @Override
-            public int dimension() {
-                return vectorValues.dimension();
-            }
-
-            @Override
-            public int ordToDoc(int internalVectorId) {
-                // Convert an internal vector id to Lucene document id.
-                return (int) idMappingReader.get(internalVectorId);
-            }
-
-            @Override
-            public Bits getAcceptOrds(final Bits acceptDocs) {
-                if (acceptDocs != null) {
-                    return new Bits() {
-                        @Override
-                        public boolean get(int internalVectorId) {
-                            // Convert internal vector ordinal to Lucene document id, then check acceptDocs directly.
-                            return acceptDocs.get((int) idMappingReader.get(internalVectorId));
-                        }
-
-                        @Override
-                        public int length() {
-                            return vectorValues.size();
-                        }
-                    };
-                }
-
-                return null;
-            }
-
-            @Override
-            public int size() {
-                // The number of vectors
-                return vectorValues.size();
-            }
-
-            @Override
-            public ByteVectorValues copy() throws IOException {
-                return new SparseByteVectorValuesImpl(vectorValues.copy());
-            }
+        if (indexType.equals(IBMP)) {
+            return new FaissByteVectorValues.SparseBinaryVectorValuesImpl(vectorValues, idMappingReader, codeSize);
         }
-
-        return new SparseByteVectorValuesImpl(vectorValues);
+        return new FaissByteVectorValues.SparseByteVectorValuesImpl(vectorValues, idMappingReader, codeSize);
     }
 
-    private FloatVectorValues sparseFloatValues(IndexInput indexInput) throws IOException {
+    private FloatVectorValues sparseFloatValues(final IndexInput indexInput) throws IOException {
         final FloatVectorValues vectorValues = nestedIndex.getFloatValues(indexInput);
         return new FaissFloatVectorValues.SparseFloatVectorValuesImpl(vectorValues, idMappingReader);
     }

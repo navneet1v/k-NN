@@ -224,8 +224,6 @@ public class FaissIndexScalarQuantizedFlat extends FaissIndex {
         }
     }
 
-    // TODO: implement HasIndexSlice function on this Vector Values. Currently its failing tests with
-    // MemorySegmentScorer. Will fix it in another PR.
     @RequiredArgsConstructor
     public class ByteVectorValuesImpl extends ByteVectorValues {
         final IndexInput indexInput;
