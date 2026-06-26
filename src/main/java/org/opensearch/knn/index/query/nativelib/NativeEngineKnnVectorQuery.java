@@ -122,6 +122,7 @@ public class NativeEngineKnnVectorQuery extends Query {
         List<PerLeafResult> perLeafResults;
         final int finalK = knnQuery.getK();
         org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.resetQueryAdcBytes();
+        org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.resetSharedThreshold();
         if (isRescoreRequired(firstPassKFor2PhaseSearch) == false) {
             perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, finalK);
         } else {

@@ -79,7 +79,7 @@ public class MemoryOptimizedKNNWeight extends KNNWeight {
                 visitLimit
             );
         }
-        topApproxKnnCollector = new TopKnnCollectorManager(k, searcher);
+        topApproxKnnCollector = new TopKnnCollectorManager(k != null && k > 0 ? k : 1000, searcher);
     }
 
     @Override

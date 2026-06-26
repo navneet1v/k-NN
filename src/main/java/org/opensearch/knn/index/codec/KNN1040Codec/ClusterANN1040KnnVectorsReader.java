@@ -167,6 +167,38 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             }
         }
 
+        // For radial search: two-phase (ADC first pass → exact rescore candidates)
+        boolean isRadial = !(knnCollector instanceof org.apache.lucene.search.TopKnnCollector);
+        if (isRadial && useADC) {
+            // Phase 1: ADC scoring into local candidate buffer
+            java.util.ArrayList<int[]> candidates = new java.util.ArrayList<>();
+            // Use a collecting scanner that gathers docIds instead of submitting to collector
+            QuantizedVectorReader adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, 100);
+            // Collect candidates via ADC into a temp top-k collector
+            org.apache.lucene.search.TopKnnCollector tempCollector =
+                new org.apache.lucene.search.TopKnnCollector(100, Integer.MAX_VALUE);
+            adcReader.setCollector(tempCollector);
+
+            BitSet visited = new BitSet(fieldState.numVectors);
+            ClusterANNCentroidScanner scanner = new ClusterANNCentroidScanner(
+                postingsClone, fieldState, exactScorer, adcReader, target, acceptBits, visited, true
+            );
+            NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, 100, scanner);
+            OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
+                nearest, scanner, postingsClone, fieldState.centroidDocCounts, fieldState.numVectors, 100, filterCost
+            );
+            pipeline.execute(tempCollector);
+            adcReader.finish(tempCollector);
+
+            // Phase 2: exact rescore candidates and submit to real collector
+            org.apache.lucene.search.TopDocs topDocs = tempCollector.topDocs();
+            for (org.apache.lucene.search.ScoreDoc sd : topDocs.scoreDocs) {
+                float exactScore = exactScorer.score(sd.doc);
+                knnCollector.collect(sd.doc, exactScore);
+            }
+            return;
+        }
+
         QuantizedVectorReader adcReader = null;
         if (useADC) {
             adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, k);

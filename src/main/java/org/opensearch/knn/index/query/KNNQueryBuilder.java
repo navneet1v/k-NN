@@ -481,19 +481,13 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> imple
         }
 
         if (this.maxDistance != null || this.minScore != null) {
-            if (!ENGINES_SUPPORTING_RADIAL_SEARCH.contains(knnEngine)) {
+            if (knnEngine == KNNEngine.NMSLIB) {
                 throw new UnsupportedOperationException(
                     String.format(Locale.ROOT, "Engine [%s] does not support radial search", knnEngine)
                 );
             }
             if (vectorDataType == VectorDataType.BINARY) {
                 throw new UnsupportedOperationException(String.format(Locale.ROOT, "Binary data type does not support radial search"));
-            }
-
-            if ((knnMappingConfig.getQuantizationConfig() != QuantizationConfig.EMPTY)
-                // If compression level is 32x, then radial search should be blocked.
-                || (knnMappingConfig.getCompressionLevel() == CompressionLevel.x32)) {
-                throw new UnsupportedOperationException("Radial search is not supported for indices which have quantization enabled");
             }
         }
 

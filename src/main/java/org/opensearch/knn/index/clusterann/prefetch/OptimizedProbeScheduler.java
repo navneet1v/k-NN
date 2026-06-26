@@ -11,6 +11,7 @@ import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Wraps a {@link NearestProbeScheduler} to reorder probes by file offset
@@ -70,6 +71,27 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     /** Per-query I/O bytes counter (ADC scan portion). */
     private static final ThreadLocal<long[]> QUERY_BYTES = ThreadLocal.withInitial(() -> new long[1]);
 
+    /** Cross-segment score sharing: segments in same shard share this threshold. */
+    private static final AtomicLong SHARED_MIN_SCORE = new AtomicLong(Float.floatToIntBits(Float.NEGATIVE_INFINITY));
+
+    /** Reset shared threshold at start of each query. */
+    public static void resetSharedThreshold() {
+        SHARED_MIN_SCORE.set(Float.floatToIntBits(Float.NEGATIVE_INFINITY));
+    }
+
+    /** Get shared min competitive score across all segments. */
+    public static float getSharedThreshold() {
+        return Float.intBitsToFloat((int) SHARED_MIN_SCORE.get());
+    }
+
+    /** Update shared threshold if this segment found better results. */
+    public static void updateSharedThreshold(float score) {
+        long newBits = Float.floatToIntBits(score);
+        SHARED_MIN_SCORE.accumulateAndGet(newBits, (current, update) ->
+            Float.intBitsToFloat((int) update) > Float.intBitsToFloat((int) current) ? update : current
+        );
+    }
+
     /** Get bytes read for ADC scan in the last query on this thread. */
     public static long getLastQueryAdcBytes() { return QUERY_BYTES.get()[0]; }
     public static void resetQueryAdcBytes() { QUERY_BYTES.get()[0] = 0; }
@@ -128,10 +150,15 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             }
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
-            // Actual bytes tracked by QuantizedVectorReader.getBytesRead()
             
             docsScored += scored;
             totalScored += scored;
+
+            // Cross-segment score sharing: update shared threshold after each cluster
+            float currentMin = collector.minCompetitiveSimilarity();
+            if (currentMin > Float.NEGATIVE_INFINITY) {
+                updateSharedThreshold(currentMin);
+            }
 
             if (collector.earlyTerminated()) break;
 
@@ -144,10 +171,14 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             // Contribution-based termination: stop when clusters stop helping
             if (i >= 2 && docsScored >= k * 3) {
                 float thresholdAfter = collector.minCompetitiveSimilarity();
+                // Also consider shared threshold from other segments
+                float shared = getSharedThreshold();
+                if (shared > thresholdAfter) thresholdAfter = shared;
+
                 boolean improving = thresholdAfter > thresholdBefore && thresholdBefore != Float.NEGATIVE_INFINITY;
                 if (improving) {
                     consecutiveEmpty = 0;
-                } else if (thresholdBefore != Float.NEGATIVE_INFINITY) {
+                } else if (thresholdBefore != Float.NEGATIVE_INFINITY || shared > Float.NEGATIVE_INFINITY) {
                     consecutiveEmpty++;
                 }
 

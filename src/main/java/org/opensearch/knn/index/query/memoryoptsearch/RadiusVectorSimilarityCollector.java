@@ -67,6 +67,8 @@ public class RadiusVectorSimilarityCollector extends AbstractKnnCollector {
         return new TopDocs(new TotalHits(visitedCount(), relation), scoreDocList.toArray(ScoreDoc[]::new));
     }
 
+    public float getResultSimilarity() { return resultSimilarity; }
+
     @Override
     public int numCollected() {
         return scoreDocList.size();
