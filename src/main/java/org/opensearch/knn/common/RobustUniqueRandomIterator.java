@@ -5,8 +5,6 @@
 
 package org.opensearch.knn.common;
 
-import java.util.concurrent.ThreadLocalRandom;
-
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /**
@@ -56,11 +54,18 @@ public final class RobustUniqueRandomIterator {
     private final int numPopulate;
 
     /**
+     * Creates a deterministic iterator seeded by the given value. The same seed always produces
+     * the same sequence of unique random integers, enabling reproducible entry point selection
+     * across identical queries while still providing diverse starting positions for different queries.
+     *
      * @param maxValExclusive The upper bound (exclusive) of the random numbers.
      * @param numPopulate     How many unique numbers to pick.
+     * @param seed            Deterministic seed for the LCG starting position. Typically derived
+     *                        from a hash of the query vector so that the same query always
+     *                        produces the same entry points.
      * @throws IllegalArgumentException if numPopulate > maxValExclusive.
      */
-    public RobustUniqueRandomIterator(int maxValExclusive, int numPopulate) {
+    public RobustUniqueRandomIterator(int maxValExclusive, int numPopulate, long seed) {
         if (maxValExclusive <= 0) {
             throw new IllegalArgumentException(String.format("maxValExclusive[%d] must be positive", maxValExclusive));
         }
@@ -84,8 +89,11 @@ public final class RobustUniqueRandomIterator {
             this.M = Long.highestOneBit(maxValExclusive - 1) << 1;
         }
 
-        // Seed the LCG with a random starting point within the full cycle [0, M).
-        this.current = ThreadLocalRandom.current().nextLong(M);
+        // XOR with the golden-ratio constant (floor(2^64 / phi)) to spread similar seeds far apart
+        // in bit-space, then map into [0, M) via unsigned remainder. This ensures that close seed
+        // values (e.g., from nearly-identical query vector hashes) produce well-separated LCG
+        // starting positions rather than adjacent ones.
+        this.current = Long.remainderUnsigned(seed ^ 0x9E3779B97F4A7C15L, M);
     }
 
     /**

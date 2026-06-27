@@ -6,6 +6,8 @@
 package org.opensearch.knn.memoryoptsearch.faiss;
 
 import com.google.common.annotations.VisibleForTesting;
+import lombok.Getter;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FieldInfo;
@@ -30,12 +32,14 @@ import org.opensearch.knn.memoryoptsearch.VectorSearcher;
 import org.opensearch.knn.memoryoptsearch.faiss.cagra.FaissCagraHNSW;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import static org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsReader.EXHAUSTIVE_BULK_SCORE_ORDS;
 
 /**
  * This searcher directly reads FAISS index file via the provided {@link IndexInput} then perform vector search on it.
  */
+@Log4j2
 public class FaissMemoryOptimizedSearcher implements VectorSearcher {
     private final IndexInput indexInput;
     private final FaissIndex faissIndex;
@@ -86,7 +90,7 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
         search(
             VectorEncoding.FLOAT32,
             flatVectorsScorer.getRandomVectorScorer(vectorSimilarityFunction, knnVectorValues, target),
-            knnCollector,
+            new SeededKnnCollector(knnCollector, vectorHash(target)),
             acceptDocs
         );
     }
@@ -96,7 +100,7 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
         search(
             VectorEncoding.BYTE,
             flatVectorsScorer.getRandomVectorScorer(vectorSimilarityFunction, faissIndex.getByteValues(indexInput.clone()), target),
-            knnCollector,
+            new SeededKnnCollector(knnCollector, vectorHash(target)),
             acceptDocs
         );
     }
@@ -205,21 +209,61 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
         final KnnCollector ordinalTranslatedKnnCollector = new OrdinalTranslatedKnnCollector(knnCollector, scorer::ordToDoc);
 
         if (hnsw instanceof FaissCagraHNSW cagraHNSW && (knnCollector.getSearchStrategy() instanceof KnnSearchStrategy.Seeded) == false) {
-            // If there are provided entry points, then we should honor it and ensure searching to start based on them instead of
-            // search with randomly selected points.
+            final long seed;
+            if (knnCollector instanceof SeededKnnCollector seededKnnCollector) {
+                seed = seededKnnCollector.getQuerySeed();
+            } else {
+                seed = 0L;
+                log.warn("KNN collector for CagraHNSW graph is not SeededKnnCollector, defaulting seed to 0");
+            }
             return new KnnCollector.Decorator(ordinalTranslatedKnnCollector) {
                 @Override
                 public KnnSearchStrategy getSearchStrategy() {
                     return RandomEntryPointsKnnSearchStrategy.getInstance(
                         cagraHNSW.getNumBaseLevelSearchEntryPoints(),
                         cagraHNSW.getTotalNumberOfVectors(),
-                        knnCollector.getSearchStrategy()
+                        knnCollector.getSearchStrategy(),
+                        seed
                     );
                 }
             };
         }
 
         return ordinalTranslatedKnnCollector;
+    }
+
+    @VisibleForTesting
+    static class SeededKnnCollector extends KnnCollector.Decorator {
+        @Getter
+        final long querySeed;
+
+        SeededKnnCollector(KnnCollector delegate, long querySeed) {
+            super(delegate);
+            this.querySeed = querySeed;
+        }
+    }
+
+    private static long vectorHash(float[] vector) {
+        return mixHash(Arrays.hashCode(vector));
+    }
+
+    private static long vectorHash(byte[] vector) {
+        return mixHash(Arrays.hashCode(vector));
+    }
+
+    /**
+     * Applies the MurmurHash3 64-bit finalizer to improve hash quality. This ensures that
+     * even when input hash codes have poor bit distribution (e.g., sequential integers from
+     * {@link Arrays#hashCode}), the output is well-distributed across all 64 bits,
+     * producing well-separated LCG starting positions for different query vectors.
+     */
+    private static long mixHash(long h) {
+        h ^= (h >>> 33);
+        h *= 0xFF51AFD7ED558CCDL;
+        h ^= (h >>> 33);
+        h *= 0xC4CEB9FE1A85EC53L;
+        h ^= (h >>> 33);
+        return h;
     }
 
     /**
@@ -232,12 +276,13 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
         public static RandomEntryPointsKnnSearchStrategy getInstance(
             final int numberOfEntryPoints,
             final long totalNumberOfVectors,
-            final KnnSearchStrategy originalStrategy
+            final KnnSearchStrategy originalStrategy,
+            final long seed
         ) {
 
             int entryPoints = getTotalNumberOfEntryPoints(numberOfEntryPoints, Math.toIntExact(totalNumberOfVectors));
 
-            final DocIdSetIterator docIdSetIterator = generateRandomEntryPoints(entryPoints, Math.toIntExact(totalNumberOfVectors));
+            final DocIdSetIterator docIdSetIterator = generateRandomEntryPoints(entryPoints, Math.toIntExact(totalNumberOfVectors), seed);
 
             return new RandomEntryPointsKnnSearchStrategy(docIdSetIterator, entryPoints, originalStrategy);
         }
@@ -254,14 +299,15 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
             return numberOfEntryPoints >= totalVectors ? totalVectors : numberOfEntryPoints;
         }
 
-        private static DocIdSetIterator generateRandomEntryPoints(final int numberOfEntryPoints, int totalNumberOfVectors) {
+        private static DocIdSetIterator generateRandomEntryPoints(final int numberOfEntryPoints, int totalNumberOfVectors, long seed) {
             if (numberOfEntryPoints >= totalNumberOfVectors) {
                 return DocIdSetIterator.all(totalNumberOfVectors);
             }
             return new DocIdSetIterator() {
                 final RobustUniqueRandomIterator robustUniqueRandomIterator = new RobustUniqueRandomIterator(
                     totalNumberOfVectors,
-                    numberOfEntryPoints
+                    numberOfEntryPoints,
+                    seed
                 );
 
                 @Override

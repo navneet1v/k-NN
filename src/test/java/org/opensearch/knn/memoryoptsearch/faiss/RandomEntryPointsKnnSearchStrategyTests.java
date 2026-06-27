@@ -26,7 +26,8 @@ public class RandomEntryPointsKnnSearchStrategyTests {
             FaissMemoryOptimizedSearcher.RandomEntryPointsKnnSearchStrategy.getInstance(
                 numEntries,
                 numVectors,
-                mock(KnnSearchStrategy.class)
+                mock(KnnSearchStrategy.class),
+                42L
             );
 
         // Validate #entry points
@@ -52,7 +53,8 @@ public class RandomEntryPointsKnnSearchStrategyTests {
             FaissMemoryOptimizedSearcher.RandomEntryPointsKnnSearchStrategy.getInstance(
                 numEntries,
                 numVectors,
-                mock(KnnSearchStrategy.class)
+                mock(KnnSearchStrategy.class),
+                42L
             );
 
         // Validate #entry points
