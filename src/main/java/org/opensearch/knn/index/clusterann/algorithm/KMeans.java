@@ -332,7 +332,14 @@ public final class KMeans {
         updateCentroids(centroids, clusterSums, clusterCounts, k, dim, false);
     }
 
-    private static void updateCentroids(float[][] centroids, float[][] clusterSums, int[] clusterCounts, int k, int dim, boolean spherical) {
+    private static void updateCentroids(
+        float[][] centroids,
+        float[][] clusterSums,
+        int[] clusterCounts,
+        int k,
+        int dim,
+        boolean spherical
+    ) {
         for (int c = 0; c < k; c++) {
             if (clusterCounts[c] > 0) {
                 float invCount = 1f / clusterCounts[c];

@@ -138,7 +138,11 @@ public class NativeEngineKnnVectorQuery extends Query {
             long rescoreBytes = (long) firstPassKFor2PhaseSearch * knnQuery.getQueryVector().length * 4;
             log.debug(
                 "[ClusterANN-IO] adc_bytes={} rescore_bytes={} total_bytes={} rescore_ms={} oversample_k={}",
-                adcBytes, rescoreBytes, adcBytes + rescoreBytes, rescoreTime, firstPassKFor2PhaseSearch
+                adcBytes,
+                rescoreBytes,
+                adcBytes + rescoreBytes,
+                rescoreTime,
+                firstPassKFor2PhaseSearch
             );
         }
 

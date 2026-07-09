@@ -93,13 +93,21 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     }
 
     /** Get bytes read for ADC scan in the last query on this thread. */
-    public static long getLastQueryAdcBytes() { return QUERY_BYTES.get()[0]; }
-    public static void resetQueryAdcBytes() { QUERY_BYTES.get()[0] = 0; }
-    public static void addActualBytes(long bytes) { QUERY_BYTES.get()[0] += bytes; }
+    public static long getLastQueryAdcBytes() {
+        return QUERY_BYTES.get()[0];
+    }
+
+    public static void resetQueryAdcBytes() {
+        QUERY_BYTES.get()[0] = 0;
+    }
+
+    public static void addActualBytes(long bytes) {
+        QUERY_BYTES.get()[0] += bytes;
+    }
 
     @Override
     public int execute(KnnCollector collector) throws IOException {
-        
+
         reorderByOffset(probes, nprobe, WINDOW_SIZE);
 
         // Hybrid termination: soft budget + contribution-based override
@@ -118,7 +126,6 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             issueReadAhead(probes[i]);
         }
 
-        
         long docsScored = 0;
         int totalScored = 0;
 
@@ -150,7 +157,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             }
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
-            
+
             docsScored += scored;
             totalScored += scored;
 

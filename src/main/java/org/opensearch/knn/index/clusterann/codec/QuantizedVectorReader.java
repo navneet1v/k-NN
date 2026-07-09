@@ -168,9 +168,8 @@ public final class QuantizedVectorReader {
                 if (!validBuf[blockStart + j]) continue;
                 // Upper bound: assume max rawDot contribution (generous estimate)
                 float docScale = (blockUpper[j] - blockLower[j]) * docBitScaleCheck;
-                float maxScore = blockLower[j] * currentQueryLower * fieldState.dimension
-                    + Math.abs(currentQueryLower) * docScale * Math.abs(blockSum[j])
-                    + Math.abs(blockLower[j]) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
+                float maxScore = blockLower[j] * currentQueryLower * fieldState.dimension + Math.abs(currentQueryLower) * docScale * Math
+                    .abs(blockSum[j]) + Math.abs(blockLower[j]) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
                     + docScale * Math.abs(currentQueryScale) * packedBytes * 4f;
                 float upperBound = maxScore + blockAdd[j] + centroidDp - currentCentroidNormSq;
                 if (upperBound > maxUpperBound) maxUpperBound = upperBound;
@@ -223,8 +222,8 @@ public final class QuantizedVectorReader {
             if (!validBuf[blockStart + j]) continue;
 
             float docScale = (blockUpper[j] - blockLower[j]) * docBitScale;
-            float score = blockLower[j] * qLowerDim + currentQueryLower * docScale * blockSum[j] + blockLower[j]
-                * qScaleCompSum + docScale * currentQueryScale * rawDotBuf[j];
+            float score = blockLower[j] * qLowerDim + currentQueryLower * docScale * blockSum[j] + blockLower[j] * qScaleCompSum + docScale
+                * currentQueryScale * rawDotBuf[j];
 
             float adcSimilarity;
             if (simFunc == VectorSimilarityFunction.EUCLIDEAN) {
@@ -260,7 +259,9 @@ public final class QuantizedVectorReader {
     }
 
     /** Actual bytes read during ADC scoring (excludes skipped blocks). */
-    public long getBytesRead() { return bytesRead; }
+    public long getBytesRead() {
+        return bytesRead;
+    }
 
     /**
      * No-op — collection happens directly during scoreBlock.
@@ -306,8 +307,10 @@ public final class QuantizedVectorReader {
     // ===== Offset-based dot products (no per-vector array copy) =====
 
     /** 1-bit doc × 4-bit query: VectorUtil delegates with offset. */
-    private static final java.lang.invoke.VarHandle LONG_LE =
-        java.lang.invoke.MethodHandles.byteArrayViewVarHandle(long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+    private static final java.lang.invoke.VarHandle LONG_LE = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+        long[].class,
+        java.nio.ByteOrder.LITTLE_ENDIAN
+    );
 
     private static float int4BitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
         long sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;

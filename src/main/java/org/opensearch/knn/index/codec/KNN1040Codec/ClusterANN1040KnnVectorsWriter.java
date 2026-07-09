@@ -180,9 +180,21 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 centroidOffsets[origIdx] = startPos;
 
                 // Primary posting list (quantize with transformed vectors + transformed centroids)
-                writePostingList(primaryPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, useRotation ? randomRotation : null);
+                writePostingList(
+                    primaryPostings[origIdx],
+                    vectors,
+                    transformedCentroids[origIdx],
+                    qWriter,
+                    useRotation ? randomRotation : null
+                );
                 // SOAR posting list (adjacent)
-                writePostingList(soarPostings[origIdx], vectors, transformedCentroids[origIdx], qWriter, useRotation ? randomRotation : null);
+                writePostingList(
+                    soarPostings[origIdx],
+                    vectors,
+                    transformedCentroids[origIdx],
+                    qWriter,
+                    useRotation ? randomRotation : null
+                );
 
                 postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
             }
@@ -267,8 +279,13 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     /**
      * Write one posting list: [docIds | ordinals (fixed-width) | quantized blocks] columnar.
      */
-    private void writePostingList(int[] ordinals, ClusterANNVectorValues vectors, float[] centroid, QuantizedVectorWriter qWriter, RandomRotation randomRotation)
-        throws IOException {
+    private void writePostingList(
+        int[] ordinals,
+        ClusterANNVectorValues vectors,
+        float[] centroid,
+        QuantizedVectorWriter qWriter,
+        RandomRotation randomRotation
+    ) throws IOException {
         int count = ordinals.length;
 
         // Convert ordinals to docIds

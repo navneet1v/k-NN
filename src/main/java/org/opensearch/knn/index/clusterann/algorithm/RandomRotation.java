@@ -9,11 +9,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
@@ -113,7 +109,8 @@ public final class RandomRotation {
 
         // Random permutation of dimensions into blocks
         List<Integer> indices = new ArrayList<>(dimension);
-        for (int i = 0; i < dimension; i++) indices.add(i);
+        for (int i = 0; i < dimension; i++)
+            indices.add(i);
         Collections.shuffle(indices, rng);
 
         int[][] permutation = new int[totalBlocks][];
@@ -195,15 +192,19 @@ public final class RandomRotation {
         for (int i = 0; i < dim; i++) {
             // Normalize row i
             double norm = 0;
-            for (int j = 0; j < dim; j++) norm += m[i][j] * m[i][j];
+            for (int j = 0; j < dim; j++)
+                norm += m[i][j] * m[i][j];
             norm = Math.sqrt(norm);
             if (norm < 1e-10) continue;
-            for (int j = 0; j < dim; j++) m[i][j] /= (float) norm;
+            for (int j = 0; j < dim; j++)
+                m[i][j] /= (float) norm;
             // Subtract projection from remaining rows
             for (int k = i + 1; k < dim; k++) {
                 double dot = 0;
-                for (int j = 0; j < dim; j++) dot += m[i][j] * m[k][j];
-                for (int j = 0; j < dim; j++) m[k][j] -= (float) (dot * m[i][j]);
+                for (int j = 0; j < dim; j++)
+                    dot += m[i][j] * m[k][j];
+                for (int j = 0; j < dim; j++)
+                    m[k][j] -= (float) (dot * m[i][j]);
             }
         }
         return m;

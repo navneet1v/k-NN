@@ -178,17 +178,17 @@ public final class ClusterANNFieldState {
             }
 
             ClusterANNFieldState fs = new ClusterANNFieldState(
-                    fieldNumber,
-                    numVectors,
-                    dimension,
-                    numCentroids,
-                    metric,
-                    docBits,
-                    postingsOffset,
-                    docCounts,
-                    norms,
-                    postingSizes,
-                    centroidsFilePos
+                fieldNumber,
+                numVectors,
+                dimension,
+                numCentroids,
+                metric,
+                docBits,
+                postingsOffset,
+                docCounts,
+                norms,
+                postingSizes,
+                centroidsFilePos
             );
             fs.centroids = loadedCentroids;
             fs.centroidOffsets = loadedOffsets;

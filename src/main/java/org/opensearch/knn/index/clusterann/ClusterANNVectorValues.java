@@ -90,12 +90,7 @@ public final class ClusterANNVectorValues extends FloatVectorValues {
 
     /** View-based subset: no vector copying, just ordinal remapping. */
     public static ClusterANNVectorValues fromSubset(ClusterANNVectorValues parent, int[] indices) {
-        return new ClusterANNVectorValues(
-            new SubsetSupplier(parent, indices),
-            null,
-            indices.length,
-            parent.dimension()
-        );
+        return new ClusterANNVectorValues(new SubsetSupplier(parent, indices), null, indices.length, parent.dimension());
     }
 
     // ========== Factory: merge (source segment readers) ==========
