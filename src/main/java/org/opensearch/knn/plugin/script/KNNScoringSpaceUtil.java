@@ -7,6 +7,7 @@ package org.opensearch.knn.plugin.script;
 
 import java.util.List;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.mapper.KNNVectorFieldMapperUtil;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 import org.opensearch.knn.plugin.stats.KNNCounter;
 import org.opensearch.index.mapper.BinaryFieldMapper;
@@ -109,6 +110,24 @@ public class KNNScoringSpaceUtil {
             );
         }
         return floatArray;
+    }
+
+    public static Object getProcessedQuery(final Object query, final KNNVectorFieldType knnVectorFieldType) {
+        VectorDataType vectorDataType = knnVectorFieldType.getVectorDataType() == null
+            ? VectorDataType.FLOAT
+            : knnVectorFieldType.getVectorDataType();
+        if (vectorDataType == VectorDataType.FLOAT) {
+            return parseToFloatArray(
+                query,
+                KNNVectorFieldMapperUtil.getExpectedVectorLength(knnVectorFieldType),
+                knnVectorFieldType.getVectorDataType()
+            );
+        }
+        return parseToByteArray(
+            query,
+            KNNVectorFieldMapperUtil.getExpectedVectorLength(knnVectorFieldType),
+            knnVectorFieldType.getVectorDataType()
+        );
     }
 
     /**

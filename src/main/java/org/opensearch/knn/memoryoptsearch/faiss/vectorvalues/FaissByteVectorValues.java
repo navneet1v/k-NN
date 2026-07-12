@@ -112,12 +112,15 @@ public class FaissByteVectorValues extends ByteVectorValues implements HasIndexS
         private final DirectMonotonicReader idMappingReader;
         private final int oneVectorByteSize;
 
-        public SparseByteVectorValuesImpl(final ByteVectorValues byteVectorValues, final DirectMonotonicReader idMappingReader, int oneVectorByteSize) {
+        public SparseByteVectorValuesImpl(
+            final ByteVectorValues byteVectorValues,
+            final DirectMonotonicReader idMappingReader,
+            int oneVectorByteSize
+        ) {
             this.byteVectorValues = byteVectorValues;
             this.idMappingReader = idMappingReader;
             this.oneVectorByteSize = oneVectorByteSize;
         }
-
 
         @Override
         public byte[] vectorValue(int internalVectorId) throws IOException {
@@ -182,12 +185,15 @@ public class FaissByteVectorValues extends ByteVectorValues implements HasIndexS
         private final DirectMonotonicReader idMappingReader;
         private final int oneVectorByteSize;
 
-        public SparseBinaryVectorValuesImpl(final ByteVectorValues byteVectorValues, final DirectMonotonicReader idMappingReader, int oneVectorByteSize) {
+        public SparseBinaryVectorValuesImpl(
+            final ByteVectorValues byteVectorValues,
+            final DirectMonotonicReader idMappingReader,
+            int oneVectorByteSize
+        ) {
             this.byteVectorValues = byteVectorValues;
             this.idMappingReader = idMappingReader;
             this.oneVectorByteSize = oneVectorByteSize;
         }
-
 
         @Override
         public byte[] vectorValue(int internalVectorId) throws IOException {

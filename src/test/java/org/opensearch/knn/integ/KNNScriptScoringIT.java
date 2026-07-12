@@ -976,7 +976,23 @@ public class KNNScriptScoringIT extends KNNRestTestCase {
             assertEquals(request.getEndpoint() + ": failed", RestStatus.OK, RestStatus.fromCode(response.getStatusLine().getStatusCode()));
 
             List<KNNResult> results = parseSearchResponse(EntityUtils.toString(response.getEntity()), FIELD_NAME);
-            assertTrue(results.stream().allMatch(r -> dataset.get(r.getDocId()).equals(r)));
+            for (KNNResult r : results) {
+                KNNResult expected = dataset.get(r.getDocId());
+                assertEquals(
+                    "Score mismatch for doc ["
+                        + r.getDocId()
+                        + "] with spaceType ["
+                        + spaceType
+                        + "]: expected="
+                        + expected.getScore()
+                        + " actual="
+                        + r.getScore()
+                        + " diff="
+                        + Math.abs(expected.getScore() - r.getScore()),
+                    expected,
+                    r
+                );
+            }
         } finally {
             deleteKNNIndex(INDEX_NAME);
         }

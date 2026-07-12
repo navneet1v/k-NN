@@ -67,7 +67,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
             getMappingConfigForMethodMapping(knnMethodContext, 3)
         );
         KNNScoringSpace.L2 l2 = new KNNScoringSpace.L2(arrayListQueryObject, fieldType);
-        float[] processedFloatQuery = (float[]) l2.getProcessedQuery(arrayListQueryObject, fieldType);
+        float[] processedFloatQuery = (float[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject, fieldType);
         assertEquals(
             1F,
             ((BiFunction<float[], float[], Float>) l2.getScoringMethod(processedFloatQuery)).apply(arrayFloat, arrayFloat),
@@ -94,7 +94,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
             getMappingConfigForMethodMapping(knnMethodContext, 3)
         );
         KNNScoringSpace.CosineSimilarity cosineSimilarity = new KNNScoringSpace.CosineSimilarity(arrayListQueryObject, fieldType);
-        float[] processedFloatQuery = (float[]) cosineSimilarity.getProcessedQuery(arrayListQueryObject, fieldType);
+        float[] processedFloatQuery = (float[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject, fieldType);
         assertEquals(
             VectorSimilarityFunction.COSINE.compare(arrayFloat2, arrayFloat),
             ((BiFunction<float[], float[], Float>) cosineSimilarity.getScoringMethod(processedFloatQuery)).apply(arrayFloat2, arrayFloat),
@@ -154,7 +154,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
         );
         KNNScoringSpace.InnerProd innerProd = new KNNScoringSpace.InnerProd(arrayListQueryObject_case1, fieldType);
 
-        float[] processedFloatQuery_case1 = (float[]) innerProd.getProcessedQuery(arrayListQueryObject_case1, fieldType);
+        float[] processedFloatQuery_case1 = (float[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject_case1, fieldType);
         assertEquals(
             7.0F,
             ((BiFunction<float[], float[], Float>) innerProd.getScoringMethod(processedFloatQuery_case1)).apply(
@@ -169,7 +169,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
         float[] arrayFloat2_case2 = new float[] { -100_000.0f, -200_000.0f, -300_000.0f };
 
         innerProd = new KNNScoringSpace.InnerProd(arrayListQueryObject_case2, fieldType);
-        float[] processedFloatQuery_case2 = (float[]) innerProd.getProcessedQuery(arrayListQueryObject_case2, fieldType);
+        float[] processedFloatQuery_case2 = (float[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject_case2, fieldType);
         assertEquals(
             7.142857143E-12F,
             ((BiFunction<float[], float[], Float>) innerProd.getScoringMethod(processedFloatQuery_case2)).apply(
@@ -184,7 +184,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
         float[] arrayFloat2_case3 = new float[] { 100_000.0f, 200_000.0f, 300_000.0f };
 
         innerProd = new KNNScoringSpace.InnerProd(arrayListQueryObject_case3, fieldType);
-        float[] processedFloatQuery_case3 = (float[]) innerProd.getProcessedQuery(arrayListQueryObject_case3, fieldType);
+        float[] processedFloatQuery_case3 = (float[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject_case3, fieldType);
         assertEquals(
             140_000_000_001F,
             ((BiFunction<float[], float[], Float>) innerProd.getScoringMethod(processedFloatQuery_case3)).apply(
@@ -248,7 +248,7 @@ public class KNNScoringSpaceTests extends KNNTestCase {
         );
 
         KNNScoringSpace.Hamming hamming = new KNNScoringSpace.Hamming(arrayListQueryObject, fieldType);
-        byte[] processedByteQuery = (byte[]) hamming.getProcessedQuery(arrayListQueryObject, fieldType);
+        byte[] processedByteQuery = (byte[]) KNNScoringSpaceUtil.getProcessedQuery(arrayListQueryObject, fieldType);
         byte[] arrayByte = new byte[] { 1, 2, 3 };
         assertEquals(
             1F,

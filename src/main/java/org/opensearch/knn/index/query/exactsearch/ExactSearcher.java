@@ -12,7 +12,6 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
-import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.HitQueue;
 import org.apache.lucene.search.ScoreDoc;
@@ -316,7 +315,9 @@ public class ExactSearcher {
         final ExactSearcherContext context
     ) throws IOException {
         final VectorDataType vectorDataType = FieldInfoExtractor.extractVectorDataType(fieldInfo);
-        final SpaceType spaceType = getSpaceType(modelDao, fieldInfo);
+        final SpaceType spaceType = context.getSpaceType() == SpaceType.UNDEFINED
+            ? getSpaceType(modelDao, fieldInfo)
+            : context.getSpaceType();
         final VectorScorerMode scorerMode = context.isUseQuantizedVectorsForSearch() ? VectorScorerMode.SCORE : VectorScorerMode.RESCORE;
         final boolean isNestedRequired = context.getParentsFilter() != null;
         final BitSet parentBitSet = isNestedRequired ? context.getParentsFilter().getBitSet(leafReaderContext) : null;
@@ -338,14 +339,9 @@ public class ExactSearcher {
         }
 
         if (VectorDataType.BYTE == vectorDataType) {
-            final float[] floatQueryVector = context.getFloatQueryVector();
-            final byte[] byteQueryVector = new byte[floatQueryVector.length];
-            for (int i = 0; i < byteQueryVector.length; i++) {
-                byteQueryVector[i] = (byte) floatQueryVector[i];
-            }
             return VectorScorers.createScorer(
                 iteratorValues,
-                byteQueryVector,
+                context.getByteQueryVector(),
                 scorerMode,
                 spaceType,
                 fieldInfo,
@@ -470,9 +466,11 @@ public class ExactSearcher {
         Integer maxResultWindow;
 
         /**
-         * The Lucene {@link VectorSimilarityFunction} associated with the vector field.
+         * The SpaceType {@link SpaceType} associated with the vector field. You can get this from fieldInfo, but as Exact
+         * Search cane be done on the spaceType which is provided at runtime by user
          */
-        VectorSimilarityFunction similarityFunction;
+        @Builder.Default
+        SpaceType spaceType = SpaceType.UNDEFINED;
 
         /**
          * When {@code true}, indicates that memory-optimized search is enabled, meaning the

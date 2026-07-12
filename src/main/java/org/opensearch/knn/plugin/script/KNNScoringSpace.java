@@ -12,7 +12,6 @@ import org.opensearch.Version;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
-import org.opensearch.knn.index.mapper.KNNVectorFieldMapperUtil;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 import org.opensearch.knn.index.query.KNNWeight;
 import org.opensearch.script.ScoreScript;
@@ -30,8 +29,6 @@ import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isBinaryField
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isKNNVectorFieldType;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isLongFieldType;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToBigInteger;
-import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToFloatArray;
-import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToByteArray;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToLong;
 
 public interface KNNScoringSpace {
@@ -70,7 +67,7 @@ public interface KNNScoringSpace {
             final Set<VectorDataType> supportingVectorDataTypes
         ) {
             KNNVectorFieldType knnVectorFieldType = toKNNVectorFieldType(fieldType, spaceName, supportingVectorDataTypes);
-            this.processedQuery = getProcessedQuery(query, knnVectorFieldType);
+            this.processedQuery = KNNScoringSpaceUtil.getProcessedQuery(query, knnVectorFieldType);
             this.scoringMethod = getScoringMethod(this.processedQuery, knnVectorFieldType.getKnnMappingConfig().getIndexCreatedVersion());
         }
 
@@ -137,24 +134,6 @@ public interface KNNScoringSpace {
             }
 
             return knnVectorFieldType;
-        }
-
-        protected Object getProcessedQuery(final Object query, final KNNVectorFieldType knnVectorFieldType) {
-            VectorDataType vectorDataType = knnVectorFieldType.getVectorDataType() == null
-                ? VectorDataType.FLOAT
-                : knnVectorFieldType.getVectorDataType();
-            if (vectorDataType == VectorDataType.FLOAT) {
-                return parseToFloatArray(
-                    query,
-                    KNNVectorFieldMapperUtil.getExpectedVectorLength(knnVectorFieldType),
-                    knnVectorFieldType.getVectorDataType()
-                );
-            }
-            return parseToByteArray(
-                query,
-                KNNVectorFieldMapperUtil.getExpectedVectorLength(knnVectorFieldType),
-                knnVectorFieldType.getVectorDataType()
-            );
         }
 
         public abstract BiFunction<?, ?, Float> getScoringMethod(final Object processedQuery);

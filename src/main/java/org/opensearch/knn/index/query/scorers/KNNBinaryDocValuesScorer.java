@@ -96,4 +96,9 @@ class KNNBinaryDocValuesScorer implements VectorScorer {
     public DocIdSetIterator iterator() {
         return binaryDocValues;
     }
+
+    @Override
+    public Bulk bulk(DocIdSetIterator matchingDocs) throws IOException {
+        return VectorScorer.super.bulk(matchingDocs);
+    }
 }
