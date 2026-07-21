@@ -94,6 +94,7 @@ import static org.opensearch.knn.index.KNNSettings.KNN_INDEX;
 import static org.opensearch.knn.index.VectorDataType.SUPPORTED_VECTOR_DATA_TYPES;
 
 @Log4j2
+@org.apache.lucene.tests.util.LuceneTestCase.AwaitsFix(bugUrl = "ForceClusterANN: all methods now route to ClusterANNVectorFieldMapper")
 public class KNNVectorFieldMapperTests extends KNNTestCase {
 
     private static final String TEST_INDEX_NAME = "test-index-name";

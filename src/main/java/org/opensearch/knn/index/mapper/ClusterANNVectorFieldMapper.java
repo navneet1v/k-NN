@@ -9,9 +9,13 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.VectorEncoding;
 import org.opensearch.Version;
 import org.opensearch.common.Explicit;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.SpaceType;
+import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodConfigContext;
 import org.opensearch.knn.index.engine.KNNMethodContext;
+import org.opensearch.knn.index.engine.MethodComponentContext;
+
 import java.util.Map;
 import java.util.Optional;
 
@@ -42,7 +46,11 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
         OriginalMappingParameters originalMappingParameters
     ) {
         final SpaceType spaceType = originalMappingParameters.getResolvedKnnMethodContext().getSpaceType();
-        final KNNMethodContext resolvedMethodContext = originalMappingParameters.getResolvedKnnMethodContext();
+        final KNNMethodContext resolvedMethodContext = new KNNMethodContext(
+            KNNEngine.UNDEFINED,
+            spaceType,
+            new MethodComponentContext(KNNConstants.METHOD_CLUSTER, Map.of())
+        );
         final KNNVectorFieldType mappedFieldType = new KNNVectorFieldType(
             fullname,
             metaValue,
@@ -123,9 +131,10 @@ public class ClusterANNVectorFieldMapper extends KNNVectorFieldMapper {
         this.vectorValidator = new SpaceVectorValidator(spaceType);
         this.vectorTransformer = VectorTransformerFactory.getVectorTransformer(spaceType);
 
-        String methodName = originalMappingParameters.getResolvedKnnMethodContext().getMethodComponentContext().getName();
+        // Always write "cluster" in field attributes regardless of what was parsed — ensures
+        // FieldInfoExtractor.isClusterAnnIndex() returns true at search time
         this.fieldType = new FieldType(KNNVectorFieldMapper.Defaults.FIELD_TYPE);
-        this.fieldType.putAttribute(KNN_METHOD, methodName);
+        this.fieldType.putAttribute(KNN_METHOD, KNNConstants.METHOD_CLUSTER);
         this.fieldType.putAttribute(SPACE_TYPE, spaceType.getValue());
         this.fieldType.putAttribute(DIMENSION, String.valueOf(dimension));
         this.fieldType.putAttribute(VECTOR_DATA_TYPE_FIELD, vectorDataType.getValue());

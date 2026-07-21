@@ -307,56 +307,18 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 );
             }
 
-            // Engine-less algorithm routing (e.g., cluster)
-            if (originalParameters.getKnnMethodContext() != null
-                && EngineLessMethod.isEngineLess(originalParameters.getKnnMethodContext().getMethodComponentContext().getName())) {
-                EngineLessMethod method = EngineLessMethod.fromName(
-                    originalParameters.getKnnMethodContext().getMethodComponentContext().getName()
-                );
-                return method.getMapperFactory()
-                    .create(
-                        buildFullName(context),
-                        name,
-                        metaValue,
-                        knnMethodConfigContext,
-                        multiFieldsBuilder,
-                        copyToBuilder,
-                        ignoreMalformed,
-                        stored.get(),
-                        hasDocValues.get(),
-                        originalParameters
-                    );
+            // Ensure knnMethodConfigContext is set.
+            // Might not be needed. but we can keep it.
+            if (knnMethodConfigContext == null) {
+                knnMethodConfigContext = KNNMethodConfigContext.builder()
+                    .vectorDataType(vectorDataType.getValue())
+                    .versionCreated(indexCreatedVersion)
+                    .dimension(dimension.getValue())
+                    .compressionLevel(CompressionLevel.fromName(originalParameters.getCompressionLevel()))
+                    .build();
             }
 
-            // return FlatVectorFieldMapper only for indices that are created on or after 2.17.0, for others, use
-            // EngineFieldMapper to maintain backwards compatibility
-            if (originalParameters.getResolvedKnnMethodContext() == null && indexCreatedVersion.onOrAfter(Version.V_2_17_0)) {
-                // Prior to 3.0.0, hasDocValues defaulted to false. However, FlatVectorFieldMapper requires
-                // hasDocValues to be true to maintain proper functionality for vector search operations.
-                // For indices created on or after 3.0.0, we automatically set hasDocValues to true if not
-                // explicitly configured to ensure consistent behavior.
-                if (indexCreatedVersion.onOrAfter(Version.V_3_0_0) && hasDocValues.isConfigured() == false) {
-                    hasDocValues = Parameter.docValuesParam(m -> toType(m).hasDocValues, true);
-                }
-                return FlatVectorFieldMapper.createFieldMapper(
-                    buildFullName(context),
-                    name,
-                    metaValue,
-                    KNNMethodConfigContext.builder()
-                        .vectorDataType(vectorDataType.getValue())
-                        .versionCreated(indexCreatedVersion)
-                        .dimension(dimension.getValue())
-                        .build(),
-                    multiFieldsBuilder,
-                    copyToBuilder,
-                    ignoreMalformed,
-                    stored.get(),
-                    hasDocValues.get(),
-                    originalParameters
-                );
-            }
-
-            return EngineFieldMapper.createFieldMapper(
+            return ClusterANNVectorFieldMapper.createFieldMapper(
                 buildFullName(context),
                 name,
                 metaValue,
@@ -366,8 +328,7 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 ignoreMalformed,
                 stored.getValue(),
                 hasDocValues.get(),
-                originalParameters,
-                indexCreatedVersion
+                originalParameters
             );
         }
 
