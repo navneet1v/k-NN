@@ -60,6 +60,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     private final IndexOutput metaOutput;
     private final IndexOutput postingsOutput;
     private final IndexOutput filterOutput;
+    private final IndexOutput centroidsOutput;
 
     private static class FieldWriterInfo {
         final FieldInfo fieldInfo;
@@ -81,6 +82,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             metaOutput = createOutput(META_EXTENSION);
             postingsOutput = createOutput(POSTINGS_EXTENSION);
             filterOutput = createOutput(FILTER_EXTENSION);
+            centroidsOutput = createOutput(CENTROIDS_EXTENSION);
             success = true;
         } finally {
             if (!success) {
@@ -248,6 +250,10 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 metaOutput.writeInt(Float.floatToIntBits(transformedCentroids[c][d]));
             }
         }
+
+        // Write centroids to .clac (off-heap, mmap'd at search time)
+        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, useRotation ? randomRotation : null);
+
         // 5. Write .claf: centroid assignment per ordinal (for filter-aware search)
         // Format: [fieldNumber:int][numVectors:int][numCentroids:int][assignments: numVectors × short]
         filterOutput.writeInt(fieldInfo.number);
@@ -328,11 +334,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         CodecUtil.writeFooter(metaOutput);
         CodecUtil.writeFooter(postingsOutput);
         CodecUtil.writeFooter(filterOutput);
+        CodecUtil.writeFooter(centroidsOutput);
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput);
+        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput, centroidsOutput);
     }
 
     @Override

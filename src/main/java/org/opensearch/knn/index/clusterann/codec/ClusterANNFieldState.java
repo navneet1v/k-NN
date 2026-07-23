@@ -49,11 +49,8 @@ public final class ClusterANNFieldState {
     public final float[] centroidNorms;
     public final int[] postingSizes;
 
-    // Lazy-loaded (large: dimension floats per centroid)
-    public float[][] centroids;
+    // Lazy-loaded (small: offsets only)
     public long[] centroidOffsets;
-    public org.opensearch.knn.index.clusterann.algorithm.RandomRotation randomRotation;
-    public float[][] transformedCentroids;
 
     private final long centroidsFilePos;
 
@@ -88,35 +85,34 @@ public final class ClusterANNFieldState {
     }
 
     public void ensureLoaded(IndexInput metaInput) throws IOException {
-        if (centroids != null) return;
+        if (centroidOffsets != null) return;
 
         metaInput.seek(centroidsFilePos);
 
-        // Bulk read all centroids into flat buffer, then slice
-        int totalFloats = numCentroids * dimension;
-        float[] flat = new float[totalFloats];
-        metaInput.readFloats(flat, 0, totalFloats);
-        centroids = new float[numCentroids][];
-        for (int c = 0; c < numCentroids; c++) {
-            centroids[c] = new float[dimension];
-            System.arraycopy(flat, c * dimension, centroids[c], 0, dimension);
-        }
+        // Skip centroids — they are in .clac (off-heap)
+        metaInput.skipBytes((long) numCentroids * dimension * Float.BYTES);
 
+        // Read offset table
         centroidOffsets = new long[numCentroids];
         metaInput.readLongs(centroidOffsets, 0, numCentroids);
 
-        // Read randomRotation
-        randomRotation = org.opensearch.knn.index.clusterann.algorithm.RandomRotation.read(metaInput);
-
-        // Read transformed centroids (used for ADC scoring)
-        int totalFloats2 = numCentroids * dimension;
-        float[] flat2 = new float[totalFloats2];
-        metaInput.readFloats(flat2, 0, totalFloats2);
-        transformedCentroids = new float[numCentroids][];
-        for (int c = 0; c < numCentroids; c++) {
-            transformedCentroids[c] = new float[dimension];
-            System.arraycopy(flat2, c * dimension, transformedCentroids[c], 0, dimension);
+        // Skip randomRotation — it is in .clac (off-heap)
+        // Format: [numBlocks:int][blockDim:int][blocks...][permutation...]
+        // We need to skip the correct number of bytes
+        long rotationStart = metaInput.getFilePointer();
+        int numBlocks = metaInput.readInt();
+        int blockDim = metaInput.readInt();
+        for (int b = 0; b < numBlocks; b++) {
+            int bDim = metaInput.readInt();
+            metaInput.skipBytes((long) bDim * bDim * Float.BYTES);
         }
+        for (int b = 0; b < numBlocks; b++) {
+            int pLen = metaInput.readInt();
+            metaInput.skipBytes((long) pLen * Integer.BYTES);
+        }
+
+        // Skip transformed centroids — they are in .clac (off-heap)
+        metaInput.skipBytes((long) numCentroids * dimension * Float.BYTES);
     }
 
     public static Map<Integer, ClusterANNFieldState> readAll(IndexInput metaInput, SegmentReadState state) throws IOException {
@@ -151,30 +147,28 @@ public final class ClusterANNFieldState {
 
             long centroidsFilePos = metaInput.getFilePointer();
 
-            // Read centroids + offset table + randomRotation + transformed centroids eagerly
-            float[][] loadedCentroids = null;
+            // Skip centroids, read offsets only, skip rotation + transformed centroids
+            // Centroids and rotation are in .clac (off-heap)
             long[] loadedOffsets = null;
-            org.opensearch.knn.index.clusterann.algorithm.RandomRotation loadedRandomRotation = null;
-            float[][] loadedTransformedCentroids = null;
             if (numCentroids > 0) {
-                int totalFloats = numCentroids * dimension;
-                float[] flat = new float[totalFloats];
-                metaInput.readFloats(flat, 0, totalFloats);
-                loadedCentroids = new float[numCentroids][];
-                for (int c = 0; c < numCentroids; c++) {
-                    loadedCentroids[c] = new float[dimension];
-                    System.arraycopy(flat, c * dimension, loadedCentroids[c], 0, dimension);
-                }
+                // Skip raw centroids
+                metaInput.skipBytes((long) numCentroids * dimension * Float.BYTES);
+                // Read offset table
                 loadedOffsets = new long[numCentroids];
                 metaInput.readLongs(loadedOffsets, 0, numCentroids);
-                loadedRandomRotation = org.opensearch.knn.index.clusterann.algorithm.RandomRotation.read(metaInput);
-                float[] flat2 = new float[totalFloats];
-                metaInput.readFloats(flat2, 0, totalFloats);
-                loadedTransformedCentroids = new float[numCentroids][];
-                for (int c = 0; c < numCentroids; c++) {
-                    loadedTransformedCentroids[c] = new float[dimension];
-                    System.arraycopy(flat2, c * dimension, loadedTransformedCentroids[c], 0, dimension);
+                // Skip rotation
+                int numBlocks = metaInput.readInt();
+                int blockDim = metaInput.readInt();
+                for (int b = 0; b < numBlocks; b++) {
+                    int bDim = metaInput.readInt();
+                    metaInput.skipBytes((long) bDim * bDim * Float.BYTES);
                 }
+                for (int b = 0; b < numBlocks; b++) {
+                    int pLen = metaInput.readInt();
+                    metaInput.skipBytes((long) pLen * Integer.BYTES);
+                }
+                // Skip transformed centroids
+                metaInput.skipBytes((long) numCentroids * dimension * Float.BYTES);
             }
 
             ClusterANNFieldState fs = new ClusterANNFieldState(
@@ -190,10 +184,7 @@ public final class ClusterANNFieldState {
                 postingSizes,
                 centroidsFilePos
             );
-            fs.centroids = loadedCentroids;
             fs.centroidOffsets = loadedOffsets;
-            fs.randomRotation = loadedRandomRotation;
-            fs.transformedCentroids = loadedTransformedCentroids;
             fields.put(fieldNumber, fs);
         }
         return fields;

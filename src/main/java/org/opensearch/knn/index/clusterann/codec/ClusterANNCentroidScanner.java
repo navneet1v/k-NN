@@ -33,6 +33,7 @@ public final class ClusterANNCentroidScanner {
     private final BitSet visited;
     private final boolean useADC;
     private final int packedBytes;
+    private final OffHeapCentroids.Reader centroidReader;
     private boolean forceExact;
 
     // Reusable buffers
@@ -52,7 +53,8 @@ public final class ClusterANNCentroidScanner {
         float[] target,
         Bits acceptBits,
         BitSet visited,
-        boolean useADC
+        boolean useADC,
+        OffHeapCentroids.Reader centroidReader
     ) {
         this.postingsInput = postingsInput;
         this.fieldState = fieldState;
@@ -62,6 +64,7 @@ public final class ClusterANNCentroidScanner {
         this.acceptBits = acceptBits;
         this.visited = visited;
         this.useADC = useADC;
+        this.centroidReader = centroidReader;
         this.packedBytes = fieldState.docBits > 0
             ? ScalarBitEncoding.fromDocBits(fieldState.docBits).docPackedBytes(fieldState.dimension)
             : 0;
@@ -123,9 +126,9 @@ public final class ClusterANNCentroidScanner {
     }
 
     private int scoreADC(KnnCollector collector, int count, int validCount) throws IOException {
-        float[] centroid = fieldState.transformedCentroids != null
-            ? fieldState.transformedCentroids[centroidIdx]
-            : fieldState.centroids[centroidIdx];
+        // Read transformed centroid from off-heap (.clac) into a NEW array (cache uses reference equality)
+        float[] centroid = new float[fieldState.dimension];
+        centroidReader.readTransformedCentroid(centroidIdx, centroid);
         float centroidDp = 0f;
         if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
             centroidDp = VectorUtil.dotProduct(target, centroid);

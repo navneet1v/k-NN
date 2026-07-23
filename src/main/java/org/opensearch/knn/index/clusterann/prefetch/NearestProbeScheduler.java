@@ -11,6 +11,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
+import org.opensearch.knn.index.clusterann.codec.OffHeapCentroids;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -34,28 +35,33 @@ public final class NearestProbeScheduler implements ProbeScheduler {
     private final int nprobe;
     private final ClusterANNCentroidScanner scanner;
 
-    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k, ClusterANNCentroidScanner scanner) {
+    public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k,
+                                ClusterANNCentroidScanner scanner, OffHeapCentroids.Reader centroidReader) throws IOException {
         this.scanner = scanner;
-        float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
         int[] postingSizes = fieldState.postingSizes;
         int numCentroids = fieldState.numCentroids;
+        int dimension = fieldState.dimension;
         DistanceMetric metric = fieldState.metric;
 
-        // Compute distances using decomposed L2 when possible
+        // Read all centroids from off-heap (.clac mmap) into temp buffer
+        float[] flatCentroids = new float[numCentroids * dimension];
+        centroidReader.readAllCentroids(flatCentroids);
+
+        // Compute distances using temp centroid slices
         float[] dists = new float[numCentroids];
+        float[] centroidBuf = new float[dimension];
         if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
-            // ScaNN optimization: ||q-c||² = ||q||² + ||c||² - 2·dot(q,c)
-            // dot product is faster than full L2 (no subtraction per dim)
-            // centroidNorms (||c||²) are precomputed in .clam
             float queryNormSq = VectorUtil.dotProduct(query, query);
             for (int c = 0; c < numCentroids; c++) {
-                float dot = VectorUtil.dotProduct(query, centroids[c]);
+                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
+                float dot = VectorUtil.dotProduct(query, centroidBuf);
                 dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
             }
         } else {
             for (int c = 0; c < numCentroids; c++) {
-                dists[c] = metric.distance(query, centroids[c]);
+                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
+                dists[c] = metric.distance(query, centroidBuf);
             }
         }
 
@@ -92,25 +98,33 @@ public final class NearestProbeScheduler implements ProbeScheduler {
      */
     public NearestProbeScheduler(float[] query, ClusterANNFieldState fieldState, int k,
                                  ClusterANNCentroidScanner scanner,
-                                 FixedBitSet acceptCentroids, int[] matchCounts) {
+                                 FixedBitSet acceptCentroids, int[] matchCounts,
+                                 OffHeapCentroids.Reader centroidReader) throws IOException {
         this.scanner = scanner;
-        float[][] centroids = fieldState.centroids;
         long[] offsets = fieldState.centroidOffsets;
         int[] postingSizes = fieldState.postingSizes;
         int numCentroids = fieldState.numCentroids;
+        int dimension = fieldState.dimension;
         DistanceMetric metric = fieldState.metric;
+
+        // Read centroids from off-heap
+        float[] flatCentroids = new float[numCentroids * dimension];
+        centroidReader.readAllCentroids(flatCentroids);
 
         // Compute distances
         float[] dists = new float[numCentroids];
+        float[] centroidBuf = new float[dimension];
         if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
             float queryNormSq = VectorUtil.dotProduct(query, query);
             for (int c = 0; c < numCentroids; c++) {
-                float dot = VectorUtil.dotProduct(query, centroids[c]);
+                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
+                float dot = VectorUtil.dotProduct(query, centroidBuf);
                 dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
             }
         } else {
             for (int c = 0; c < numCentroids; c++) {
-                dists[c] = metric.distance(query, centroids[c]);
+                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
+                dists[c] = metric.distance(query, centroidBuf);
             }
         }
 
