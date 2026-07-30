@@ -82,7 +82,7 @@ public final class HierarchicalKMeans {
         if (initialCentroids != null && initialCentroids.length >= k) {
             // Merge path: use reservoir-sampled centroids, skip k-means++ init
             float[][] trimmed = Arrays.copyOf(initialCentroids, k);
-            topResult = KMeans.cluster(vectors, k, kmeansConfig, trimmed);
+                topResult = KMeans.cluster(vectors, k, kmeansConfig, trimmed);
         } else {
             topResult = KMeans.cluster(vectors, k, kmeansConfig);
         }

@@ -267,14 +267,14 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         long actualAdcBytes = adcReader != null ? adcReader.getBytesRead() : 0;
         // Accumulate actual bytes (not estimated) into query-level counter
         OptimizedProbeScheduler.addActualBytes(actualAdcBytes);
-        log.debug(
-            "[ClusterANN-SEARCH] nprobe={} centroidDist={}ms scan={}ms drain={}ms total={}ms adcBytes={}",
+        log.info(
+            "[ClusterANN-SEG] nprobe={} clustersProbed={} vectors={} centroidDist={}ms scan={}ms total={}ms",
             nearest.nprobe(),
+            OptimizedProbeScheduler.lastClustersProbed(),
+            fieldState.numVectors,
             (t1 - t0) / 1_000_000,
             (t2 - t1) / 1_000_000,
-            (t3 - t2) / 1_000_000,
-            (t3 - t0) / 1_000_000,
-            actualAdcBytes
+            (t3 - t0) / 1_000_000
         );
     }
 

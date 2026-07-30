@@ -25,6 +25,24 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     private static final int WINDOW_SIZE = 8;
     private static final int LOOKAHEAD = 8;
 
+    // Instrumentation for measuring effective segments
+    private static final java.util.concurrent.atomic.AtomicInteger TOTAL_SEGMENTS_SEARCHED = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger TOTAL_CLUSTERS_PROBED = new java.util.concurrent.atomic.AtomicInteger();
+    private static final ThreadLocal<Integer> LAST_CLUSTERS_PROBED = ThreadLocal.withInitial(() -> 0);
+    private static final ThreadLocal<Integer> LAST_NPROBE_PLANNED = ThreadLocal.withInitial(() -> 0);
+
+    /** Get and reset query-level stats. Returns [segmentsSearched, totalClustersProbed]. */
+    public static int[] getAndResetStats() {
+        int segs = TOTAL_SEGMENTS_SEARCHED.getAndSet(0);
+        int clusters = TOTAL_CLUSTERS_PROBED.getAndSet(0);
+        return new int[]{segs, clusters};
+    }
+
+    /** Get clusters probed in the last segment search on this thread. */
+    public static int lastClustersProbed() {
+        return LAST_CLUSTERS_PROBED.get();
+    }
+
     private final ProbeTarget[] probes;
     private final int nprobe;
     private final ClusterANNCentroidScanner scanner;
@@ -128,6 +146,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
 
         long docsScored = 0;
         int totalScored = 0;
+        int clustersActuallyProbed = 0;
 
         for (int i = 0; i < nprobe; i++) {
             ProbeTarget probe = probes[i];
@@ -157,6 +176,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             }
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
+            clustersActuallyProbed++;
 
             docsScored += scored;
             totalScored += scored;
@@ -194,6 +214,12 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 }
             }
         }
+
+        // Instrumentation: track clusters probed per segment
+        LAST_CLUSTERS_PROBED.set(clustersActuallyProbed);
+        LAST_NPROBE_PLANNED.set(nprobe);
+        TOTAL_SEGMENTS_SEARCHED.incrementAndGet();
+        TOTAL_CLUSTERS_PROBED.addAndGet(clustersActuallyProbed);
 
         return totalScored;
     }
