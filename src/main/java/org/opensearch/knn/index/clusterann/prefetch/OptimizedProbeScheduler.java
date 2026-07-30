@@ -11,7 +11,6 @@ import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Wraps a {@link NearestProbeScheduler} to reorder probes by file offset
@@ -89,25 +88,35 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     /** Per-query I/O bytes counter (ADC scan portion). */
     private static final ThreadLocal<long[]> QUERY_BYTES = ThreadLocal.withInitial(() -> new long[1]);
 
-    /** Cross-segment score sharing: segments in same shard share this threshold. */
-    private static final AtomicLong SHARED_MIN_SCORE = new AtomicLong(Float.floatToIntBits(Float.NEGATIVE_INFINITY));
+    /** Cross-segment score sharing: per-query, keyed by collector identity.
+     *  Same KnnCollector instance = same query = share threshold.
+     *  Different collectors = different queries = independent thresholds.
+     *  Thread-safe via volatile (threshold only goes up). */
+    private static final java.util.Map<KnnCollector, float[]> COLLECTOR_THRESHOLDS =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
-    /** Reset shared threshold at start of each query. */
+    /** Reset shared threshold for a new query (called before segment iteration). */
     public static void resetSharedThreshold() {
-        SHARED_MIN_SCORE.set(Float.floatToIntBits(Float.NEGATIVE_INFINITY));
+        // No-op: threshold is created per collector on first access
     }
 
-    /** Get shared min competitive score across all segments. */
-    public static float getSharedThreshold() {
-        return Float.intBitsToFloat((int) SHARED_MIN_SCORE.get());
+    /** Initialize or get threshold for this collector (query). */
+    private static float[] getOrCreateThreshold(KnnCollector collector) {
+        return COLLECTOR_THRESHOLDS.computeIfAbsent(collector, k -> new float[]{Float.NEGATIVE_INFINITY});
+    }
+
+    /** Get shared min competitive score for this query's collector. */
+    public static float getSharedThreshold(KnnCollector collector) {
+        float[] t = COLLECTOR_THRESHOLDS.get(collector);
+        return t != null ? t[0] : Float.NEGATIVE_INFINITY;
     }
 
     /** Update shared threshold if this segment found better results. */
-    public static void updateSharedThreshold(float score) {
-        long newBits = Float.floatToIntBits(score);
-        SHARED_MIN_SCORE.accumulateAndGet(newBits, (current, update) ->
-            Float.intBitsToFloat((int) update) > Float.intBitsToFloat((int) current) ? update : current
-        );
+    public static void updateSharedThreshold(KnnCollector collector, float score) {
+        float[] t = getOrCreateThreshold(collector);
+        if (score > t[0]) {
+            t[0] = score;
+        }
     }
 
     /** Get bytes read for ADC scan in the last query on this thread. */
@@ -184,7 +193,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             // Cross-segment score sharing: update shared threshold after each cluster
             float currentMin = collector.minCompetitiveSimilarity();
             if (currentMin > Float.NEGATIVE_INFINITY) {
-                updateSharedThreshold(currentMin);
+                updateSharedThreshold(collector, currentMin);
             }
 
             if (collector.earlyTerminated()) break;
@@ -199,7 +208,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
             if (i >= 2 && docsScored >= k * 3) {
                 float thresholdAfter = collector.minCompetitiveSimilarity();
                 // Also consider shared threshold from other segments
-                float shared = getSharedThreshold();
+                float shared = getSharedThreshold(collector);
                 if (shared > thresholdAfter) thresholdAfter = shared;
 
                 boolean improving = thresholdAfter > thresholdBefore && thresholdBefore != Float.NEGATIVE_INFINITY;
