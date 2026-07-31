@@ -578,7 +578,7 @@ public final class KMeans {
 
         public static final class Builder {
             private DistanceMetric metric = DistanceMetric.L2;
-            private int maxIterations = 20;
+            private int maxIterations = 6;
             private float convergenceThreshold = 0.001f;
             private long seed = 42L;
             private boolean parallel = true;

@@ -146,7 +146,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         DistanceMetric metric = toDistanceMetric(fieldInfo.getVectorSimilarityFunction());
 
         // 1. Cluster (on original vectors — clustering doesn't need randomRotation)
-        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, SOAR_LAMBDA, initialCentroids, 42L, true);
+        // Skip SOAR for flush (small segments, will be merged soon) — only compute on merge
+        float effectiveLambda = (initialCentroids != null) ? SOAR_LAMBDA : 0f;
+        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, effectiveLambda, initialCentroids, 42L, true);
 
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();

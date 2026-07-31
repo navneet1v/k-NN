@@ -162,11 +162,37 @@ public final class QuantizedVectorReader {
         // Block-level early skip: compute upper bound from corrections alone
         float blockThreshold = currentCollector.minCompetitiveSimilarity();
         if (blockThreshold > Float.NEGATIVE_INFINITY && simFunc != VectorSimilarityFunction.EUCLIDEAN) {
+            // Fast pre-check: use block-wide max/min of corrections for single-comparison skip
+            float maxUpper = Float.NEGATIVE_INFINITY, minLower = Float.MAX_VALUE, maxAdd = Float.NEGATIVE_INFINITY;
+            int maxAbsSum = 0;
+            for (int j = 0; j < blockSize; j++) {
+                if (!validBuf[blockStart + j]) continue;
+                if (blockUpper[j] > maxUpper) maxUpper = blockUpper[j];
+                if (blockLower[j] < minLower) minLower = blockLower[j];
+                if (blockAdd[j] > maxAdd) maxAdd = blockAdd[j];
+                int absSum = Math.abs(blockSum[j]);
+                if (absSum > maxAbsSum) maxAbsSum = absSum;
+            }
+            if (maxUpper != Float.NEGATIVE_INFINITY) {
+                float docBitScaleCheck = encoding.docBitScale();
+                float maxDocScale = (maxUpper - minLower) * docBitScaleCheck;
+                float fastUpperBound = minLower * currentQueryLower * fieldState.dimension
+                    + Math.abs(currentQueryLower) * maxDocScale * maxAbsSum
+                    + Math.abs(minLower) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
+                    + maxDocScale * Math.abs(currentQueryScale) * packedBytes * 4f
+                    + maxAdd + centroidDp - currentCentroidNormSq;
+                float fastSimilarity = fastUpperBound >= 0 ? fastUpperBound + 1 : 1f / (1f - fastUpperBound);
+                if (fastSimilarity <= blockThreshold) {
+                    input.skipBytes((long) blockSize * packedBytes);
+                    return;
+                }
+            }
+
+            // Detailed per-vector check (only if fast check didn't skip)
             float maxUpperBound = Float.NEGATIVE_INFINITY;
             float docBitScaleCheck = encoding.docBitScale();
             for (int j = 0; j < blockSize; j++) {
                 if (!validBuf[blockStart + j]) continue;
-                // Upper bound: assume max rawDot contribution (generous estimate)
                 float docScale = (blockUpper[j] - blockLower[j]) * docBitScaleCheck;
                 float maxScore = blockLower[j] * currentQueryLower * fieldState.dimension + Math.abs(currentQueryLower) * docScale * Math
                     .abs(blockSum[j]) + Math.abs(blockLower[j]) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
@@ -176,7 +202,6 @@ public final class QuantizedVectorReader {
             }
             float upperSimilarity = maxUpperBound >= 0 ? maxUpperBound + 1 : 1f / (1f - maxUpperBound);
             if (upperSimilarity <= blockThreshold) {
-                // Skip codes entirely — this block can't compete
                 input.skipBytes((long) blockSize * packedBytes);
                 return;
             }
@@ -191,9 +216,16 @@ public final class QuantizedVectorReader {
         for (int j = 0; j < blockSize; j++) {
             if (validBuf[blockStart + j]) validOffsets[validCount++] = j;
         }
-        // Dot product over valid entries only
+        // Dot product over valid entries only — batch 4 vectors for ILP
         if (fieldState.docBits == 1) {
-            for (int v = 0; v < validCount; v++) {
+            int v = 0;
+            // Batch of 4: share query loads across 4 doc vectors
+            for (; v + 3 < validCount; v += 4) {
+                int j0 = validOffsets[v], j1 = validOffsets[v+1], j2 = validOffsets[v+2], j3 = validOffsets[v+3];
+                rawDotBuf[j0] = int4BitDotProduct4(currentTransposed, flatCodesBuf, j0 * packedBytes, j1 * packedBytes, j2 * packedBytes, j3 * packedBytes, packedBytes, rawDotBuf, j1, j2, j3);
+            }
+            // Remainder
+            for (; v < validCount; v++) {
                 int j = validOffsets[v];
                 rawDotBuf[j] = int4BitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
             }
@@ -311,6 +343,34 @@ public final class QuantizedVectorReader {
         long[].class,
         java.nio.ByteOrder.LITTLE_ENDIAN
     );
+
+
+    /** Batch 4 vectors: share query loads, exploit instruction-level parallelism. Returns score for first vector, writes others to rawDotBuf. */
+    private static float int4BitDotProduct4(byte[] query, byte[] docs, int off0, int off1, int off2, int off3, int len, float[] outBuf, int idx1, int idx2, int idx3) {
+        long s0_0 = 0, s0_1 = 0, s0_2 = 0, s0_3 = 0;
+        long s1_0 = 0, s1_1 = 0, s1_2 = 0, s1_3 = 0;
+        long s2_0 = 0, s2_1 = 0, s2_2 = 0, s2_3 = 0;
+        long s3_0 = 0, s3_1 = 0, s3_2 = 0, s3_3 = 0;
+        int r = 0;
+        for (final int upperBound = len & -Long.BYTES; r < upperBound; r += Long.BYTES) {
+            long q0 = (long) LONG_LE.get(query, r);
+            long q1 = (long) LONG_LE.get(query, r + len);
+            long q2 = (long) LONG_LE.get(query, r + len * 2);
+            long q3 = (long) LONG_LE.get(query, r + len * 3);
+            long d0 = (long) LONG_LE.get(docs, off0 + r);
+            long d1 = (long) LONG_LE.get(docs, off1 + r);
+            long d2 = (long) LONG_LE.get(docs, off2 + r);
+            long d3 = (long) LONG_LE.get(docs, off3 + r);
+            s0_0 += Long.bitCount(q0 & d0); s0_1 += Long.bitCount(q1 & d0); s0_2 += Long.bitCount(q2 & d0); s0_3 += Long.bitCount(q3 & d0);
+            s1_0 += Long.bitCount(q0 & d1); s1_1 += Long.bitCount(q1 & d1); s1_2 += Long.bitCount(q2 & d1); s1_3 += Long.bitCount(q3 & d1);
+            s2_0 += Long.bitCount(q0 & d2); s2_1 += Long.bitCount(q1 & d2); s2_2 += Long.bitCount(q2 & d2); s2_3 += Long.bitCount(q3 & d2);
+            s3_0 += Long.bitCount(q0 & d3); s3_1 += Long.bitCount(q1 & d3); s3_2 += Long.bitCount(q2 & d3); s3_3 += Long.bitCount(q3 & d3);
+        }
+        outBuf[idx1] = s1_0 + s1_1 * 2L + s1_2 * 4L + s1_3 * 8L;
+        outBuf[idx2] = s2_0 + s2_1 * 2L + s2_2 * 4L + s2_3 * 8L;
+        outBuf[idx3] = s3_0 + s3_1 * 2L + s3_2 * 4L + s3_3 * 8L;
+        return s0_0 + s0_1 * 2L + s0_2 * 4L + s0_3 * 8L;
+    }
 
     private static float int4BitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
         long sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;

@@ -183,6 +183,22 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 int matches = filterMatchCounts[probe.centroidIdx()];
                 scanner.setForceExact(matches < k);
             }
+
+            // Distance-based budget skip: if this cluster is much farther than the best
+            // and we already have good results, skip it entirely
+            if (i >= 3 && docsScored >= k * 2
+                && collector.minCompetitiveSimilarity() > Float.NEGATIVE_INFINITY
+                && probe.centroidDist() > probes[0].centroidDist() * 4.0f) {
+                // This cluster is 4x farther than the best — unlikely to help
+                if (prefetchedUpTo + 1 < nprobe) {
+                    prefetchedUpTo++;
+                    issueReadAhead(probes[prefetchedUpTo]);
+                }
+                consecutiveEmpty++;
+                if (consecutiveEmpty >= 2) break;
+                continue;
+            }
+
             scanner.prepare(probe);
             int scored = scanner.scan(collector);
             clustersActuallyProbed++;
