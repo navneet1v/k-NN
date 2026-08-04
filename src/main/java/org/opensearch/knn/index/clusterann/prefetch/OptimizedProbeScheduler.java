@@ -8,6 +8,7 @@ package org.opensearch.knn.index.clusterann.prefetch;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.index.clusterann.codec.ClusterANNCentroidScanner;
+import org.opensearch.knn.index.clusterann.codec.ClipPruningData;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -47,10 +48,12 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
     private final ClusterANNCentroidScanner scanner;
     private final IndexInput postingsInput;
     private final int[] centroidDocCounts;
+    private final float[] centroidNorms;
     private final int numVectors;
     private final int k;
     private final long filterCost;
     private final int[] filterMatchCounts;
+    private final ClipPruningData clipData;
 
     public OptimizedProbeScheduler(
         NearestProbeScheduler nearest,
@@ -61,7 +64,7 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         int k,
         long filterCost
     ) {
-        this(nearest, scanner, postingsInput, centroidDocCounts, numVectors, k, filterCost, null);
+        this(nearest, scanner, postingsInput, centroidDocCounts, null, numVectors, k, filterCost, null, null);
     }
 
     public OptimizedProbeScheduler(
@@ -74,15 +77,46 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
         long filterCost,
         int[] filterMatchCounts
     ) {
+        this(nearest, scanner, postingsInput, centroidDocCounts, null, numVectors, k, filterCost, filterMatchCounts, null);
+    }
+
+    public OptimizedProbeScheduler(
+        NearestProbeScheduler nearest,
+        ClusterANNCentroidScanner scanner,
+        IndexInput postingsInput,
+        int[] centroidDocCounts,
+        int numVectors,
+        int k,
+        long filterCost,
+        int[] filterMatchCounts,
+        ClipPruningData clipData
+    ) {
+        this(nearest, scanner, postingsInput, centroidDocCounts, null, numVectors, k, filterCost, filterMatchCounts, clipData);
+    }
+
+    public OptimizedProbeScheduler(
+        NearestProbeScheduler nearest,
+        ClusterANNCentroidScanner scanner,
+        IndexInput postingsInput,
+        int[] centroidDocCounts,
+        float[] centroidNorms,
+        int numVectors,
+        int k,
+        long filterCost,
+        int[] filterMatchCounts,
+        ClipPruningData clipData
+    ) {
         this.probes = nearest.probes().clone();
         this.nprobe = nearest.nprobe();
         this.scanner = scanner;
         this.postingsInput = postingsInput;
         this.centroidDocCounts = centroidDocCounts;
+        this.centroidNorms = centroidNorms;
         this.numVectors = numVectors;
         this.k = k;
         this.filterCost = filterCost;
         this.filterMatchCounts = filterMatchCounts;
+        this.clipData = clipData;
     }
 
     /** Per-query I/O bytes counter (ADC scan portion). */
@@ -184,19 +218,69 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 scanner.setForceExact(matches < k);
             }
 
-            // Distance-based budget skip: if this cluster is much farther than the best
-            // and we already have good results, skip it entirely
-            if (i >= 3 && docsScored >= k * 2
-                && collector.minCompetitiveSimilarity() > Float.NEGATIVE_INFINITY
-                && probe.centroidDist() > probes[0].centroidDist() * 4.0f) {
-                // This cluster is 4x farther than the best — unlikely to help
-                if (prefetchedUpTo + 1 < nprobe) {
-                    prefetchedUpTo++;
-                    issueReadAhead(probes[prefetchedUpTo]);
+            // CLIP inter-cluster pruning: provably skip clusters whose upper bound
+            // on max IP (or lower bound on min L2²) cannot beat the current threshold.
+            // Falls back to distance-budget heuristic when CLIP data is unavailable.
+            // Only apply after scoring at least one cluster in this segment.
+            if (clustersActuallyProbed >= 1 && docsScored >= k
+                && collector.minCompetitiveSimilarity() > Float.NEGATIVE_INFINITY) {
+                float threshold = collector.minCompetitiveSimilarity();
+                // Also consider shared threshold from other segments
+                float shared = getSharedThreshold(collector);
+                if (shared > threshold) threshold = shared;
+
+                if (clipData != null) {
+                    // Convert stored centroidDist to L2² for CLIP formula.
+                    // NearestProbeScheduler stores:
+                    //   L2 metric: ‖q-c‖² directly (= ‖q‖² + ‖c‖² - 2·dot)
+                    //   IP metric: -dot(q,c)
+                    // For IP with non-unit centroids:
+                    //   ‖q-c‖² = ‖q‖² + ‖c‖² - 2·dot = 1 + ‖c‖² + 2·rawDist
+                    //   (since ‖q‖²=1 for normalized queries, rawDist=-dot)
+                    float rawDist = probe.centroidDist();
+                    float distQC_sq;
+                    if (centroidNorms != null && rawDist <= 0) {
+                        // IP metric: use centroid norm for exact conversion
+                        float cNormSq = centroidNorms[probe.centroidIdx()];
+                        distQC_sq = 1.0f + cNormSq + 2.0f * rawDist;
+                    } else if (rawDist <= 0) {
+                        // IP without norms: approximate with unit centroids
+                        distQC_sq = 2.0f + 2.0f * rawDist;
+                    } else {
+                        // L2: already ‖q-c‖²
+                        distQC_sq = rawDist;
+                    }
+                    if (distQC_sq < 0) distQC_sq = 0; // numerical safety
+
+                    float ubIP = clipData.upperBoundIP(probe.centroidIdx(), distQC_sq);
+                    // Transform raw IP upper bound to Lucene similarity score space.
+                    // MAXIMUM_INNER_PRODUCT: score = dot >= 0 ? dot+1 : 1/(1-dot)
+                    // DOT_PRODUCT (cosine): score = (1+dot)/2
+                    // EUCLIDEAN: score = 1/(1+l2²) — for L2 we'd use lowerBoundL2Sq instead
+                    float ubScore;
+                    if (ubIP >= 0) {
+                        ubScore = ubIP + 1.0f; // MAXIMUM_INNER_PRODUCT transform
+                    } else {
+                        ubScore = 1.0f / (1.0f - ubIP);
+                    }
+                    if (ubScore < threshold) {
+                        if (prefetchedUpTo + 1 < nprobe) {
+                            prefetchedUpTo++;
+                            issueReadAhead(probes[prefetchedUpTo]);
+                        }
+                        continue;
+                    }
+                } else if (i >= 3 && docsScored >= k * 2
+                    && probe.centroidDist() > probes[0].centroidDist() * 4.0f) {
+                    // Fallback heuristic: skip clusters 4x farther than closest
+                    if (prefetchedUpTo + 1 < nprobe) {
+                        prefetchedUpTo++;
+                        issueReadAhead(probes[prefetchedUpTo]);
+                    }
+                    consecutiveEmpty++;
+                    if (consecutiveEmpty >= 2) break;
+                    continue;
                 }
-                consecutiveEmpty++;
-                if (consecutiveEmpty >= 2) break;
-                continue;
             }
 
             scanner.prepare(probe);

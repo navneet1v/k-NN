@@ -48,20 +48,21 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         float[] flatCentroids = new float[numCentroids * dimension];
         centroidReader.readAllCentroids(flatCentroids);
 
-        // Compute distances using temp centroid slices
+        // Compute distances directly from flat buffer — no per-centroid copy
         float[] dists = new float[numCentroids];
-        float[] centroidBuf = new float[dimension];
         if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
             float queryNormSq = VectorUtil.dotProduct(query, query);
             for (int c = 0; c < numCentroids; c++) {
-                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
-                float dot = VectorUtil.dotProduct(query, centroidBuf);
+                int offset = c * dimension;
+                float dot = dotProductWithOffset(query, flatCentroids, offset, dimension);
                 dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
             }
         } else {
             for (int c = 0; c < numCentroids; c++) {
-                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
-                dists[c] = metric.distance(query, centroidBuf);
+                int offset = c * dimension;
+                float dot = dotProductWithOffset(query, flatCentroids, offset, dimension);
+                // IP metric: distance = -dot (lower is more similar)
+                dists[c] = -dot;
             }
         }
 
@@ -111,20 +112,20 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         float[] flatCentroids = new float[numCentroids * dimension];
         centroidReader.readAllCentroids(flatCentroids);
 
-        // Compute distances
+        // Compute distances directly from flat buffer — no per-centroid copy
         float[] dists = new float[numCentroids];
-        float[] centroidBuf = new float[dimension];
         if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
             float queryNormSq = VectorUtil.dotProduct(query, query);
             for (int c = 0; c < numCentroids; c++) {
-                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
-                float dot = VectorUtil.dotProduct(query, centroidBuf);
+                int offset = c * dimension;
+                float dot = dotProductWithOffset(query, flatCentroids, offset, dimension);
                 dists[c] = queryNormSq + fieldState.centroidNorms[c] - 2f * dot;
             }
         } else {
             for (int c = 0; c < numCentroids; c++) {
-                System.arraycopy(flatCentroids, c * dimension, centroidBuf, 0, dimension);
-                dists[c] = metric.distance(query, centroidBuf);
+                int offset = c * dimension;
+                float dot = dotProductWithOffset(query, flatCentroids, offset, dimension);
+                dists[c] = -dot;
             }
         }
 
@@ -218,5 +219,17 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         }
 
         return Math.max(minNprobe, adaptiveNprobe);
+    }
+
+    /**
+     * Compute dot product between query[0..dim) and flat[offset..offset+dim).
+     * Avoids System.arraycopy into a temporary buffer.
+     */
+    private static float dotProductWithOffset(float[] query, float[] flat, int offset, int dim) {
+        float sum = 0f;
+        for (int d = 0; d < dim; d++) {
+            sum += query[d] * flat[offset + d];
+        }
+        return sum;
     }
 }

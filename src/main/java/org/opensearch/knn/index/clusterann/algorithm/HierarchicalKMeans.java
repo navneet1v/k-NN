@@ -337,7 +337,7 @@ public final class HierarchicalKMeans {
 
         public static final class Builder {
             private int targetSize = 512;
-            private int maxIterations = 6;
+            private int maxIterations = 10;
             private float samplePercentage = 0.1f;
             private DistanceMetric metric = DistanceMetric.L2;
             private long seed = 42L;

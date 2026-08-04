@@ -61,6 +61,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     private final IndexOutput postingsOutput;
     private final IndexOutput filterOutput;
     private final IndexOutput centroidsOutput;
+    private final IndexOutput clipOutput;
 
     private static class FieldWriterInfo {
         final FieldInfo fieldInfo;
@@ -83,6 +84,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             postingsOutput = createOutput(POSTINGS_EXTENSION);
             filterOutput = createOutput(FILTER_EXTENSION);
             centroidsOutput = createOutput(CENTROIDS_EXTENSION);
+            clipOutput = createOutput(ClipPruningData.EXTENSION);
             success = true;
         } finally {
             if (!success) {
@@ -146,9 +148,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         DistanceMetric metric = toDistanceMetric(fieldInfo.getVectorSimilarityFunction());
 
         // 1. Cluster (on original vectors — clustering doesn't need randomRotation)
-        // Skip SOAR for flush (small segments, will be merged soon) — only compute on merge
-        float effectiveLambda = (initialCentroids != null) ? SOAR_LAMBDA : 0f;
-        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, effectiveLambda, initialCentroids, 42L, true);
+        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, SOAR_LAMBDA, initialCentroids, 42L, true);
 
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();
@@ -282,6 +282,22 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             dimension,
             postingsOutput.getFilePointer()
         );
+
+        // 6. Calibrate and write CLIP pruning data (.clid)
+        float[][] allVectors = new float[numVectors][];
+        for (int i = 0; i < numVectors; i++) {
+            allVectors[i] = vectors.vectorValue(i);
+        }
+        ClipPruningData clipData = ClipPruningData.calibrate(
+            centroids, primaryPostings, allVectors, dimension, 42L
+        );
+        clipOutput.writeInt(fieldInfo.number);
+        clipData.write(clipOutput);
+        log.info(
+            "[ClusterANN-WRITE] field={} CLIP calibrated: numCentroids={}",
+            fieldInfo.name,
+            numCentroids
+        );
     }
 
     /**
@@ -337,11 +353,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         CodecUtil.writeFooter(postingsOutput);
         CodecUtil.writeFooter(filterOutput);
         CodecUtil.writeFooter(centroidsOutput);
+        CodecUtil.writeFooter(clipOutput);
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput, centroidsOutput);
+        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput, centroidsOutput, clipOutput);
     }
 
     @Override

@@ -25,6 +25,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -52,6 +53,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
     private final IndexInput postingsInput;
     private CentroidAssignmentReader filterReader;
     private OffHeapCentroids.Reader centroidReader;
+    private Map<Integer, ClipPruningData> clipDataMap;
 
     public ClusterANN1040KnnVectorsReader(FlatVectorsReader flatVectorsReader, SegmentReadState state) throws IOException {
         this.flatVectorsReader = flatVectorsReader;
@@ -75,6 +77,9 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
                 this.filterReader = new CentroidAssignmentReader(filterIn, firstField);
                 this.centroidReader = new OffHeapCentroids.Reader(centIn, firstField);
             }
+
+            // Read CLIP pruning data if available
+            this.clipDataMap = readClipData(state);
 
             this.fieldNameToNumber = new HashMap<>();
             for (FieldInfo fi : state.fieldInfos) {
@@ -129,6 +134,22 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         if (fieldState.numVectors < MIN_IVF_VECTORS) {
             bruteForceSearch(field, target, knnCollector, acceptDocs);
             return;
+        }
+
+        // Cross-segment CLIP pruning: skip entire segment if upper bound < threshold
+        ClipPruningData clipData = clipDataMap != null ? clipDataMap.get(fieldNumber) : null;
+        if (clipData != null && clipData.hasSegmentCentroid()) {
+            float sharedThreshold = OptimizedProbeScheduler.getSharedThreshold(knnCollector);
+            if (sharedThreshold > Float.NEGATIVE_INFINITY) {
+                float segUbIP = clipData.segmentUpperBoundIP(target);
+                // Transform raw IP to Lucene MAXIMUM_INNER_PRODUCT score
+                float segUbScore = segUbIP >= 0 ? segUbIP + 1.0f : 1.0f / (1.0f - segUbIP);
+                if (segUbScore < sharedThreshold) {
+                    log.debug("[ClusterANN-SEG] CLIP segment skip: ubScore={} < threshold={}",
+                        segUbScore, sharedThreshold);
+                    return;
+                }
+            }
         }
 
         int k = knnCollector.k();
@@ -252,10 +273,12 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             scanner,
             postingsClone,
             fieldState.centroidDocCounts,
+            fieldState.centroidNorms,
             fieldState.numVectors,
             k,
             filterCost,
-            filterMatchCounts
+            filterMatchCounts,
+            clipData
         );
         pipeline.execute(knnCollector);
         long t2 = System.nanoTime();
@@ -343,6 +366,30 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
     }
 
     // ========== Helpers ==========
+
+    private Map<Integer, ClipPruningData> readClipData(SegmentReadState state) {
+        Map<Integer, ClipPruningData> map = new HashMap<>();
+        try {
+            String fileName = IndexFileNames.segmentFileName(
+                state.segmentInfo.name, state.segmentSuffix, ClipPruningData.EXTENSION);
+            if (!Arrays.asList(state.directory.listAll()).contains(fileName)) {
+                return map;
+            }
+            IndexInput clipIn = openInput(state, ClipPruningData.EXTENSION);
+            try {
+                while (clipIn.getFilePointer() < clipIn.length() - CodecUtil.footerLength()) {
+                    int fieldNumber = clipIn.readInt();
+                    ClipPruningData data = ClipPruningData.read(clipIn);
+                    map.put(fieldNumber, data);
+                }
+            } finally {
+                clipIn.close();
+            }
+        } catch (IOException e) {
+            log.debug("[ClusterANN] CLIP data not available, pruning disabled: {}", e.getMessage());
+        }
+        return map;
+    }
 
     private IndexInput openInput(SegmentReadState state, String extension) throws IOException {
         String fileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, extension);

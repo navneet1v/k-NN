@@ -21,6 +21,7 @@ public final class ClusterANNFormatConstants {
     public static final String POSTINGS_EXTENSION = "clap";
     public static final String CENTROIDS_EXTENSION = "clac";
     public static final String FILTER_EXTENSION = "claf";
+    public static final String CLIP_EXTENSION = "clid";
 
     // Codec identity
     public static final String CODEC_NAME = "ClusterANN1040";

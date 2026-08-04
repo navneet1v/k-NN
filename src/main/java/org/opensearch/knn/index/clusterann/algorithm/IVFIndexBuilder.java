@@ -20,7 +20,7 @@ import java.io.UncheckedIOException;
  */
 public final class IVFIndexBuilder {
 
-    private static final int SOAR_CANDIDATE_LIMIT = 6;
+    private static final int SOAR_CANDIDATE_LIMIT = 10;
 
     private IVFIndexBuilder() {}
 
