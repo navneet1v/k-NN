@@ -32,7 +32,7 @@ import java.io.IOException;
  */
 @Getter
 @RequiredArgsConstructor
-class ScalarQuantizedFloatVectorValues extends FloatVectorValues {
+public class ScalarQuantizedFloatVectorValues extends FloatVectorValues {
     /**
      * The full-precision float delegate (reads the {@code .vec} file).
      */
