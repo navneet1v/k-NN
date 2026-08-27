@@ -18,14 +18,27 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
 /**
  * Writes quantized vectors in block-columnar format for SIMD-friendly scoring.
  *
- * <p>Block layout (BLOCK_SIZE=32):
+ * <p>Block layout (BLOCK_SIZE=32) — corrections first (so search can early-skip a block from
+ * the corrections alone), codes last (read only if the block is competitive):
  * <pre>
- *   codes[0..31]   ← contiguous for SIMD scoreBulk
  *   lower[0..31]   ← bulk writeInts
  *   upper[0..31]   ← bulk writeInts
  *   add[0..31]     ← bulk writeInts
  *   sum[0..31]     ← bulk writeInts
+ *   codes[0..31]   ← contiguous packed codes for SIMD scoreBulk
  * </pre>
+ *
+ * <p><b>{@code add} vs the posting's {@code sortedDistances} column (L2 redundancy, kept on purpose).</b>
+ * {@code add} is {@link OptimizedScalarQuantizer.QuantizationResult#additionalCorrection()}: for L2 it is
+ * {@code ‖v−c‖²}, for IP it is the centroid dot {@code ⟨v,c⟩}. The posting header separately stores
+ * {@code sortedDistances[i] = ‖c−v‖} (raw space, original centroid). For <em>L2</em> these are the same
+ * quantity — {@code add == sortedDistances²} — exactly, not approximately: the rotation is orthonormal
+ * and {@code transformedCentroid = R·originalCentroid}, so the rotated residual keeps its length
+ * ({@code ‖Rv−Rc‖ = ‖v−c‖}). We could therefore derive one from the other and drop {@code add} for L2.
+ * We deliberately don't: for IP {@code add} is a dot product with no relation to {@code ‖c−v‖}, so
+ * dropping it would make the block layout and the scorer's correction-read branch by metric, couple
+ * block scoring back to the header column, and square-then-widen the float error on the term that feeds
+ * the L2 score. The ~4 bytes/vector saved isn't worth that; the layout stays metric-uniform.
  */
 public final class QuantizedVectorWriter implements Closeable {
 

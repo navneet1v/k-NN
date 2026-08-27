@@ -6,19 +6,24 @@
 package org.opensearch.knn.index.clusterann.codec;
 
 /**
- * Encapsulates quantization bit-width configuration including packing, query packing,
- * and packed size computation for each supported bit-width.
+ * The <b>document-side</b> quantization width of a field: how many bits each stored component uses, and
+ * the packed layout that follows from it. A property of the index, recorded in {@code .clam} and fixed
+ * for the segment's life.
  *
- * <p>Supported encodings:
+ * <p>Deliberately says nothing about the query side. The query width is a per-query knob
+ * ({@link ScanParams#queryBits()}), so whether a scan is asymmetric ({@code queryBits > docBits}) or
+ * symmetric ({@code queryBits == docBits}) is not this type's business — pairing the two is the scorer's
+ * job, since that is what selects the dot kernel.
+ *
  * <ul>
- *   <li>{@link #ONE_BIT} — 32x compression, 4-bit query (asymmetric)</li>
- *   <li>{@link #TWO_BIT} — 16x compression, 4-bit query (asymmetric)</li>
- *   <li>{@link #FOUR_BIT} — 8x compression, 4-bit query (symmetric)</li>
+ *   <li>{@link #ONE_BIT} — 32x compression</li>
+ *   <li>{@link #TWO_BIT} — 16x compression</li>
+ *   <li>{@link #FOUR_BIT} — 8x compression</li>
  * </ul>
  */
 public enum ScalarBitEncoding {
 
-    ONE_BIT((byte) 1, (byte) 4) {
+    ONE_BIT((byte) 1) {
         @Override
         public void packDoc(byte[] raw, byte[] packed, int dimension) {
             // MSB-first binary packing: 8 values per byte
@@ -38,7 +43,7 @@ public enum ScalarBitEncoding {
         }
     },
 
-    TWO_BIT((byte) 2, (byte) 4) {
+    TWO_BIT((byte) 2) {
         @Override
         public void packDoc(byte[] raw, byte[] packed, int dimension) {
             // Transpose into 2 stripes (lower bits, upper bits) MSB-first
@@ -71,7 +76,7 @@ public enum ScalarBitEncoding {
         }
     },
 
-    FOUR_BIT((byte) 4, (byte) 4) {
+    FOUR_BIT((byte) 4) {
         @Override
         public void packDoc(byte[] raw, byte[] packed, int dimension) {
             // Transpose into 4 nibble stripes for SIMD-friendly dot product
@@ -94,11 +99,9 @@ public enum ScalarBitEncoding {
     };
 
     private final byte docBits;
-    private final byte queryBits;
 
-    ScalarBitEncoding(byte docBits, byte queryBits) {
+    ScalarBitEncoding(byte docBits) {
         this.docBits = docBits;
-        this.queryBits = queryBits;
     }
 
     /** Pack raw quantized values into the encoding-specific format. */
@@ -107,24 +110,9 @@ public enum ScalarBitEncoding {
     /** Number of bytes needed to store one packed document vector. */
     public abstract int docPackedBytes(int dimension);
 
-    /** Pack query (always 4-bit → 4 nibble stripes). */
-    public void packQuery(byte[] raw, byte[] packed, int dimension) {
-        FOUR_BIT.packDoc(raw, packed, dimension);
-    }
-
-    /** Number of bytes for a packed query vector. */
-    public int queryPackedBytes(int dimension) {
-        return ((dimension + 7) / 8) * 4; // always 4 stripes
-    }
-
     /** Document quantization bits. */
     public byte docBits() {
         return docBits;
-    }
-
-    /** Query quantization bits. */
-    public byte queryBits() {
-        return queryBits;
     }
 
     /** Per-vector record size in .claq: packed codes + 4 correction ints (16 bytes). */

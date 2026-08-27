@@ -11,6 +11,8 @@ import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.KnnVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatFieldVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
+import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
+import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.MergeState;
@@ -18,7 +20,10 @@ import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Sorter;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.ByteBuffersDataOutput;
+import org.apache.lucene.store.ByteBuffersIndexOutput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.knn.index.clusterann.ClusterANNVectorValues;
@@ -36,16 +41,26 @@ import org.opensearch.knn.index.clusterann.codec.*;
 import org.opensearch.knn.index.clusterann.algorithm.RandomRotation;
 
 /**
- * Writer for ClusterANN IVF format v2.
+ * Writer for ClusterANN IVF format.
  *
- * <p>Two files:
+ * <p>Four files (plus the flat {@code .vec}/{@code .vem} for full-precision vectors):
  * <ul>
- *   <li>{@code .clam} — metadata + centroid stats + posting sizes + centroids + offset table</li>
- *   <li>{@code .clap} — per-centroid: [docIds | ordinals | quantized] columnar</li>
+ *   <li>{@code .clam} — per-field metadata: field header, centroid stats (docCounts, norms,
+ *       posting sizes), the {@code .clap} centroid offset table, the two {@code .clac} offsets
+ *       (centroid block, region 1), and the {@code .clar} rotation offset. Read once at open,
+ *       held in heap.</li>
+ *   <li>{@code .clac} — centroid block (raw + transformed centroids) followed by region 1
+ *       (per-field ordToDoc/doc→ord {@code OrdToDocDISIReaderConfiguration} plus the
+ *       ordToCentroid array). mmap'd.</li>
+ *   <li>{@code .clar} — serialized random rotation per rotated field (L2 only); the {@code .clam}
+ *       rotation offset is -1 for fields with no rotation. mmap'd.</li>
+ *   <li>{@code .clap} — one posting per centroid, columnar:
+ *       {@code [ordinals | soarBitset | sortedDistances | quantized blocks]}. Primary + SOAR
+ *       are merged into a single run sorted by centroid-to-vector distance ‖c−v‖ (descending for
+ *       IP, ascending for L2/cosine). docIds are NOT stored here — they come from ordToDoc.</li>
  * </ul>
  *
- * <p>Primary + SOAR posting lists are adjacent per centroid for sequential I/O.
- * Centroids written in spatial order (sorted by first principal component).
+ * <p>Centroids are written in spatial order (sorted by first principal component) for locality.
  */
 @Log4j2
 public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
@@ -59,9 +74,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     private final IndexOutput metaOutput;
     private final IndexOutput postingsOutput;
-    private final IndexOutput filterOutput;
     private final IndexOutput centroidsOutput;
-    private final IndexOutput clipOutput;
+    private final IndexOutput rotationOutput;
 
     private static class FieldWriterInfo {
         final FieldInfo fieldInfo;
@@ -82,9 +96,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         try {
             metaOutput = createOutput(META_EXTENSION);
             postingsOutput = createOutput(POSTINGS_EXTENSION);
-            filterOutput = createOutput(FILTER_EXTENSION);
             centroidsOutput = createOutput(CENTROIDS_EXTENSION);
-            clipOutput = createOutput(ClipPruningData.EXTENSION);
+            rotationOutput = createOutput(ROTATION_EXTENSION);
             success = true;
         } finally {
             if (!success) {
@@ -153,7 +166,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();
 
-        // 1b. Create random rotation and transform centroids for quantization (L2 only)
+        // 1b. Create random rotation and transform centroids for quantization (L2 only). Spreading
+        // variance across dimensions improves scalar-quantization fidelity for Euclidean.
         boolean useRotation = fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
         RandomRotation randomRotation = RandomRotation.create(dimension);
         float[][] transformedCentroids = new float[numCentroids][dimension];
@@ -177,32 +191,33 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int[][] primaryPostings = result.primaryPostingLists();
         int[][] soarPostings = result.soarPostingLists();
 
+        // IP orders posting distances descending (highest ceiling first); L2/cosine ascending.
+        boolean descending = metric == DistanceMetric.INNER_PRODUCT;
         try (QuantizedVectorWriter qWriter = new QuantizedVectorWriter(fieldInfo.getVectorSimilarityFunction(), dimension, docBits)) {
             for (int si = 0; si < numCentroids; si++) {
                 int origIdx = spatialOrder[si];
                 long startPos = postingsOutput.getFilePointer();
                 centroidOffsets[origIdx] = startPos;
 
-                // Primary posting list (quantize with transformed vectors + transformed centroids)
+                // Single posting per centroid: primary + SOAR merged, sorted by ‖c−v‖,
+                // with a position-based SOAR bitset to identify SOAR entries.
                 writePostingList(
                     primaryPostings[origIdx],
-                    vectors,
-                    transformedCentroids[origIdx],
-                    qWriter,
-                    useRotation ? randomRotation : null
-                );
-                // SOAR posting list (adjacent)
-                writePostingList(
                     soarPostings[origIdx],
                     vectors,
+                    centroids[origIdx],
                     transformedCentroids[origIdx],
                     qWriter,
-                    useRotation ? randomRotation : null
+                    useRotation ? randomRotation : null,
+                    descending
                 );
 
                 postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
             }
         }
+        // Field posting region length (postings are contiguous from postingsFieldOffset), stored so the
+        // reader can slice .clap to this field in O(1) instead of summing postingSizes.
+        long postingsFieldLength = postingsOutput.getFilePointer() - postingsFieldOffset;
 
         // 4. Write .clam: meta + centroid stats + posting sizes + centroids + offset table
         metaOutput.writeInt(fieldInfo.number);
@@ -211,68 +226,51 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(numCentroids);
         metaOutput.writeString(metric.name());
         metaOutput.writeByte(docBits);
+        metaOutput.writeByte(QuantizerType.SCALAR.id()); // quantizer family (scalar-only today)
         metaOutput.writeLong(postingsFieldOffset);
+        metaOutput.writeLong(postingsFieldLength);
 
-        // Centroid doc counts (primary posting list sizes)
+        // Centroid doc counts (combined primary + SOAR — the posting's actual size)
         for (int c = 0; c < numCentroids; c++) {
-            metaOutput.writeInt(primaryPostings[c].length);
+            metaOutput.writeInt(primaryPostings[c].length + soarPostings[c].length);
         }
 
-        // Centroid norms (||c||² for fast ADC correction)
-        for (int c = 0; c < numCentroids; c++) {
-            float norm = 0f;
-            for (int d = 0; d < dimension; d++)
-                norm += centroids[c][d] * centroids[c][d];
-            metaOutput.writeInt(Float.floatToIntBits(norm));
-        }
+        // Centroid norms (‖c‖²) now live in .clac alongside the centroid vectors — not in .clam.
 
         // Posting sizes (exact bytes per centroid — for accurate prefetch)
         for (int c = 0; c < numCentroids; c++) {
             metaOutput.writeInt(postingSizes[c]);
         }
 
-        // Centroids in original order
-        for (int c = 0; c < numCentroids; c++) {
-            for (int d = 0; d < dimension; d++) {
-                metaOutput.writeInt(Float.floatToIntBits(centroids[c][d]));
-            }
-        }
-
-        // Offset table (indexed by original centroid index)
+        // Offset table (indexed by original centroid index).
+        // Centroids, rotation, and transformed centroids live in .clac (below) — not duplicated here.
         for (int c = 0; c < numCentroids; c++) {
             metaOutput.writeLong(centroidOffsets[c]);
         }
 
-        // RandomRotation (for query-time transform)
-        randomRotation.write(metaOutput);
+        // Write centroids to .clac (off-heap, mmap'd at search time). Two per-field .clac offsets
+        // are recorded in .clam: the centroid block start and region 1 start; the rotation offset
+        // (into .clar) is recorded separately.
+        long clacCentroidOffset = centroidsOutput.getFilePointer();
+        // Raw region carries the norm only for L2 (ranking norm-trick); transformed region always does.
+        boolean rawHasNorm = metric == DistanceMetric.L2;
+        CentroidVectorValues.write(centroidsOutput, centroids, transformedCentroids, numCentroids, dimension, rawHasNorm);
 
-        // Transformed centroids (for ADC scoring — quantization is in transformed space)
-        for (int c = 0; c < numCentroids; c++) {
-            for (int d = 0; d < dimension; d++) {
-                metaOutput.writeInt(Float.floatToIntBits(transformedCentroids[c][d]));
-            }
+        // Rotation is written to its own file .clar (L2 only). rotationOffset == -1 signals
+        // "no rotation" (e.g. inner product); otherwise it points at the serialized matrix in .clar.
+        long rotationOffset = -1L;
+        if (useRotation) {
+            rotationOffset = rotationOutput.getFilePointer();
+            randomRotation.write(rotationOutput);
         }
 
-        // Write centroids to .clac (off-heap, mmap'd at search time)
-        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, useRotation ? randomRotation : null);
-
-        // 5. Write .claf: centroid assignment per ordinal (for filter-aware search)
-        // Format: [fieldNumber:int][numVectors:int][numCentroids:int][assignments: numVectors × short]
-        filterOutput.writeInt(fieldInfo.number);
-        filterOutput.writeInt(numVectors);
-        filterOutput.writeInt(numCentroids);
-        short[] ordToCentroid = new short[numVectors];
-        for (int c = 0; c < numCentroids; c++) {
-            for (int ord : primaryPostings[c]) {
-                ordToCentroid[ord] = (short) c;
-            }
-        }
-        byte[] buf = new byte[numVectors * Short.BYTES];
-        for (int i = 0; i < numVectors; i++) {
-            buf[i * 2] = (byte) (ordToCentroid[i] >> 8);
-            buf[i * 2 + 1] = (byte) ordToCentroid[i];
-        }
-        filterOutput.writeBytes(buf, buf.length);
+        // 5. Write .clac region 1 (appended after centroids): the per-field ordToDoc/doc→ord
+        // mapping (OrdToDocDISIReaderConfiguration) plus the ordToCentroid array (folded in from
+        // the old .claf). Self-contained/heap-loaded for POC.
+        long clacRegion1Offset = writeClacRegion1(vectors, numVectors, numCentroids, primaryPostings);
+        metaOutput.writeLong(clacCentroidOffset);
+        metaOutput.writeLong(rotationOffset);
+        metaOutput.writeLong(clacRegion1Offset);
 
         log.info(
             "[ClusterANN-WRITE] field={} vectors={} centroids={} dim={} clapSize={}",
@@ -282,56 +280,81 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             dimension,
             postingsOutput.getFilePointer()
         );
-
-        // 6. Calibrate and write CLIP pruning data (.clid)
-        float[][] allVectors = new float[numVectors][];
-        for (int i = 0; i < numVectors; i++) {
-            allVectors[i] = vectors.vectorValue(i);
-        }
-        ClipPruningData clipData = ClipPruningData.calibrate(
-            centroids, primaryPostings, allVectors, dimension, 42L
-        );
-        clipOutput.writeInt(fieldInfo.number);
-        clipData.write(clipOutput);
-        log.info(
-            "[ClusterANN-WRITE] field={} CLIP calibrated: numCentroids={}",
-            fieldInfo.name,
-            numCentroids
-        );
     }
 
     /**
-     * Write one posting list: [docIds | ordinals (fixed-width) | quantized blocks] columnar.
+     * Write one posting list per centroid: primary + SOAR ordinals merged into a single run,
+     * sorted by centroid-to-vector distance ‖c−v‖ — descending for IP so the highest-ceiling
+     * vectors come first, ascending for L2/cosine.
+     *
+     * <p>Columnar layout: [docIds | ordinals | soarBitset | sortedDistances | quantized blocks].
+     * {@code soarBitset} is position-based (bit i set ⟺ ordinals[i] is a SOAR assignment).
+     * The reader scans in sort order and uses the stored ‖c−v‖ for early termination; no
+     * calibrated λ is stored — the bound is the lossless triangle/Cauchy-Schwarz bound (λ=1).
      */
     private void writePostingList(
-        int[] ordinals,
+        int[] primaryOrdinals,
+        int[] soarOrdinals,
         ClusterANNVectorValues vectors,
-        float[] centroid,
+        float[] originalCentroid,
+        float[] transformedCentroid,
         QuantizedVectorWriter qWriter,
-        RandomRotation randomRotation
+        RandomRotation randomRotation,
+        boolean descending
     ) throws IOException {
-        int count = ordinals.length;
+        int pCount = primaryOrdinals.length;
+        int sCount = soarOrdinals.length;
+        int count = pCount + sCount;
 
-        // Convert ordinals to docIds
-        int[] docIds = new int[count];
-        for (int i = 0; i < count; i++) {
-            docIds[i] = vectors.ordToDoc(ordinals[i]);
+        // Merge primary + SOAR; compute distances and SOAR flags per position.
+        // docIds are NOT stored per posting — they come from the per-field ordToDoc mapping.
+        // PRODUCTIONIZING TODO: each vector is fetched via vectorValue(ord) twice — here for the
+        // distance sort key, and again in writeBlocked for quantization. On the off-heap merge
+        // path that doubles vector I/O. Left as-is to keep writer RAM flat (caching would buffer
+        // ~clusterSize × dim floats per posting); optimize later if merge I/O becomes a bottleneck.
+        int[] ordinals = new int[count];
+        float[] dists = new float[count];
+        FixedBitSet isSoar = new FixedBitSet(Math.max(count, 1));
+        for (int i = 0; i < pCount; i++) {
+            int ord = primaryOrdinals[i];
+            ordinals[i] = ord;
+            dists[i] = (float) Math.sqrt(squaredL2(originalCentroid, vectors.vectorValue(ord)));
+        }
+        for (int j = 0; j < sCount; j++) {
+            int ord = soarOrdinals[j];
+            int i = pCount + j;
+            ordinals[i] = ord;
+            dists[i] = (float) Math.sqrt(squaredL2(originalCentroid, vectors.vectorValue(ord)));
+            isSoar.set(i);
         }
 
-        // Sort by docId, keep ordinals in sync
-        sortParallel(docIds, ordinals, count);
+        // Sort the whole run by distance, keeping ordinals + SOAR flags in sync
+        sortByDistance(dists, ordinals, isSoar, count, descending);
 
-        // Write columns
-        PostingListCodec.write(docIds, postingsOutput);
-
-        // Ordinals: fixed-width bulk write
-        postingsOutput.writeVInt(count);
+        // Ordinals: fixed-width bulk write. No count prefix — the reader takes the count from
+        // centroidDocCounts in .clam (already in heap).
         for (int i = 0; i < count; i++) {
             postingsOutput.writeInt(ordinals[i]);
         }
 
+        // SOAR bitset: position-based, written as raw longs (bit i set ⟺ ordinals[i] is SOAR)
+        long[] soarWords = isSoar.getBits();
+        postingsOutput.writeVInt(soarWords.length);
+        for (long w : soarWords) {
+            postingsOutput.writeLong(w);
+        }
+
+        // sortedDistances column (parallel to ordinals) — ‖c−v‖ in sort order.
+        // NOTE (L2): this equals sqrt(block.add), since for L2 the block's additionalCorrection is
+        // ‖v−c‖² and the orthonormal rotation preserves the residual length. The duplication is kept
+        // intentionally so the block layout stays metric-uniform (for IP, add is ⟨v,c⟩, unrelated to
+        // ‖c−v‖). See QuantizedVectorWriter's block-layout javadoc.
+        for (int i = 0; i < count; i++) {
+            postingsOutput.writeInt(Float.floatToIntBits(dists[i]));
+        }
+
         // Quantized column — transform vectors before quantizing
-        int dim = centroid.length;
+        int dim = transformedCentroid.length;
         float[] transformedVec = new float[dim];
         qWriter.writeBlocked(ordinals, count, ord -> {
             float[] vec = vectors.vectorValue(ord);
@@ -340,7 +363,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 return transformedVec;
             }
             return vec;
-        }, centroid, postingsOutput);
+        }, transformedCentroid, postingsOutput);
     }
 
     // ========== Lifecycle ==========
@@ -351,14 +374,13 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(END_OF_FIELDS);
         CodecUtil.writeFooter(metaOutput);
         CodecUtil.writeFooter(postingsOutput);
-        CodecUtil.writeFooter(filterOutput);
         CodecUtil.writeFooter(centroidsOutput);
-        CodecUtil.writeFooter(clipOutput);
+        CodecUtil.writeFooter(rotationOutput);
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, filterOutput, centroidsOutput, clipOutput);
+        IOUtils.close(flatVectorsWriter, metaOutput, postingsOutput, centroidsOutput, rotationOutput);
     }
 
     @Override
@@ -417,23 +439,98 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         return order;
     }
 
-    /** Sort two parallel arrays by the first (keys). */
-    private static void sortParallel(int[] keys, int[] vals, int count) {
+    /**
+     * Sort {@code dists} and the parallel {@code ordinals} and {@code isSoar} bitset in place by
+     * distance. Ascending for L2/cosine, descending for IP ({@code descending == true}).
+     * Distances are non-negative, so the raw IEEE-754 bits sort in value order; for descending we
+     * invert the key so an ascending unsigned sort yields descending values.
+     */
+    private static void sortByDistance(float[] dists, int[] ordinals, FixedBitSet isSoar, int count, boolean descending) {
         if (count <= 1) return;
         long[] packed = new long[count];
         for (int i = 0; i < count; i++) {
-            packed[i] = ((long) keys[i] << 32) | (i & 0xFFFFFFFFL);
+            long key = Float.floatToIntBits(dists[i]) & 0xFFFFFFFFL;
+            if (descending) key = (~key) & 0xFFFFFFFFL;
+            packed[i] = (key << 32) | (i & 0xFFFFFFFFL);
         }
         Arrays.sort(packed);
-        int[] tk = new int[count];
-        int[] tv = new int[count];
+
+        float[] td = new float[count];
+        int[] tord = new int[count];
+        FixedBitSet tsoar = new FixedBitSet(count);
         for (int i = 0; i < count; i++) {
-            int origIdx = (int) packed[i];
-            tk[i] = keys[origIdx];
-            tv[i] = vals[origIdx];
+            int o = (int) packed[i];
+            td[i] = dists[o];
+            tord[i] = ordinals[o];
+            if (isSoar.get(o)) tsoar.set(i);
         }
-        System.arraycopy(tk, 0, keys, 0, count);
-        System.arraycopy(tv, 0, vals, 0, count);
+        System.arraycopy(td, 0, dists, 0, count);
+        System.arraycopy(tord, 0, ordinals, 0, count);
+        // Overwrite isSoar's backing words with the reordered bitset (same length).
+        System.arraycopy(tsoar.getBits(), 0, isSoar.getBits(), 0, isSoar.getBits().length);
+    }
+
+    /** Block shift for the ordToDoc DirectMonotonic encoding (64K-value blocks). */
+    static final int ORD_TO_DOC_BLOCK_SHIFT = 16;
+
+    /**
+     * Write {@code .clac} region 1 (appended after centroid data) and return its start offset.
+     * Layout: {@code [numValues vInt][disiMetaLen vInt][disiMeta][disiDataLen vInt][disiData]
+     * [ordToCentroid: numValues × short]}.
+     *
+     * <p>The DISI meta/data are an {@link OrdToDocDISIReaderConfiguration} encoding that provides
+     * both ord→doc ({@code getDirectMonotonicReader}) and doc→ord ({@code getIndexedDISI}).
+     * {@code ordToCentroid[ord]} is the primary centroid of that ordinal (folded from the old
+     * {@code .claf}). Self-contained and heap-loaded on read (POC).
+     */
+    private long writeClacRegion1(ClusterANNVectorValues vectors, int numVectors, int numCentroids, int[][] primaryPostings)
+        throws IOException {
+        long offset = centroidsOutput.getFilePointer();
+
+        // doc set for OrdToDocDISI (docIds ascending because ordinals are in docId order)
+        DocsWithFieldSet docsWithField = new DocsWithFieldSet();
+        for (int ord = 0; ord < numVectors; ord++) {
+            docsWithField.add(vectors.ordToDoc(ord));
+        }
+        int maxDoc = state.segmentInfo.maxDoc();
+
+        ByteBuffersDataOutput metaBuf = new ByteBuffersDataOutput();
+        ByteBuffersDataOutput dataBuf = new ByteBuffersDataOutput();
+        try (ByteBuffersIndexOutput metaIdx = new ByteBuffersIndexOutput(metaBuf, "clacR1", "meta");
+             ByteBuffersIndexOutput dataIdx = new ByteBuffersIndexOutput(dataBuf, "clacR1", "data")) {
+            OrdToDocDISIReaderConfiguration.writeStoredMeta(
+                ORD_TO_DOC_BLOCK_SHIFT, metaIdx, dataIdx, numVectors, maxDoc, docsWithField);
+        }
+        byte[] metaBytes = metaBuf.toArrayCopy();
+        byte[] dataBytes = dataBuf.toArrayCopy();
+
+        // ordToCentroid (folded from .claf): primary centroid per ordinal
+        short[] ordToCentroid = new short[numVectors];
+        for (int c = 0; c < numCentroids; c++) {
+            for (int ord : primaryPostings[c]) {
+                ordToCentroid[ord] = (short) c;
+            }
+        }
+
+        centroidsOutput.writeVInt(numVectors);
+        centroidsOutput.writeVInt(metaBytes.length);
+        centroidsOutput.writeBytes(metaBytes, metaBytes.length);
+        centroidsOutput.writeVInt(dataBytes.length);
+        centroidsOutput.writeBytes(dataBytes, dataBytes.length);
+        for (int i = 0; i < numVectors; i++) {
+            centroidsOutput.writeShort(ordToCentroid[i]);
+        }
+        return offset;
+    }
+
+    /** Squared L2 distance between two equal-length vectors. */
+    private static float squaredL2(float[] a, float[] b) {
+        float sum = 0f;
+        for (int i = 0; i < a.length; i++) {
+            float diff = a[i] - b[i];
+            sum += diff * diff;
+        }
+        return sum;
     }
 
     private static int estimateCentroids(int numVectors) {
@@ -457,7 +554,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(0);
         metaOutput.writeString(DistanceMetric.L2.name());
         metaOutput.writeByte(docBits);
-        metaOutput.writeLong(0);
+        metaOutput.writeByte(QuantizerType.SCALAR.id()); // keep header shape identical to writeIVF
+        metaOutput.writeLong(0); // postingsOffset
+        metaOutput.writeLong(0); // postingsLength
     }
 
     private IndexOutput createOutput(String extension) throws IOException {

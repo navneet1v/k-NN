@@ -8,9 +8,11 @@ package org.opensearch.knn.index.clusterann.codec;
 /**
  * Single source of truth for the ClusterANN IVF file format.
  *
- * <p>Two files:
+ * <p>Four files:
  * <ul>
- *   <li>{@code .clam} — metadata + centroids + centroid stats (read once, cached)</li>
+ *   <li>{@code .clam} — metadata + centroid stats + offset tables (read once, cached)</li>
+ *   <li>{@code .clac} — centroids (raw + transformed) + ordToDoc/ordToCentroid region (mmap'd)</li>
+ *   <li>{@code .clar} — serialized random rotation, one per rotated field (mmap'd; L2 only)</li>
  *   <li>{@code .clap} — posting lists + block-columnar quantized vectors (read during search)</li>
  * </ul>
  */
@@ -20,8 +22,7 @@ public final class ClusterANNFormatConstants {
     public static final String META_EXTENSION = "clam";
     public static final String POSTINGS_EXTENSION = "clap";
     public static final String CENTROIDS_EXTENSION = "clac";
-    public static final String FILTER_EXTENSION = "claf";
-    public static final String CLIP_EXTENSION = "clid";
+    public static final String ROTATION_EXTENSION = "clar";
 
     // Codec identity
     public static final String CODEC_NAME = "ClusterANN1040";

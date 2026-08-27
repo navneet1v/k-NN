@@ -84,6 +84,7 @@ public class KNNSettings {
      */
     public static final String INDEX_KNN_ADVANCED_APPROXIMATE_THRESHOLD = "index.knn.advanced.approximate_threshold";
     public static final String KNN_ALGO_PARAM_EF_SEARCH = "index.knn.algo_param.ef_search";
+    public static final String KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER = "index.knn.algo_param.clusterann_nprobe_multiplier";
     public static final String KNN_ALGO_PARAM_INDEX_THREAD_QTY = "knn.algo_param.index_thread_qty";
     public static final String KNN_MEMORY_CIRCUIT_BREAKER_ENABLED = "knn.memory.circuit_breaker.enabled";
     public static final String KNN_MEMORY_CIRCUIT_BREAKER_CLUSTER_LIMIT = "knn.memory.circuit_breaker.limit";
@@ -140,6 +141,7 @@ public class KNNSettings {
     public static final String INDEX_KNN_DEFAULT_SPACE_TYPE_FOR_BINARY = "hamming";
     public static final Integer INDEX_KNN_DEFAULT_ALGO_PARAM_M = 16;
     public static final Integer INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH = 100;
+    public static final Integer INDEX_KNN_DEFAULT_CLUSTERANN_NPROBE_MULTIPLIER = 2;
     public static final Integer INDEX_KNN_DEFAULT_ALGO_PARAM_EF_CONSTRUCTION = 100;
     public static final Integer KNN_DEFAULT_ALGO_PARAM_INDEX_THREAD_QTY = 1;
     public static final Integer KNN_DEFAULT_CIRCUIT_BREAKER_UNSET_PERCENTAGE = 75;
@@ -219,6 +221,22 @@ public class KNNSettings {
         KNN_ALGO_PARAM_EF_SEARCH,
         INDEX_KNN_DEFAULT_ALGO_PARAM_EF_SEARCH,
         2,
+        IndexScope,
+        Dynamic
+    );
+
+    /**
+     * ClusterANN nprobe multiplier: scales how many centroid posting lists are probed per query
+     * (nprobe ≈ multiplier × √numCentroids, capped). Higher → more accurate but slower search.
+     *
+     * <p>TODO(future): also expose this as a per-query parameter (as {@code ef_search} can be
+     * overridden per query), and resolve this per-index value at the ClusterANN query layer to
+     * thread it into {@code CentroidProbePlanner} (the codec read path has no index context today).
+     */
+    public static final Setting<Integer> INDEX_KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER_SETTING = Setting.intSetting(
+        KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER,
+        INDEX_KNN_DEFAULT_CLUSTERANN_NPROBE_MULTIPLIER,
+        1,
         IndexScope,
         Dynamic
     );
@@ -741,6 +759,7 @@ public class KNNSettings {
         List<Setting<?>> settings = Arrays.asList(
             INDEX_KNN_ADVANCED_APPROXIMATE_THRESHOLD_SETTING,
             INDEX_KNN_ALGO_PARAM_EF_SEARCH_SETTING,
+            INDEX_KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER_SETTING,
             KNN_ALGO_PARAM_INDEX_THREAD_QTY_SETTING,
             KNN_CIRCUIT_BREAKER_TRIGGERED_SETTING,
             KNN_CIRCUIT_BREAKER_UNSET_PERCENTAGE_SETTING,
@@ -1056,6 +1075,23 @@ public class KNNSettings {
                 KNNSettings.KNN_ALGO_PARAM_EF_SEARCH,
                 IndexHyperParametersUtil.getHNSWEFSearchValue(indexMetadata.getCreationVersion())
             );
+    }
+
+    /**
+     * Get the ClusterANN nprobe multiplier configured for an index (see
+     * {@link #INDEX_KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER_SETTING}).
+     *
+     * <p>TODO(future): thread this into the ClusterANN query/read path (the codec has no index
+     * context yet) and allow a per-query override, mirroring {@code ef_search}.
+     *
+     * @param index Name of the index
+     * @return nprobe multiplier
+     */
+    public static int getClusterANNNprobeMultiplier(String index) {
+        return getIndexSettings(index).getAsInt(
+            KNN_ALGO_PARAM_CLUSTERANN_NPROBE_MULTIPLIER,
+            INDEX_KNN_DEFAULT_CLUSTERANN_NPROBE_MULTIPLIER
+        );
     }
 
     /**

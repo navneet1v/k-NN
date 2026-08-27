@@ -50,24 +50,24 @@ public final class RandomRotation {
      * Both vector and out must have length = total dimension.
      */
     public void transform(float[] vector, float[] out) {
-        if (blocks.length == 1) {
-            matMul(blocks[0], vector, out);
-        } else {
-            int outIdx = 0;
-            for (int b = 0; b < blocks.length; b++) {
-                float[][] block = blocks[b];
-                int bDim = block.length;
-                int[] perm = permutation[b];
-                // Gather permuted input
-                for (int i = 0; i < bDim; i++) {
-                    float dot = 0f;
-                    for (int j = 0; j < bDim; j++) {
-                        dot += block[i][j] * vector[perm[j]];
-                    }
-                    out[outIdx + i] = dot;
+        // Always apply the permutation, even for a single block. The read-side query rotation
+        // (the streaming transform(IndexInput, ...) that reads the matrix from .clar) applies it
+        // unconditionally, so a matMul-without-permutation shortcut here would rotate query and
+        // documents into different bases for dimension <= blockDim.
+        int outIdx = 0;
+        for (int b = 0; b < blocks.length; b++) {
+            float[][] block = blocks[b];
+            int bDim = block.length;
+            int[] perm = permutation[b];
+            // Gather permuted input
+            for (int i = 0; i < bDim; i++) {
+                float dot = 0f;
+                for (int j = 0; j < bDim; j++) {
+                    dot += block[i][j] * vector[perm[j]];
                 }
-                outIdx += bDim;
+                out[outIdx + i] = dot;
             }
+            outIdx += bDim;
         }
     }
 
@@ -177,6 +177,53 @@ public final class RandomRotation {
         return new RandomRotation(blockDim, permutation, blocks);
     }
 
+    /**
+     * Apply a serialized rotation (as written by {@link #write}) to {@code vector} → {@code out},
+     * streaming the matrix directly from {@code in} at its current position — the off-heap query
+     * transform. Only the permutation ({@code O(dimension)} ints) and one {@code O(blockDim)} row buffer
+     * are held; the full {@code O(dimension × blockDim)} matrix is never materialized on heap. Caller
+     * seeks {@code in} to the rotation start; {@code out} must be at least {@code dimension} long.
+     *
+     * <p>Two passes are needed because permutations follow the blocks in the file but each block's
+     * permutation is required before applying it: pass 1 skips blocks to read the permutation, pass 2
+     * re-reads the block rows and applies {@code out[i] = Σ_j block[i][j] · vector[perm[j]]}.
+     */
+    public static void transform(IndexInput in, float[] vector, float[] out) throws IOException {
+        int numBlocks = in.readInt();
+        int blockDim = in.readInt();
+        long blocksStart = in.getFilePointer();
+
+        for (int b = 0; b < numBlocks; b++) {
+            int bDim = in.readInt();
+            in.skipBytes((long) bDim * bDim * Float.BYTES);
+        }
+        int[][] permutation = new int[numBlocks][];
+        for (int b = 0; b < numBlocks; b++) {
+            int pLen = in.readInt();
+            permutation[b] = new int[pLen];
+            for (int j = 0; j < pLen; j++) {
+                permutation[b][j] = in.readInt();
+            }
+        }
+
+        in.seek(blocksStart);
+        float[] row = new float[blockDim];
+        int outIdx = 0;
+        for (int b = 0; b < numBlocks; b++) {
+            int bDim = in.readInt();
+            int[] perm = permutation[b];
+            for (int i = 0; i < bDim; i++) {
+                in.readFloats(row, 0, bDim);
+                float dot = 0f;
+                for (int j = 0; j < bDim; j++) {
+                    dot += row[j] * vector[perm[j]];
+                }
+                out[outIdx + i] = dot;
+            }
+            outIdx += bDim;
+        }
+    }
+
     // === Private helpers ===
 
     /** Generate a random orthogonal matrix via Gram-Schmidt on Gaussian random matrix. */
@@ -208,16 +255,5 @@ public final class RandomRotation {
             }
         }
         return m;
-    }
-
-    /** Simple matrix-vector multiply: out = M * x */
-    private static void matMul(float[][] m, float[] x, float[] out) {
-        for (int i = 0; i < m.length; i++) {
-            float dot = 0f;
-            for (int j = 0; j < x.length; j++) {
-                dot += m[i][j] * x[j];
-            }
-            out[i] = dot;
-        }
     }
 }

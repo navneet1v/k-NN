@@ -167,7 +167,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
             docTransposed[i] = (byte) 0xFF;
         }
 
-        long dot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, docTransposed);
+        long dot = Int4DotProduct.int4NibbleDotProduct(queryTransposed, docTransposed);
         // Per byte position: sum of all 16 cross-products with 8 bits each
         // = 8*(1+2+4+8+2+4+8+16+4+8+16+32+8+16+32+64) = 8*225 = 1800
         assertEquals(1800L, dot);
@@ -176,7 +176,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
     public void testInt4NibbleDotProduct_zeros() {
         byte[] queryTransposed = new byte[4];
         byte[] docTransposed = new byte[4];
-        long dot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, docTransposed);
+        long dot = Int4DotProduct.int4NibbleDotProduct(queryTransposed, docTransposed);
         assertEquals(0L, dot);
     }
 
@@ -258,7 +258,7 @@ public class ClusterANNQuantizationTests extends KNNTestCase {
         OptimizedScalarQuantizer.transposeHalfByte(rawQuery, queryTransposed);
 
         // Dot product via bit manipulation
-        long bitDot = QuantizedVectorReader.int4NibbleDotProduct(queryTransposed, packedDoc);
+        long bitDot = Int4DotProduct.int4NibbleDotProduct(queryTransposed, packedDoc);
 
         // Brute force reference
         long expected = 0;

@@ -18,28 +18,43 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.AcceptDocs;
+import org.apache.lucene.codecs.lucene90.IndexedDISI;
+import org.apache.lucene.util.hnsw.OrdinalTranslatedKnnCollector;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util.hnsw.RandomVectorScorer;
+import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
+import org.apache.lucene.util.LongValues;
+import org.apache.lucene.util.packed.DirectMonotonicReader;
+import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
-import org.opensearch.knn.index.clusterann.codec.*;
-import org.opensearch.knn.index.clusterann.prefetch.*;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.CENTROIDS_EXTENSION;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.CODEC_NAME;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.META_EXTENSION;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.POSTINGS_EXTENSION;
+import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.ROTATION_EXTENSION;
+
+import org.opensearch.knn.index.clusterann.codec.CentroidVectorValues;
+import org.opensearch.knn.index.clusterann.codec.ClipPruningData;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNFieldState;
+import org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants;
+import org.opensearch.knn.index.clusterann.codec.ClusterFactory;
+import org.opensearch.knn.index.clusterann.codec.ClusterSearcher;
+import org.opensearch.knn.index.clusterann.codec.Clusters;
+import org.opensearch.knn.index.clusterann.codec.ScanParams;
+import org.opensearch.knn.index.clusterann.prefetch.CentroidProbePlanner;
 
 /**
  * Reader for ClusterANN IVF format v2.
  *
  * <p>Search uses a composable probe pipeline:
- * {@link NearestProbeScheduler} → {@link OptimizedProbeScheduler}
- * feeding a {@link ClusterANNCentroidScanner}.
+ * {@link CentroidProbePlanner} → {@link ClusterSearcher} walk (which owns level-1 prefetch)
+ *
  */
 @Log4j2
 public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
@@ -51,9 +66,19 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
     private final IndexInput metaInput;
     private final IndexInput postingsInput;
-    private CentroidAssignmentReader filterReader;
-    private OffHeapCentroids.Reader centroidReader;
+    private IndexInput centroidsInput;
+    private IndexInput rotationInput;
     private Map<Integer, ClipPruningData> clipDataMap;
+    // Per-field search structures are built once at reader open (single-threaded ctor) and never mutated
+    // after, so the search path reads them from these final, immutable maps with no locking — safely
+    // published to concurrent-search threads by the final fields. Empty fields are absent.
+    //   clacRegion1Map: .clac region 1 (ordToDoc DISI config + ordToCentroid).
+    //   clustersMap:    the field's persistent cluster structure (HnswGraph analogue) + its .clap slice.
+    private final Map<Integer, ClacRegion1> clacRegion1Map;
+    private final Map<Integer, Clusters> clustersMap;
+    // Stateless search algorithm — all per-query state lives in the ClusterSearchContext passed to
+    // search(), so one shared instance serves every query/thread.
+    private static final int ORD_TO_DOC_BLOCK_SHIFT = 16;
 
     public ClusterANN1040KnnVectorsReader(FlatVectorsReader flatVectorsReader, SegmentReadState state) throws IOException {
         this.flatVectorsReader = flatVectorsReader;
@@ -61,25 +86,17 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         boolean success = false;
         IndexInput metaIn = null;
         IndexInput postIn = null;
-        IndexInput filterIn = null;
         IndexInput centIn = null;
+        IndexInput rotIn = null;
         try {
             metaIn = openInput(state, META_EXTENSION);
             postIn = openInput(state, POSTINGS_EXTENSION);
-            filterIn = openInput(state, FILTER_EXTENSION);
             centIn = openInput(state, CENTROIDS_EXTENSION);
+            rotIn = openInput(state, ROTATION_EXTENSION);
+            this.centroidsInput = centIn;
+            this.rotationInput = rotIn;
 
             this.fieldStates = ClusterANNFieldState.readAll(metaIn, state);
-
-            // Open filter reader and centroid reader for the first field
-            if (!fieldStates.isEmpty()) {
-                int firstField = fieldStates.keySet().iterator().next();
-                this.filterReader = new CentroidAssignmentReader(filterIn, firstField);
-                this.centroidReader = new OffHeapCentroids.Reader(centIn, firstField);
-            }
-
-            // Read CLIP pruning data if available
-            this.clipDataMap = readClipData(state);
 
             this.fieldNameToNumber = new HashMap<>();
             for (FieldInfo fi : state.fieldInfos) {
@@ -91,10 +108,28 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             this.metaInput = metaIn;
             this.postingsInput = postIn;
             this.fieldInfos = state.fieldInfos;
+
+            // Build the per-field search structures eagerly (single-threaded here), so the search path
+            // reads immutable maps with no synchronization. Empty fields are skipped (never searched).
+            Map<Integer, ClacRegion1> region1 = new HashMap<>();
+            Map<Integer, Clusters> clusters = new HashMap<>();
+            for (Map.Entry<Integer, ClusterANNFieldState> entry : fieldStates.entrySet()) {
+                ClusterANNFieldState fs = entry.getValue();
+                if (fs.isEmpty()) continue;
+                int fieldNumber = entry.getKey();
+                region1.put(fieldNumber, buildClacRegion1(fs));
+                FieldInfo fi = state.fieldInfos.fieldInfo(fieldNumber);
+                VectorSimilarityFunction sim =
+                    fi != null ? fi.getVectorSimilarityFunction() : VectorSimilarityFunction.EUCLIDEAN;
+                ClusterFactory factory = new ClusterFactory(fs.quantizerType, fs.docBits, fs.dimension, sim);
+                clusters.put(fieldNumber, new Clusters(postIn, centIn, rotIn, fs, factory));
+            }
+            this.clacRegion1Map = region1;
+            this.clustersMap = clusters;
             success = true;
         } finally {
             if (!success) {
-                IOUtils.closeWhileHandlingException(metaIn, postIn, filterIn, centIn, flatVectorsReader);
+                IOUtils.closeWhileHandlingException(metaIn, postIn, centIn, rotIn, flatVectorsReader);
             }
         }
 
@@ -123,177 +158,66 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         Integer fieldNumber = fieldNameToNumber.get(field);
         ClusterANNFieldState fieldState = fieldNumber != null ? fieldStates.get(fieldNumber) : null;
 
+        // The codec is uniform-ADC only — there is no full-precision brute-force fallback (that
+        // would emit exact scores into a shared multi-segment collector alongside ADC scores).
+        // Reaching here with no/empty ClusterANN data is unexpected in the POC; fail fast.
         if (fieldState == null || fieldState.isEmpty()) {
-            bruteForceSearch(field, target, knnCollector, acceptDocs);
-            return;
+            throw new IllegalStateException(
+                "ClusterANN: search invoked for field '" + field + "' with no/empty ClusterANN data");
         }
-
-        fieldState.ensureLoaded(metaInput);
-
-        // Skip IVF for tiny segments — brute force is faster than IVF overhead
-        if (fieldState.numVectors < MIN_IVF_VECTORS) {
-            bruteForceSearch(field, target, knnCollector, acceptDocs);
-            return;
-        }
-
-        // Cross-segment CLIP pruning: skip entire segment if upper bound < threshold
-        ClipPruningData clipData = clipDataMap != null ? clipDataMap.get(fieldNumber) : null;
-        if (clipData != null && clipData.hasSegmentCentroid()) {
-            float sharedThreshold = OptimizedProbeScheduler.getSharedThreshold(knnCollector);
-            if (sharedThreshold > Float.NEGATIVE_INFINITY) {
-                float segUbIP = clipData.segmentUpperBoundIP(target);
-                // Transform raw IP to Lucene MAXIMUM_INNER_PRODUCT score
-                float segUbScore = segUbIP >= 0 ? segUbIP + 1.0f : 1.0f / (1.0f - segUbIP);
-                if (segUbScore < sharedThreshold) {
-                    log.debug("[ClusterANN-SEG] CLIP segment skip: ubScore={} < threshold={}",
-                        segUbScore, sharedThreshold);
-                    return;
-                }
-            }
-        }
+        assert fieldState.docBits > 0 : "Cannot have docBits <= 0";
 
         int k = knnCollector.k();
         long t0 = System.nanoTime();
         log.debug("[ClusterANN-SEARCH] collector.k={}", k);
-        IndexInput postingsClone = postingsInput.clone();
-        Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
+        // Ord-space filter for the searcher/cluster (doc→ord already resolved). null = accept all.
+        Bits acceptedOrds = buildAcceptedOrds(fieldNumber, fieldState, acceptDocs);
         long filterCost = acceptDocs != null ? acceptDocs.cost() : fieldState.numVectors;
 
-        // Build scorers
-        RandomVectorScorer exactScorer = flatVectorsReader.getRandomVectorScorer(field, target);
-        if (exactScorer == null) return;
-
         VectorSimilarityFunction simFunc = getSimFunc(field);
-        boolean useADC = fieldState.docBits > 0 && fieldState.numVectors > MIN_ADC_VECTORS;
+        // The raw centroid region carries the trailing ‖c‖² only for L2 (ranking norm-trick).
+        boolean rawHasNorm = simFunc == VectorSimilarityFunction.EUCLIDEAN;
 
-        // Transform query for ADC scoring (randomRotation redistributes variance for better quantization)
-        float[] adcTarget = target;
-        if (useADC && centroidReader.hasRotation() && simFunc == VectorSimilarityFunction.EUCLIDEAN) {
-            adcTarget = new float[target.length];
-            centroidReader.transformQuery(target, adcTarget);
-        }
+        Clusters clusters = clustersMap.get(fieldNumber); // built at open; present for non-empty fields
+        // Project the query into the space this field's codes were written in (once), then bundle it with
+        // this query's per-query facts. The walk forwards the bundle to each cluster untouched, so varying
+        // e.g. the query-side quantization width never reaches the search algorithm.
+        float filterSelectivity = fieldState.numVectors > 0 ? (float) filterCost / fieldState.numVectors : 1.0f;
+        ScanParams scanParams = ScanParams.of(clusters.prepareQuery(target), Math.min(filterSelectivity, 1.0f));
 
-        // === Three-tier adaptive filtering ===
-        // Tier 1: Strict filter — exact score all matching docs (skip IVF)
-        // Tier 2: Moderate filter — density-weighted centroid probing
-        // Tier 3: Loose/no filter — normal adaptive nprobe
-        if (acceptBits != null && filterCost < fieldState.numVectors) {
-            long filterDimProduct = filterCost * (long) fieldState.dimension;
-            if (filterDimProduct <= EXACT_FILTER_THRESHOLD) {
-                // Tier 1: few matching docs — exact score them all
-                int limit = Math.min(fieldState.numVectors, acceptBits.length());
-                for (int ord = 0; ord < limit; ord++) {
-                    if (acceptBits.get(ord)) {
-                        float score = exactScorer.score(ord);
-                        knnCollector.collect(ord, score);
-                    }
-                }
-                return;
-            }
-        }
+        // ord→doc translation is the collector's job: the searcher collects by ordinal, and this wrapper
+        // maps ordinals to docids (Lucene's OrdinalTranslatedKnnCollector, same as HNSW). It's a
+        // KnnCollector.Decorator, so incVisitedCount / minCompetitiveSimilarity / topDocs delegate to the
+        // real collector.
+        LongValues ordToDoc = getOrdToDoc(fieldNumber);
+        KnnCollector collector = new OrdinalTranslatedKnnCollector(knnCollector, ord -> (int) ordToDoc.get(ord));
 
-        // For radial search: two-phase (ADC first pass → exact rescore candidates)
-        boolean isRadial = !(knnCollector instanceof org.apache.lucene.search.TopKnnCollector);
-        if (isRadial && useADC) {
-            // Phase 1: ADC scoring into local candidate buffer
-            java.util.ArrayList<int[]> candidates = new java.util.ArrayList<>();
-            // Use a collecting scanner that gathers docIds instead of submitting to collector
-            QuantizedVectorReader adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, 100);
-            // Collect candidates via ADC into a temp top-k collector
-            org.apache.lucene.search.TopKnnCollector tempCollector =
-                new org.apache.lucene.search.TopKnnCollector(100, Integer.MAX_VALUE);
-            adcReader.setCollector(tempCollector);
-
-            BitSet visited = new BitSet(fieldState.numVectors);
-            ClusterANNCentroidScanner scanner = new ClusterANNCentroidScanner(
-                postingsClone, fieldState, exactScorer, adcReader, target, acceptBits, visited, true, centroidReader
-            );
-            NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, 100, scanner, centroidReader);
-            OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
-                nearest, scanner, postingsClone, fieldState.centroidDocCounts, fieldState.numVectors, 100, filterCost
-            );
-            pipeline.execute(tempCollector);
-            adcReader.finish(tempCollector);
-
-            // Phase 2: exact rescore candidates and submit to real collector
-            org.apache.lucene.search.TopDocs topDocs = tempCollector.topDocs();
-            for (org.apache.lucene.search.ScoreDoc sd : topDocs.scoreDocs) {
-                float exactScore = exactScorer.score(sd.doc);
-                knnCollector.collect(sd.doc, exactScore);
-            }
-            return;
-        }
-
-        QuantizedVectorReader adcReader = null;
-        if (useADC) {
-            adcReader = new QuantizedVectorReader(exactScorer, postingsClone, fieldState, simFunc, adcTarget, k);
-            adcReader.setCollector(knnCollector);
-        }
-
-        BitSet visited = new BitSet(fieldState.numVectors);
-
-        ClusterANNCentroidScanner scanner = new ClusterANNCentroidScanner(
-            postingsClone,
-            fieldState,
-            exactScorer,
-            adcReader,
-            target,
-            acceptBits,
-            visited,
-            useADC,
-            centroidReader
+        // Per-query raw-centroid values view for probe ranking (hides .clac I/O behind FloatVectorValues).
+        // rawHasNorm is a storage-layout flag (does each centroid carry a trailing ‖c‖²), not a metric.
+        CentroidVectorValues centroidValues = new CentroidVectorValues(
+                centroidsInput,
+                fieldState.clacCentroidOffset,
+                fieldState.numCentroids,
+                fieldState.dimension,
+                rawHasNorm
         );
 
-        NearestProbeScheduler nearest;
-        int[] filterMatchCounts = null;
-        if (acceptBits != null && filterReader != null && filterCost < fieldState.numVectors
-                ) {
-            // Tier 2: moderate filter with few matches — density-weighted probing
-            try {
-                FixedBitSet acceptedOrds = new FixedBitSet(fieldState.numVectors);
-                int limit = Math.min(fieldState.numVectors, acceptBits.length());
-                for (int doc = 0; doc < limit; doc++) {
-                    if (acceptBits.get(doc)) acceptedOrds.set(doc);
-                }
-                filterMatchCounts = new int[fieldState.numCentroids];
-                FixedBitSet acceptCentroids = filterReader.computeCentroidFilter(acceptedOrds, filterMatchCounts);
-                nearest = new NearestProbeScheduler(target, fieldState, k, scanner, acceptCentroids, filterMatchCounts, centroidReader);
-            } catch (Exception e) {
-                // Fallback to normal probing if .claf is incompatible
-                nearest = new NearestProbeScheduler(target, fieldState, k, scanner, centroidReader);
-                filterMatchCounts = null;
-            }
-        } else {
-            // Tier 3: no filter or loose filter — normal adaptive nprobe
-            nearest = new NearestProbeScheduler(target, fieldState, k, scanner, centroidReader);
-        }
+        // Tier-2 density-weighted probing is temporarily disabled during the .claf → .clac
+        // region-1 migration. Filtered queries use normal nprobe; the scanner still applies the
+        // per-vector acceptBits filter, so results are correct — just without density weighting.
+        // TODO: rewire matchCount from .clac region 1 (OrdToDocDISI doc→ord + ordToCentroid).
         long t1 = System.nanoTime();
-        OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
-            nearest,
-            scanner,
-            postingsClone,
-            fieldState.centroidDocCounts,
-            fieldState.centroidNorms,
-            fieldState.numVectors,
-            k,
-            filterCost,
-            filterMatchCounts,
-            clipData
-        );
-        pipeline.execute(knnCollector);
+        // Plan the probes (rank centroids closest-first + knee), then walk them. The walk owns the
+        // prefetch window too, since only it knows the probe order and which clusters it will skip.
+        int[] probes = CentroidProbePlanner.planProbes(centroidValues, target, fieldState.metric, k);
+        int clustersProbed = ClusterSearcher.search(clusters, probes, scanParams, collector, acceptedOrds);
         long t2 = System.nanoTime();
 
-        if (adcReader != null) {
-            adcReader.finish(knnCollector);
-        }
         long t3 = System.nanoTime();
-        long actualAdcBytes = adcReader != null ? adcReader.getBytesRead() : 0;
-        // Accumulate actual bytes (not estimated) into query-level counter
-        OptimizedProbeScheduler.addActualBytes(actualAdcBytes);
         log.info(
-            "[ClusterANN-SEG] nprobe={} clustersProbed={} vectors={} centroidDist={}ms scan={}ms total={}ms",
-            nearest.nprobe(),
-            OptimizedProbeScheduler.lastClustersProbed(),
+            "[ClusterANN-SEG] nprobe={} clustersProbed={} vectors={} centroidRank={}ms scan={}ms total={}ms",
+            probes.length,
+            clustersProbed,
             fieldState.numVectors,
             (t1 - t0) / 1_000_000,
             (t2 - t1) / 1_000_000,
@@ -301,94 +225,116 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         );
     }
 
+
     @Override
     public void search(String field, byte[] target, KnnCollector knnCollector, AcceptDocs acceptDocs) throws IOException {
-        RandomVectorScorer byteScorer = flatVectorsReader.getRandomVectorScorer(field, target);
-        if (byteScorer == null) return;
-        Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
-        int maxOrd = byteScorer.maxOrd();
-        int[] ords = new int[Math.min(maxOrd, 256)];
-        float[] scores = new float[ords.length];
-        int count = 0;
-        for (int ord = 0; ord < maxOrd; ord++) {
-            int docId = byteScorer.ordToDoc(ord);
-            if (acceptBits != null && !acceptBits.get(docId)) continue;
-            ords[count++] = ord;
-            if (count == ords.length) {
-                byteScorer.bulkScore(ords, scores, count);
-                for (int j = 0; j < count; j++)
-                    knnCollector.collect(byteScorer.ordToDoc(ords[j]), scores[j]);
-                knnCollector.incVisitedCount(count);
-                count = 0;
-            }
-        }
-        if (count > 0) {
-            byteScorer.bulkScore(ords, scores, count);
-            for (int j = 0; j < count; j++)
-                knnCollector.collect(byteScorer.ordToDoc(ords[j]), scores[j]);
-            knnCollector.incVisitedCount(count);
-        }
+        // Byte/binary vectors are not supported by ClusterANN in the POC.
+        throw new UnsupportedOperationException("ClusterANN does not support byte/binary vector search");
     }
 
     @Override
     public void close() throws IOException {
-        IOUtils.close(flatVectorsReader, metaInput, postingsInput, filterReader, centroidReader);
-    }
-
-    // ========== Brute Force Fallback ==========
-
-    private void bruteForceSearch(String field, float[] target, KnnCollector knnCollector, AcceptDocs acceptDocs) throws IOException {
-        RandomVectorScorer scorer = flatVectorsReader.getRandomVectorScorer(field, target);
-        if (scorer == null) return;
-        Bits acceptBits = acceptDocs != null ? acceptDocs.bits() : null;
-        int maxOrd = scorer.maxOrd();
-        int[] ords = new int[Math.min(maxOrd, 256)];
-        float[] scores = new float[ords.length];
-        int count = 0;
-        for (int ord = 0; ord < maxOrd; ord++) {
-            int docId = scorer.ordToDoc(ord);
-            if (acceptBits != null && !acceptBits.get(docId)) continue;
-            ords[count++] = ord;
-            if (count == ords.length) {
-                scorer.bulkScore(ords, scores, count);
-                for (int i = 0; i < count; i++)
-                    knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
-                knnCollector.incVisitedCount(count);
-                count = 0;
-            }
-        }
-        if (count > 0) {
-            scorer.bulkScore(ords, scores, count);
-            for (int i = 0; i < count; i++)
-                knnCollector.collect(scorer.ordToDoc(ords[i]), scores[i]);
-            knnCollector.incVisitedCount(count);
-        }
+        // Per-query centroid readers only hold clones of centroidsInput (never closed); the shared
+        // input is owned and closed here.
+        IOUtils.close(flatVectorsReader, metaInput, postingsInput, centroidsInput, rotationInput);
     }
 
     // ========== Helpers ==========
 
-    private Map<Integer, ClipPruningData> readClipData(SegmentReadState state) {
-        Map<Integer, ClipPruningData> map = new HashMap<>();
-        try {
-            String fileName = IndexFileNames.segmentFileName(
-                state.segmentInfo.name, state.segmentSuffix, ClipPruningData.EXTENSION);
-            if (!Arrays.asList(state.directory.listAll()).contains(fileName)) {
-                return map;
-            }
-            IndexInput clipIn = openInput(state, ClipPruningData.EXTENSION);
-            try {
-                while (clipIn.getFilePointer() < clipIn.length() - CodecUtil.footerLength()) {
-                    int fieldNumber = clipIn.readInt();
-                    ClipPruningData data = ClipPruningData.read(clipIn);
-                    map.put(fieldNumber, data);
-                }
-            } finally {
-                clipIn.close();
-            }
-        } catch (IOException e) {
-            log.debug("[ClusterANN] CLIP data not available, pruning disabled: {}", e.getMessage());
+    /**
+     * Per-field .clac region 1: the OrdToDocDISI config (doc↔ord) plus the ordToCentroid array.
+     * Heap-loaded from the self-contained region for POC.
+     */
+    private static final class ClacRegion1 {
+        final OrdToDocDISIReaderConfiguration config;
+        final byte[] disiData;                 // input for getIndexedDISI / getDirectMonotonicReader
+        final LongValues ordToDoc;             // ord → doc (identity when the field is dense)
+        final int[] ordToCentroid;             // ord → primary centroid (for filter matchCount)
+
+        ClacRegion1(OrdToDocDISIReaderConfiguration config, byte[] disiData,
+                    LongValues ordToDoc, int[] ordToCentroid) {
+            this.config = config;
+            this.disiData = disiData;
+            this.ordToDoc = ordToDoc;
+            this.ordToCentroid = ordToCentroid;
         }
-        return map;
+    }
+
+    /** Build a field's .clac region 1. Called once per field at reader open; result is cached. */
+    private ClacRegion1 buildClacRegion1(ClusterANNFieldState fieldState) throws IOException {
+        IndexInput in = centroidsInput.clone();
+        in.seek(fieldState.clacRegion1Offset);
+        int numValues = in.readVInt();
+        int metaLen = in.readVInt();
+        byte[] metaBytes = new byte[metaLen];
+        in.readBytes(metaBytes, 0, metaLen);
+        int dataLen = in.readVInt();
+        byte[] disiData = new byte[dataLen];
+        in.readBytes(disiData, 0, dataLen);
+        int[] ordToCentroid = new int[numValues];
+        for (int i = 0; i < numValues; i++) {
+            ordToCentroid[i] = in.readShort() & 0xFFFF;
+        }
+
+        ByteArrayIndexInput metaIn = new ByteArrayIndexInput("clacR1Meta", metaBytes);
+        OrdToDocDISIReaderConfiguration config = OrdToDocDISIReaderConfiguration.fromStoredMeta(metaIn, numValues);
+        // Dense/empty fields carry no ord→doc monotonic map (ord == doc); only sparse fields do.
+        LongValues ordToDoc = (config.isDense() || config.isEmpty())
+            ? LongValues.IDENTITY
+            : config.getDirectMonotonicReader(new ByteArrayIndexInput("clacR1Data", disiData));
+
+        return new ClacRegion1(config, disiData, ordToDoc, ordToCentroid);
+    }
+
+    /** ord → doc reader for a field (from .clac region 1, built at open); identity when dense. */
+    private LongValues getOrdToDoc(int fieldNumber) {
+        return clacRegion1Map.get(fieldNumber).ordToDoc;
+    }
+
+    /**
+     * Translate the query's doc-space filter into an ord-space {@link Bits} the searcher/cluster can
+     * test directly (the cluster deals only in ordinals). Returns {@code null} for "accept all" so the
+     * hot path pays nothing when unfiltered.
+     *
+     * <p><b>Dense fields</b> have {@code ord == doc}, so the doc-space {@code Bits} is already ord-space and
+     * is returned as-is.
+     *
+     * <p><b>Sparse fields</b> get a view that translates per test — mapping {@code ord} through
+     * {@code ordToDoc} and asking the doc filter — rather than materializing a bitset up front. The
+     * alternative, driving the jump-table {@link IndexedDISI} by the accepted docs to set a bit per accepted
+     * ordinal, buys a cheaper per-test read at a cost of {@code O(#accepted)} and a bitset the width of the
+     * field. That trade only pays in a narrow middle band, and loses badly outside it: a loose filter would
+     * walk most of the field through the DISI on every query, while a very selective one has its clusters
+     * dropped wholesale by the expected-match guard before many tests happen at all. Translating on demand
+     * is within a small factor in the band where materializing is best, and far cheaper everywhere else.
+     *
+     * <p>Either way the tests are ord-keyed random access into heap structures, so neither disturbs the
+     * sequential file access the scan depends on.
+     */
+    private Bits buildAcceptedOrds(int fieldNumber, ClusterANNFieldState fieldState, AcceptDocs acceptDocs)
+        throws IOException {
+        if (acceptDocs == null) return null;
+        Bits docBits = acceptDocs.bits();
+        if (docBits == null) return null; // match-all
+        ClacRegion1 region = clacRegion1Map.get(fieldNumber); // built at open
+        if (region.config.isDense() || region.config.isEmpty()) {
+            return docBits; // ord == doc
+        }
+        LongValues ordToDoc = region.ordToDoc;
+        int numVectors = fieldState.numVectors;
+        // Safe to share: ordToDoc is a monotonic reader over a heap byte array, so it carries no file cursor
+        // — unlike a normal IndexInput — and is already read concurrently by the ord→doc collector wrapper.
+        return new Bits() {
+            @Override
+            public boolean get(int ord) {
+                return docBits.get((int) ordToDoc.get(ord));
+            }
+
+            @Override
+            public int length() {
+                return numVectors;
+            }
+        };
     }
 
     private IndexInput openInput(SegmentReadState state, String extension) throws IOException {
