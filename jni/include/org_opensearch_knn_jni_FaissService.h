@@ -315,6 +315,30 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_passSQVectorsWit
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_releaseFaissSQIndex
   (JNIEnv *, jclass, jlong);
 
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    setFaissSQHnswToSingleLayer
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_setFaissSQHnswToSingleLayer
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    buildOrderingOfVectorsUsingIndexStructure
+ * Signature: (J[II[I)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfVectorsUsingIndexStructure
+  (JNIEnv *, jclass, jlong, jintArray, jint, jintArray);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    buildOrderingOfVectorsUsingBFS
+ * Signature: (J[I[I)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfVectorsUsingBFS
+  (JNIEnv *, jclass, jlong, jintArray, jintArray);
+
 
 #ifdef __cplusplus
 }

@@ -5,45 +5,23 @@
 
 package org.opensearch.knn.index.codec.locality;
 
+import lombok.NonNull;
 import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.codecs.KnnVectorsReader;
-import org.apache.lucene.codecs.hnsw.FlatFieldVectorsWriter;
-import org.apache.lucene.codecs.hnsw.FlatVectorsFormat;
-import org.apache.lucene.codecs.hnsw.FlatVectorsReader;
-import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
-import org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorScorer;
-import org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorsReader;
-import org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat;
-import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.index.MergeState;
-import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
-import org.apache.lucene.index.Sorter;
-import org.apache.lucene.index.VectorEncoding;
-import org.apache.lucene.index.VectorSimilarityFunction;
-import org.apache.lucene.internal.hppc.FloatArrayList;
-import org.apache.lucene.internal.hppc.IntArrayList;
-import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.packed.DirectWriter;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
-import org.opensearch.knn.index.codec.KNN1040Codec.KNN1040LocalityAwareSQVectorsFormat;
+import org.opensearch.knn.index.codec.nativeindex.model.Layer0LocalityOrdering;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
-
-import static org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorsFormat.QUANTIZED_VECTOR_COMPONENT;
-import static org.apache.lucene.index.VectorSimilarityFunction.COSINE;
 
 /**
  * Writes 1-bit scalar-quantized vectors to a locality-ordered store split across two files: a
@@ -81,6 +59,9 @@ import static org.apache.lucene.index.VectorSimilarityFunction.COSINE;
  *    requiredBits          (vInt)  bits/value of the DirectWriter block that follows
  *    ordToPhysicalOrdMap   (DirectWriter-packed: count values x requiredBits bits, then padding)
  *                                  originalOrdinal -&gt; physicalPosition
+ *    numHubs               (vInt)  search entry-point candidates (JNI -1-padding dropped)
+ *    hubOrdinals           (numHubs x vInt)     original ordinals, highest-degree first
+ *    hubRecords            (numHubs x recordSize) each hub's quantized record (code + 4 corrections)
  * [CodecUtil footer + CRC32]
  * </pre>
  * Records file ({@value #EXTENSION}):
@@ -111,7 +92,7 @@ import static org.apache.lucene.index.VectorSimilarityFunction.COSINE;
  * <p>All ints/floats use Lucene's little-endian encoding, matching the byte order the native SIMD
  * scoring path expects.
  */
-public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWriter {
+public final class LocalityOrderedQuantizedVectorsWriter implements Closeable {
 
     public static final String CODEC_NAME = "LocalityOrderedQuantizedVectors";
     public static final String EXTENSION = "veqlo";
@@ -124,34 +105,45 @@ public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWrit
 
     private final IndexOutput vectordata;
     private final IndexOutput metadata;
-    private boolean wroteField;
     private boolean finished;
     private final QuantizedByteVectorValues.ScalarEncoding scalarEncoding;
-    private final FlatVectorsWriter rawFlatVectorsWriter;
-    private final List<SQFieldWriter> fields = new ArrayList<>();
-    private final SegmentWriteState segmentWriteState;
-    private final FlatVectorsFormat flatVectorsFormat;
-    private FlatVectorsReader flatVectorsReader;
-    private boolean flatWriterClosed;
 
-
-    public LocalityOrderedQuantizedVectorsWriter(final SegmentWriteState segmentWriteState, FlatVectorsFormat flatVectorsFormat, QuantizedByteVectorValues.ScalarEncoding scalarEncoding, FlatVectorsWriter rawFlatVectorsWriter, Lucene104ScalarQuantizedVectorScorer vectorsScorer) throws IOException {
-        super(vectorsScorer);
+    public LocalityOrderedQuantizedVectorsWriter(
+        final SegmentWriteState segmentWriteState,
+        QuantizedByteVectorValues.ScalarEncoding scalarEncoding
+    ) throws IOException {
         this.scalarEncoding = scalarEncoding;
-        this.rawFlatVectorsWriter = rawFlatVectorsWriter;
-        this.segmentWriteState = segmentWriteState;
-        this.flatVectorsFormat = flatVectorsFormat;
 
-        final String vectorFileName = IndexFileNames.segmentFileName(segmentWriteState.segmentInfo.name, segmentWriteState.segmentSuffix, EXTENSION);
-        final String metaFileName = IndexFileNames.segmentFileName(segmentWriteState.segmentInfo.name, segmentWriteState.segmentSuffix, METADATA_EXTENSION);
+        final String vectorFileName = IndexFileNames.segmentFileName(
+            segmentWriteState.segmentInfo.name,
+            segmentWriteState.segmentSuffix,
+            EXTENSION
+        );
+        final String metaFileName = IndexFileNames.segmentFileName(
+            segmentWriteState.segmentInfo.name,
+            segmentWriteState.segmentSuffix,
+            METADATA_EXTENSION
+        );
         boolean success = false;
         IndexOutput vectordata = null;
         IndexOutput metadata = null;
         try {
             vectordata = segmentWriteState.directory.createOutput(vectorFileName, segmentWriteState.context);
             metadata = segmentWriteState.directory.createOutput(metaFileName, segmentWriteState.context);
-            CodecUtil.writeIndexHeader(vectordata, CODEC_NAME, VERSION_CURRENT, segmentWriteState.segmentInfo.getId(), segmentWriteState.segmentSuffix);
-            CodecUtil.writeIndexHeader(metadata, CODEC_NAME, VERSION_CURRENT, segmentWriteState.segmentInfo.getId(), segmentWriteState.segmentSuffix);
+            CodecUtil.writeIndexHeader(
+                vectordata,
+                CODEC_NAME,
+                VERSION_CURRENT,
+                segmentWriteState.segmentInfo.getId(),
+                segmentWriteState.segmentSuffix
+            );
+            CodecUtil.writeIndexHeader(
+                metadata,
+                CODEC_NAME,
+                VERSION_CURRENT,
+                segmentWriteState.segmentInfo.getId(),
+                segmentWriteState.segmentSuffix
+            );
             success = true;
         } finally {
             if (!success && vectordata != null) {
@@ -162,47 +154,125 @@ public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWrit
         this.metadata = metadata;
     }
 
-    /** Supplies the float vector for a given original (insertion-order) ordinal. */
-    @FunctionalInterface
-    private interface FloatVectorProvider {
-        float[] apply(int originalOrdinal) throws IOException;
+    /**
+     * Writes the locality store ({@value #METADATA_EXTENSION} metadata + {@value #EXTENSION} records)
+     * for a single field by <b>copying an already-quantized source in a physical (permuted) order</b> —
+     * no re-quantization. This is the entry point the Faiss HNSW reordered build uses after the graph
+     * is constructed: the source {@code quantizedByteVectorValues} are the codes read back from the SQ
+     * flat store, and the records are re-emitted here in locality order.
+     *
+     * <p>Steps: read the graph-derived permutation from {@code layer0LocalityOrdering} (the FORWARD map
+     * {@code ordinalToPhysicalOrdinal[originalOrdinal] = physicalPosition}), invert it into
+     * {@code physicalOrdinals[physicalPosition] = originalOrdinal}, write the field metadata (scalars,
+     * {@code centroid} taken from the source, and the {@code originalOrdinal -> physicalPosition} map),
+     * then copy each source record into its physical slot via
+     * {@link #writeVectorDataUsingQuantizedVectorValues} (the source is {@link QuantizedByteVectorValues#copy()
+     * copied} so record iteration does not disturb the caller's instance).
+     *
+     * <p><b>LIMITATION — this currently only handles a DENSE permutation, i.e. the BFS ordering
+     * ({@code FaissService.buildOrderingOfVectorsUsingBFS}), NOT the greedy page-aligned ordering
+     * ({@code FaissService.buildOrderingOfVectorsUsingIndexStructure}).</b> The inversion below assumes
+     * physical positions are a contiguous {@code 0..N-1} (one record per vector, no gaps), which holds
+     * for BFS. The greedy strict-page layout instead pads each page to a {@code pageCapacity} boundary,
+     * so its physical positions are <b>sparse</b> — values can exceed {@code N-1} and some physical
+     * slots map to no vector (padding). Feeding a greedy permutation here would (a) index the
+     * {@code N}-sized {@code physicalOrdinals} array out of bounds, and (b) leave no notion of the
+     * zero-filled padding slots. Supporting greedy requires sizing the inverse to
+     * {@code numPages*pageCapacity}, marking padding slots with a sentinel, emitting zero-filled records
+     * for them, and separating the record count (physical slots) from the vector count in
+     * {@link #writeMetadata}. Until then, wire the BFS ordering into the build strategy for this path.
+     *
+     * <p>Only a single field per file is supported (see {@link #writeMetadata}); the caller must not
+     * also drive this writer via the flat {@code addField}/{@code flush} path for the same file.
+     *
+     * @param fieldInfo                  the field being written
+     * @param quantizedByteVectorValues  source quantized codes (addressed by original ordinal) plus the
+     *                                   centroid; consumed as-is, not re-quantized
+     * @param layer0LocalityOrdering     holds the forward permutation {@code [originalOrdinal] =
+     *                                   physicalPosition} produced by the native build; must be a DENSE
+     *                                   (BFS) permutation — see the limitation above
+     */
+    public void writeReorderedLocalityStore(
+        @NonNull final FieldInfo fieldInfo,
+        @NonNull final QuantizedByteVectorValues quantizedByteVectorValues,
+        @NonNull final Layer0LocalityOrdering layer0LocalityOrdering
+    ) throws IOException {
+
+        final int[] physicalOrdinalsArray = new int[layer0LocalityOrdering.getPhysicalOrdinals().length];
+        final int[] ordinalToPhysicalOrdinal = layer0LocalityOrdering.getPhysicalOrdinals();
+
+        // Invert the forward map into physicalOrdinals[physicalPos] = originalOrdinal.
+        // DENSE / BFS ONLY: this array is sized to N and assumes every physicalPosition is in [0, N)
+        // with no gaps. That holds for the BFS ordering. It does NOT hold for the greedy page-aligned
+        // ordering, whose physical positions are sparse (padding between pages) and can exceed N-1 —
+        // ordinalToPhysicalOrdinal[i] would then index this array out of bounds, and padding slots
+        // would have no record written. See this method's Javadoc for what greedy support needs.
+        for (int i = 0; i < ordinalToPhysicalOrdinal.length; i++) {
+            physicalOrdinalsArray[ordinalToPhysicalOrdinal[i]] = i;
+        }
+
+        writeMetadata(fieldInfo, quantizedByteVectorValues.getCentroid(), physicalOrdinalsArray);
+
+        // Hub entry-point candidates go at the very end of the metadata file (after the
+        // ordToPhysicalOrdMap DirectWriter block); see writeHubs.
+        writeHubs(layer0LocalityOrdering.getHubs(), quantizedByteVectorValues.copy());
+
+        writeVectorDataUsingQuantizedVectorValues(physicalOrdinalsArray, quantizedByteVectorValues.copy());
     }
 
     /**
-     * Writes one field's quantized vectors: metadata + mappings first, then the records in the given
-     * physical ordering. Shared by the flush and merge paths; the only difference between them is
-     * where the source float vector for an original ordinal comes from, which is supplied by
-     * {@code vectorProvider}.
+     * Appends the hub section to the end of the metadata ({@value #METADATA_EXTENSION}) file — the
+     * search entry-point candidates (highest-degree graph nodes). Layout, immediately after the
+     * {@code ordToPhysicalOrdMap} DirectWriter block and before the footer:
+     * <pre>
+     *   numHubs        (vInt)                      valid hubs (JNI -1-padding dropped)
+     *   hubOrdinals    (numHubs x vInt)            original ordinals, highest-degree first
+     *   hubRecords     (numHubs x recordSize)      each hub's quantized record: 1-bit code + 4 corrections
+     * </pre>
      *
-     * @param fieldInfo        the field being written
-     * @param centroid         the centroid vectors are centered against at quantization time
-     * @param physicalOrdinals {@code physicalOrdinals[physicalPos] = originalOrdinal}; the permutation
-     *                         defining physical layout order. Length == number of vectors.
-     * @param vectorProvider   maps an original ordinal to its (already normalized, if COSINE) float
-     *                         vector; the value is quantized here, not re-quantized
+     * <p>Hub records are the <b>quantized</b> codes (not raw float), so entry-point selection scores the
+     * query against them with the same ADC path used for the rest of the graph. They are copied from the
+     * source at each hub's original ordinal, matching the on-disk record layout in
+     * {@link #writeVectorDataUsingQuantizedVectorValues}.
+     *
+     * @param hubs   hub ordinals from the native build ({@code hubs[rank] = originalOrdinal}), possibly
+     *               {@code -1}-padded
+     * @param source quantized codes addressed by original ordinal; consumed by random access
      */
-    private void writeFieldInternal(
-        final FieldInfo fieldInfo,
-        final float[] centroid,
-        final IntArrayList physicalOrdinals,
-        final FloatVectorProvider vectorProvider
-    ) throws IOException {
-        if (wroteField) {
-            throw new IllegalStateException("LocalityOrderedQuantizedVectorsWriter supports a single field per file");
+    private void writeHubs(final int[] hubs, final QuantizedByteVectorValues source) throws IOException {
+        int numHubs = 0;
+        for (final int hub : hubs) {
+            if (hub >= 0) {
+                numHubs++;
+            }
         }
-        wroteField = true;
-        // Metadata (scalars + centroid + ordinal map) -> .vemlo; the permuted quantized records -> .veqlo.
-        writeMetadata(fieldInfo, centroid, physicalOrdinals);
-        writeVectorData(fieldInfo, centroid, physicalOrdinals, vectorProvider);
+        metadata.writeVInt(numHubs);
+        // Ordinals first (highest-degree first), then the matching quantized records.
+        for (final int hub : hubs) {
+            if (hub >= 0) {
+                metadata.writeVInt(hub);
+            }
+        }
+        for (final int hub : hubs) {
+            if (hub < 0) {
+                continue;
+            }
+            final byte[] code = source.vectorValue(hub);
+            metadata.writeBytes(code, code.length);
+            final OptimizedScalarQuantizer.QuantizationResult qr = source.getCorrectiveTerms(hub);
+            metadata.writeInt(Float.floatToIntBits(qr.lowerInterval()));
+            metadata.writeInt(Float.floatToIntBits(qr.upperInterval()));
+            metadata.writeInt(Float.floatToIntBits(qr.additionalCorrection()));
+            metadata.writeInt(qr.quantizedComponentSum());
+        }
     }
 
     /**
      * Writes one field's metadata to the {@code .vemlo} file: the scalar header, the centroid, and
      * the {@code originalOrdinal -> physicalPosition} map.
      */
-    private void writeMetadata(final FieldInfo fieldInfo, final float[] centroid, final IntArrayList physicalOrdinals)
-        throws IOException {
-        final int count = physicalOrdinals.size();
+    private void writeMetadata(final FieldInfo fieldInfo, final float[] centroid, final int[] physicalOrdinals) throws IOException {
+        final int count = physicalOrdinals.length;
         final int dimension = fieldInfo.getVectorDimension();
         final float centroidDp = count > 0 ? VectorUtil.dotProduct(centroid, centroid) : 0;
         // Scalar-encoding wire number; the reader recovers the encoding via ScalarEncoding.fromWireNumber.
@@ -231,7 +301,7 @@ public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWrit
         // originalOrdinal -> physicalPosition, the inverse of the physical-layout permutation.
         final int[] ordToPhysicalOrdMap = new int[count];
         for (int i = 0; i < count; i++) {
-            ordToPhysicalOrdMap[physicalOrdinals.get(i)] = i;
+            ordToPhysicalOrdMap[physicalOrdinals[i]] = i;
         }
 
         // Pack with DirectWriter at a fixed bits/value (values are in [0, count), so the max is
@@ -248,37 +318,18 @@ public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWrit
         directWriter.finish();
     }
 
-    /**
-     * Quantizes each vector in physical (permuted) order and writes its record to the {@code .veqlo}
-     * file: the packed 1-bit code followed by the four correction terms.
-     */
-    private void writeVectorData(
-        final FieldInfo fieldInfo,
-        final float[] centroid,
-        final IntArrayList physicalOrdinals,
-        final FloatVectorProvider vectorProvider
+    private void writeVectorDataUsingQuantizedVectorValues(
+        final int[] physicalOrdinals,
+        final QuantizedByteVectorValues quantizedByteVectorValues
     ) throws IOException {
-        final int count = physicalOrdinals.size();
-        final int dimension = fieldInfo.getVectorDimension();
-        final int codeLength = scalarEncoding.getDocPackedLength(dimension);
-        final OptimizedScalarQuantizer quantizer = new OptimizedScalarQuantizer(fieldInfo.getVectorSimilarityFunction());
-
-        final byte[] quantizedVectorScratch = new byte[scalarEncoding.getDiscreteDimensions(dimension)];
-        final byte[] vectorToBeWritten = new byte[codeLength];
-
+        final int count = physicalOrdinals.length;
         for (int p = 0; p < count; p++) {
-            final float[] vectorToQuantize = vectorProvider.apply(physicalOrdinals.get(p));
-            // Quantize the vector first
-            final OptimizedScalarQuantizer.QuantizationResult quantizationResult = quantizer.scalarQuantize(
-                vectorToQuantize,
-                quantizedVectorScratch,
-                scalarEncoding.getBits(),
-                centroid
-            );
-            // pack the vector into bytes
-            OptimizedScalarQuantizer.packAsBinary(quantizedVectorScratch, vectorToBeWritten);
-            // write the vector first, and then the correction terms
+            // get quantized vector using the original ordinal.
+            byte[] vectorToBeWritten = quantizedByteVectorValues.vectorValue(physicalOrdinals[p]);
             vectordata.writeBytes(vectorToBeWritten, vectorToBeWritten.length);
+            final OptimizedScalarQuantizer.QuantizationResult quantizationResult = quantizedByteVectorValues.getCorrectiveTerms(
+                physicalOrdinals[p]
+            );
             vectordata.writeInt(Float.floatToIntBits(quantizationResult.lowerInterval()));
             vectordata.writeInt(Float.floatToIntBits(quantizationResult.upperInterval()));
             vectordata.writeInt(Float.floatToIntBits(quantizationResult.additionalCorrection()));
@@ -286,336 +337,19 @@ public final class LocalityOrderedQuantizedVectorsWriter extends FlatVectorsWrit
         }
     }
 
-    @Override
-    public FlatFieldVectorsWriter<?> addField(FieldInfo fieldInfo) throws IOException {
-        final FlatFieldVectorsWriter<?> flatFieldVectorsWriter = this.rawFlatVectorsWriter.addField(fieldInfo);
-        if(fieldInfo.getVectorEncoding() == VectorEncoding.FLOAT32) {
-            @SuppressWarnings("unchecked")
-            final SQFieldWriter sqFieldWriter = new SQFieldWriter(fieldInfo, (FlatFieldVectorsWriter<float[]>)flatFieldVectorsWriter);
-            fields.add(sqFieldWriter);
-            return sqFieldWriter;
-        }
-        // This should never happen, we should just throw exception from here.
-        return flatFieldVectorsWriter;
-    }
-
-    @Override
-    public void flush(int maxDoc, Sorter.DocMap sortMap) throws IOException {
-        rawFlatVectorsWriter.flush(maxDoc, sortMap);
-        if(fields.isEmpty()) {
-            return;
-        }
-        // TODO : Come and fix this.
-        if(fields.size() > 1) {
-            throw new UnsupportedOperationException("For more than 1 field we don't support LocalityOrderedQuantizedVectorsWriter");
-        }
-        final SQFieldWriter sqFieldWriter = fields.get(0);
-        // after raw vectors are written, normalize vectors for clustering and quantization
-        if (VectorSimilarityFunction.COSINE == sqFieldWriter.fieldInfo.getVectorSimilarityFunction()) {
-            sqFieldWriter.normalizeVectors();
-        }
-        int dimensions = sqFieldWriter.fieldInfo.getVectorDimension();
-        final float[] centroid = new float[sqFieldWriter.fieldInfo.getVectorDimension()];
-        int vectorCount = sqFieldWriter.getVectors().size();
-
-        if(vectorCount > 0) {
-            for(int i = 0 ; i < dimensions; i++) {
-                centroid[i] = sqFieldWriter.dimensionSums[i] / vectorCount;
-            }
-            if (VectorSimilarityFunction.COSINE == sqFieldWriter.fieldInfo.getVectorSimilarityFunction()) {
-                VectorUtil.l2normalize(centroid);
-            }
-        }
-
-        if (segmentWriteState.infoStream.isEnabled(KNN1040LocalityAwareSQVectorsFormat.QUANTIZED_VECTOR_COMPONENT)) {
-            segmentWriteState.infoStream.message(
-                    KNN1040LocalityAwareSQVectorsFormat.QUANTIZED_VECTOR_COMPONENT, "Vectors' count:" + vectorCount);
-        }
-
-        // now we have to write the field
-        final DocIdSetIterator disi = sqFieldWriter.getDocsWithFieldSet().iterator();
-        final IntArrayList physicalOrdinalsList = new IntArrayList();
-        int i = 0;
-        for(int docId = disi.nextDoc(); docId != DocIdSetIterator.NO_MORE_DOCS; docId = disi.nextDoc()) {
-            physicalOrdinalsList.add(i);
-            i++;
-        }
-        // This is just a temporary thing, in original implementation this will come from BFS
-        randomizeOrdinals(physicalOrdinalsList);
-        // Flush path: vectors are the in-memory (already normalized, if COSINE) float vectors.
-        writeFieldInternal(sqFieldWriter.fieldInfo, centroid, physicalOrdinalsList, ord -> sqFieldWriter.getVectors().get(ord));
-        sqFieldWriter.finish();
-    }
-
-    private static void randomizeOrdinals(final IntArrayList ordinals) {
-        final Random random = new Random(1234);
-        for (int i = ordinals.size() - 1; i > 0; i--) {
-            final int j = random.nextInt(i + 1);
-            final int tmp = ordinals.get(i);
-            ordinals.set(i, ordinals.get(j));
-            ordinals.set(j, tmp);
-        }
-    }
-
-    private void ensureFlatReaderOpen() throws IOException {
-        if (flatVectorsReader == null) {
-            rawFlatVectorsWriter.finish();
-            rawFlatVectorsWriter.close();
-            flatWriterClosed = true;
-            SegmentReadState readState =
-                    new SegmentReadState(
-                            segmentWriteState.directory,
-                            segmentWriteState.segmentInfo,
-                            segmentWriteState.fieldInfos,
-                            segmentWriteState.context,
-                            segmentWriteState.segmentSuffix);
-            flatVectorsReader = flatVectorsFormat.fieldsReader(readState);
-        }
-    }
-
-    @Override
-    public void mergeOneFlatVectorField(FieldInfo fieldInfo, MergeState mergeState) throws IOException {
-        rawFlatVectorsWriter.mergeOneFlatVectorField(fieldInfo, mergeState);
-        if (!fieldInfo.getVectorEncoding().equals(VectorEncoding.FLOAT32)) {
-            return;
-        }
-
-        final float[] centroid;
-        final float[] mergedCentroid = new float[fieldInfo.getVectorDimension()];
-        int vectorCount = mergeAndRecalculateCentroids(mergeState, fieldInfo, mergedCentroid);
-        centroid = mergedCentroid;
-        if (segmentWriteState.infoStream.isEnabled(QUANTIZED_VECTOR_COMPONENT)) {
-            segmentWriteState.infoStream.message(
-                    QUANTIZED_VECTOR_COMPONENT, "Vectors' count:" + vectorCount);
-        }
-        // Lazily finish flat writer and open a reader for the written segment
-        ensureFlatReaderOpen();
-        FloatVectorValues floatVectorValues = flatVectorsReader.getFloatVectorValues(fieldInfo.name);
-
-        if (fieldInfo.getVectorSimilarityFunction() == COSINE) {
-            floatVectorValues = new NormalizedFloatVectorValues(floatVectorValues);
-        }
-
-        final DocIdSetIterator disi = floatVectorValues.iterator();
-        final IntArrayList physicalOrdinalsList = new IntArrayList();
-        int i = 0;
-        for(int docId = disi.nextDoc(); docId != DocIdSetIterator.NO_MORE_DOCS; docId = disi.nextDoc()) {
-            physicalOrdinalsList.add(i);
-            i++;
-        }
-        randomizeOrdinals(physicalOrdinalsList);
-
-        // Merge path: vectors come (by original ordinal) from the reopened merged flat reader,
-        // which supports random access. floatVectorValues is reassigned above for COSINE, so
-        // capture it in a final for the provider.
-        final FloatVectorValues mergedVectors = floatVectorValues;
-        writeFieldInternal(fieldInfo, centroid, physicalOrdinalsList, mergedVectors::vectorValue);
-    }
-
-
-
-    private int mergeAndRecalculateCentroids(MergeState mergeState, FieldInfo fieldInfo, float[] mergedCentroid) throws IOException {
-        int totalVectorCount = 0;
-
-        for(int i = 0 ; i < mergeState.knnVectorsReaders.length; i++) {
-            KnnVectorsReader knnVectorsReader = mergeState.knnVectorsReaders[i];
-            if (knnVectorsReader == null
-                    || knnVectorsReader.getFloatVectorValues(fieldInfo.name) == null) {
-                continue;
-            }
-            float[] centroid = getCentroid(knnVectorsReader, fieldInfo.name);
-            if(centroid == null) {
-                continue;
-            }
-            int vectorCount = knnVectorsReader.getFloatVectorValues(fieldInfo.name).size();
-            if (vectorCount == 0) {
-                continue;
-            }
-            totalVectorCount += vectorCount;
-            for (int j = 0; j < centroid.length; j++) {
-                mergedCentroid[j] += centroid[j] * vectorCount;
-            }
-        }
-
-        if (totalVectorCount == 0) {
-            return 0;
-        } else {
-            for(int j = 0 ; j < mergedCentroid.length; j++) {
-                mergedCentroid[j] = mergedCentroid[j] / totalVectorCount;
-            }
-            if (fieldInfo.getVectorSimilarityFunction() == COSINE) {
-                VectorUtil.l2normalize(mergedCentroid);
-            }
-            return totalVectorCount;
-        }
-    }
-
-    private float[] getCentroid(KnnVectorsReader vectorsReader, String fieldName) {
-        if (vectorsReader instanceof PerFieldKnnVectorsFormat.FieldsReader candidateReader) {
-            vectorsReader = candidateReader.getFieldReader(fieldName);
-        }
-
-        // This might come handy for BWC for merging old segments to new segments, otherwise we can just remove it
-        if (vectorsReader instanceof Lucene104ScalarQuantizedVectorsReader reader) {
-            return reader.getCentroid(fieldName);
-        }
-
-        if (vectorsReader instanceof LocalityOrderedQuantizedVectorsReader reader) {
-            return reader.getCentroid(fieldName);
-        }
-        return null;
-    }
-
-
-    /** Writes the footer. Must be called once after {@link #writeFieldInternal}. */
+    /** Writes the footer.*/
     public void finish() throws IOException {
         if (finished) {
             throw new IllegalStateException("already finished");
         }
         finished = true;
-        if (!wroteField) {
-            throw new IllegalStateException("finish() called before writeField()");
-        }
-        if(flatWriterClosed == false) {
-            rawFlatVectorsWriter.finish();
-        }
         CodecUtil.writeFooter(metadata);
         CodecUtil.writeFooter(vectordata);
     }
 
+    /** Closes the metadata and records outputs. {@link IOUtils#close} is null-safe. */
     @Override
     public void close() throws IOException {
-        // Merge path: the raw writer is already closed (flatWriterClosed) and a reopened flat reader
-        // may be held. Flush path: we still own the raw writer and no reader was opened.
-        if (flatWriterClosed) {
-            IOUtils.close(vectordata, metadata, flatVectorsReader);
-        } else {
-            IOUtils.close(vectordata, metadata, rawFlatVectorsWriter);
-        }
-    }
-
-    @Override
-    public long ramBytesUsed() {
-        return 0;
-    }
-
-    private static final class SQFieldWriter extends FlatFieldVectorsWriter<float[]> {
-
-        private final FieldInfo fieldInfo;
-        private boolean finished;
-        private final FlatFieldVectorsWriter<float[]> flatFieldVectorsWriter;
-        // This will be later used to calculate the centroid
-        private final float[] dimensionSums;
-        private final FloatArrayList magnitudes = new FloatArrayList();
-
-        SQFieldWriter(FieldInfo fieldInfo, FlatFieldVectorsWriter<float[]> flatFieldVectorsWriter) {
-            this.fieldInfo = fieldInfo;
-            this.flatFieldVectorsWriter = flatFieldVectorsWriter;
-            this.dimensionSums = new float[fieldInfo.getVectorDimension()];
-        }
-
-        @Override
-        public List<float[]> getVectors() {
-            return flatFieldVectorsWriter.getVectors();
-        }
-
-        @Override
-        public DocsWithFieldSet getDocsWithFieldSet() {
-            return flatFieldVectorsWriter.getDocsWithFieldSet();
-        }
-
-        @Override
-        public void finish() throws IOException {
-            if (finished) {
-                return;
-            }
-            assert flatFieldVectorsWriter.isFinished();
-            finished = true;
-        }
-
-        @Override
-        public boolean isFinished() {
-            return finished && flatFieldVectorsWriter.isFinished();
-        }
-
-        @Override
-        public void addValue(int docID, float[] vectorValue) throws IOException {
-            flatFieldVectorsWriter.addValue(docID, vectorValue);
-            // we might never hit this case since we always use IP when we have cosine
-            if(fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.COSINE) {
-                float dp = VectorUtil.dotProduct(vectorValue, vectorValue);
-                float divisor = (float) Math.sqrt(dp);
-                magnitudes.add(divisor);
-                for (int i = 0; i < vectorValue.length; i++) {
-                    dimensionSums[i] += (vectorValue[i] / divisor);
-                }
-            } else {
-                for (int i = 0; i < vectorValue.length; i++) {
-                    dimensionSums[i] += vectorValue[i];
-                }
-            }
-        }
-
-        public void normalizeVectors() {
-            for (int i = 0; i < flatFieldVectorsWriter.getVectors().size(); i++) {
-                float[] vector = flatFieldVectorsWriter.getVectors().get(i);
-                float magnitude = magnitudes.get(i);
-                for (int j = 0; j < vector.length; j++) {
-                    vector[j] /= magnitude;
-                }
-            }
-        }
-
-        @Override
-        public float[] copyValue(float[] vectorValue) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long ramBytesUsed() {
-            return 0;
-        }
-    }
-
-    static final class NormalizedFloatVectorValues extends FloatVectorValues {
-        private final FloatVectorValues values;
-        private final float[] normalizedVector;
-
-        NormalizedFloatVectorValues(FloatVectorValues values) {
-            this.values = values;
-            this.normalizedVector = new float[values.dimension()];
-        }
-
-        @Override
-        public int dimension() {
-            return values.dimension();
-        }
-
-        @Override
-        public int size() {
-            return values.size();
-        }
-
-        @Override
-        public int ordToDoc(int ord) {
-            return values.ordToDoc(ord);
-        }
-
-        @Override
-        public float[] vectorValue(int ord) throws IOException {
-            System.arraycopy(values.vectorValue(ord), 0, normalizedVector, 0, normalizedVector.length);
-            VectorUtil.l2normalize(normalizedVector);
-            return normalizedVector;
-        }
-
-        @Override
-        public DocIndexIterator iterator() {
-            return values.iterator();
-        }
-
-        @Override
-        public NormalizedFloatVectorValues copy() throws IOException {
-            return new NormalizedFloatVectorValues(values.copy());
-        }
+        IOUtils.close(metadata, vectordata);
     }
 }

@@ -25,6 +25,7 @@ import org.opensearch.core.common.settings.SecureString;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.IndexModule;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.knn.index.engine.MemoryOptimizedSearchSupportSpec;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManagerDto;
@@ -83,6 +84,7 @@ public class KNNSettings {
      * Settings name
      */
     public static final String INDEX_KNN_ADVANCED_APPROXIMATE_THRESHOLD = "index.knn.advanced.approximate_threshold";
+    public static final String INDEX_KNN_REORDERING_ENABLED = "index.knn.advanced.reordering_enabled";
     public static final String KNN_ALGO_PARAM_EF_SEARCH = "index.knn.algo_param.ef_search";
     public static final String KNN_ALGO_PARAM_INDEX_THREAD_QTY = "knn.algo_param.index_thread_qty";
     public static final String KNN_MEMORY_CIRCUIT_BREAKER_ENABLED = "knn.memory.circuit_breaker.enabled";
@@ -204,6 +206,13 @@ public class KNNSettings {
         INDEX_KNN_ADVANCED_APPROXIMATE_THRESHOLD_DEFAULT_VALUE,
         INDEX_KNN_BUILD_VECTOR_DATA_STRUCTURE_THRESHOLD_MIN,
         INDEX_KNN_BUILD_VECTOR_DATA_STRUCTURE_THRESHOLD_MAX,
+        IndexScope,
+        Dynamic
+    );
+
+    public static Setting<Boolean> INDEX_KNN_REORDERING_ENABLED_SETTING = Setting.boolSetting(
+        INDEX_KNN_REORDERING_ENABLED,
+        false,
         IndexScope,
         Dynamic
     );
@@ -768,7 +777,8 @@ public class KNNSettings {
             KNN_REMOTE_BUILD_CLIENT_TIMEOUT_SETTING,
             KNN_REMOTE_BUILD_SERVER_USERNAME_SETTING,
             KNN_REMOTE_BUILD_SERVER_PASSWORD_SETTING,
-            INDEX_KNN_FAISS_EFFICIENT_FILTER_DISABLE_EXACT_SEARCH_SETTING
+            INDEX_KNN_FAISS_EFFICIENT_FILTER_DISABLE_EXACT_SEARCH_SETTING,
+            INDEX_KNN_REORDERING_ENABLED_SETTING
         );
         return Stream.concat(settings.stream(), Stream.concat(getFeatureFlags().stream(), dynamicCacheSettings.values().stream()))
             .collect(Collectors.toList());
@@ -1064,6 +1074,11 @@ public class KNNSettings {
      */
     public static boolean isMemoryOptimizedKnnSearchModeEnabled(@NonNull final String indexName) {
         return getIndexSettings(indexName).getAsBoolean(MEMORY_OPTIMIZED_KNN_SEARCH_MODE, DEFAULT_MEMORY_OPTIMIZED_KNN_SEARCH_MODE);
+    }
+
+    public static boolean isReOrderingEnabled(@NonNull final IndexSettings indexSettings) {
+        indexSettings.getSettings().getAsBoolean(INDEX_KNN_REORDERING_ENABLED, false);
+        return false;
     }
 
     public static Settings getIndexSettings(@NonNull final String indexName) {

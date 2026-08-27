@@ -123,7 +123,8 @@ class Faiss1040ScalarQuantizedKnnVectorsWriter extends AbstractNativeEnginesKnnV
                 null,
                 segmentWriteState,
                 nativeIndexBuildStrategyFactory,
-                quantizedValues
+                quantizedValues,
+                null
             );
         } finally {
             IOUtils.close(flatVectorsReader);
@@ -157,7 +158,7 @@ class Faiss1040ScalarQuantizedKnnVectorsWriter extends AbstractNativeEnginesKnnV
             final QuantizedByteVectorValues quantizedValues = KNN1040ScalarQuantizedUtils.extractQuantizedByteVectorValues(
                 floatVectorValues
             );
-            doMergeOneField(fieldInfo, mergeState, null, null, segmentWriteState, nativeIndexBuildStrategyFactory, quantizedValues);
+            doMergeOneField(fieldInfo, mergeState, null, null, segmentWriteState, nativeIndexBuildStrategyFactory, quantizedValues, null);
         } finally {
             IOUtils.close(flatVectorsReader);
         }

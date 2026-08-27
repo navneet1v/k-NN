@@ -17,6 +17,7 @@ import org.opensearch.common.Nullable;
 import org.opensearch.common.StopWatch;
 import org.opensearch.common.TriFunction;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.codec.nativeindex.model.Layer0LocalityOrdering;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
@@ -40,7 +41,8 @@ public abstract class AbstractNativeEnginesKnnVectorsWriter extends KnnVectorsWr
         final Integer approximateThreshold,
         final SegmentWriteState segmentWriteState,
         final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
-        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues
+        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues,
+        @Nullable final Layer0LocalityOrdering layer0LocalityOrdering
     ) throws IOException {
         // Check total live docs first to avoid unnecessary supplier creation for empty fields
         final int totalLiveDocs;
@@ -86,7 +88,8 @@ public abstract class AbstractNativeEnginesKnnVectorsWriter extends KnnVectorsWr
             segmentWriteState,
             quantizationState,
             nativeIndexBuildStrategyFactory,
-            quantizedByteVectorValues
+            quantizedByteVectorValues,
+            layer0LocalityOrdering
         );
 
         final StopWatch stopWatch = new StopWatch().start();
@@ -103,7 +106,8 @@ public abstract class AbstractNativeEnginesKnnVectorsWriter extends KnnVectorsWr
         final Integer approximateThreshold,
         final SegmentWriteState segmentWriteState,
         final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
-        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues
+        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues,
+        @Nullable final Layer0LocalityOrdering layer0LocalityOrdering
     ) throws IOException {
         final VectorDataType vectorDataType = extractVectorDataType(fieldInfo);
         final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier = getKNNVectorValuesSupplierForMerge(
@@ -137,7 +141,8 @@ public abstract class AbstractNativeEnginesKnnVectorsWriter extends KnnVectorsWr
             segmentWriteState,
             quantizationState,
             nativeIndexBuildStrategyFactory,
-            quantizedByteVectorValues
+            quantizedByteVectorValues,
+            layer0LocalityOrdering
         );
 
         final StopWatch stopWatch = new StopWatch().start();

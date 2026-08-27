@@ -54,22 +54,22 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
     // Needed because the physical (locality) ordering is not doc-ascending, but a DocIdSetIterator
     // must return docIDs in ascending order.
     private int[] docSortedOrds;
-    private final  FloatVectorValues floatVectorValues;
+    private final FloatVectorValues floatVectorValues;
     private final int[] ordToPhysicalOrdMap;
 
     LocalityOrderedQuantizedByteVectorValues(
-            final int dimension,
-            final int size,
-            final int codeLength,
-            final int recordSize,
-            final float[] centroid,
-            final float centroidDp,
-            final OptimizedScalarQuantizer quantizer,
-            final ScalarEncoding encoding,
-            final int[] ordToPhysicalOrdMap,
-            final IndexInput slice,
-            final FloatVectorValues floatVectorValues
-            ) {
+        final int dimension,
+        final int size,
+        final int codeLength,
+        final int recordSize,
+        final float[] centroid,
+        final float centroidDp,
+        final OptimizedScalarQuantizer quantizer,
+        final ScalarEncoding encoding,
+        final int[] ordToPhysicalOrdMap,
+        final IndexInput slice,
+        final FloatVectorValues floatVectorValues
+    ) {
         this.dimension = dimension;
         this.size = size;
         this.codeLength = codeLength;
@@ -93,7 +93,7 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
     @Override
     public byte[] vectorValue(final int originalOrd) throws IOException {
         final int physicalOrd = toPhysical(originalOrd);
-        if(lastOrd == physicalOrd) {
+        if (lastOrd == physicalOrd) {
             return vector;
         }
         slice.seek((long) physicalOrd * recordSize);
@@ -109,7 +109,11 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
         final int physicalOrd = toPhysical(originalOrd);
         if (lastOrd == physicalOrd) {
             return new OptimizedScalarQuantizer.QuantizationResult(
-                    correctionScratch[0], correctionScratch[1], correctionScratch[2], quantizedComponentSum);
+                correctionScratch[0],
+                correctionScratch[1],
+                correctionScratch[2],
+                quantizedComponentSum
+            );
         }
 
         slice.seek((long) physicalOrd * recordSize + codeLength);

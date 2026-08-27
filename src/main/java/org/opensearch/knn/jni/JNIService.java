@@ -538,4 +538,79 @@ public class JNIService {
             String.format(Locale.ROOT, "releaseFaissSQIndex not supported for provided engine : %s", knnEngine.getName())
         );
     }
+
+    /**
+     * Forces the SQ index's HNSW graph to be single-layer (layer 0 only). Must be called after
+     * {@code initFaissSQIndex} and before any vectors are added. See
+     * {@link FaissService#setFaissSQHnswToSingleLayer(long)}.
+     */
+    public static void setFaissSQHnswToSingleLayer(final long indexMemoryAddress, final KNNEngine knnEngine) {
+        if (KNNEngine.FAISS == knnEngine) {
+            FaissService.setFaissSQHnswToSingleLayer(indexMemoryAddress);
+            return;
+        }
+
+        throw new IllegalArgumentException(
+            String.format(Locale.ROOT, "setFaissSQHnswToSingleLayer not supported for provided engine : %s", knnEngine.getName())
+        );
+    }
+
+    /**
+     * Computes the graph-derived page-locality permutation from the SQ index's HNSW structure via the
+     * page-capacity-aware greedy page-growing algorithm and writes it into the caller-allocated
+     * {@code ordering} array (length {@code ntotal}); on return this is the forward map
+     * {@code ordering[originalOrdinal] = physicalPosition}, with strict (sparse) page boundaries. Also
+     * fills {@code hubs} (length <= ~32) with the top-degree hub ordinals as entry-point candidates. See
+     * {@link FaissService#buildOrderingOfVectorsUsingIndexStructure(long, int[], int, int[])}.
+     */
+    public static void buildOrderingOfVectorsUsingIndexStructure(
+        final long indexMemoryAddress,
+        final int[] ordering,
+        final int pageCapacity,
+        final int[] hubs,
+        final KNNEngine knnEngine
+    ) {
+        Objects.requireNonNull(ordering);
+        Objects.requireNonNull(hubs);
+
+        if (KNNEngine.FAISS == knnEngine) {
+            FaissService.buildOrderingOfVectorsUsingIndexStructure(indexMemoryAddress, ordering, pageCapacity, hubs);
+            return;
+        }
+
+        throw new IllegalArgumentException(
+            String.format(
+                Locale.ROOT,
+                "buildOrderingOfVectorsUsingIndexStructure not supported for provided engine : %s",
+                knnEngine.getName()
+            )
+        );
+    }
+
+    /**
+     * Computes a BFS-based (dense) page-locality permutation from the SQ index's HNSW structure and
+     * writes it into the caller-allocated {@code ordering} array (length {@code ntotal}); on return
+     * this is the forward map {@code ordering[originalOrdinal] = physicalPosition}, contiguous with no
+     * padding. Also fills {@code hubs} (length <= ~32) with the top-degree hub ordinals as entry-point
+     * candidates. Simpler alternative to {@link #buildOrderingOfVectorsUsingIndexStructure} for
+     * experimentation. See {@link FaissService#buildOrderingOfVectorsUsingBFS(long, int[], int[])}.
+     */
+    public static void buildOrderingOfVectorsUsingBFS(
+        final long indexMemoryAddress,
+        final int[] ordering,
+        final int[] hubs,
+        final KNNEngine knnEngine
+    ) {
+        Objects.requireNonNull(ordering);
+        Objects.requireNonNull(hubs);
+
+        if (KNNEngine.FAISS == knnEngine) {
+            FaissService.buildOrderingOfVectorsUsingBFS(indexMemoryAddress, ordering, hubs);
+            return;
+        }
+
+        throw new IllegalArgumentException(
+            String.format(Locale.ROOT, "buildOrderingOfVectorsUsingBFS not supported for provided engine : %s", knnEngine.getName())
+        );
+    }
 }

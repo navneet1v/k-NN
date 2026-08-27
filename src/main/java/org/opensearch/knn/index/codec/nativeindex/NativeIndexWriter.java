@@ -23,6 +23,7 @@ import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
+import org.opensearch.knn.index.codec.nativeindex.model.Layer0LocalityOrdering;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.qframe.QuantizationConfig;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
@@ -61,6 +62,8 @@ public class NativeIndexWriter {
     private final QuantizationState quantizationState;
     @Nullable
     private final QuantizedByteVectorValues quantizedByteVectorValues;
+    @Nullable
+    private final Layer0LocalityOrdering layer0LocalityOrdering;
 
     /**
      * Gets the correct writer type from fieldInfo
@@ -69,7 +72,7 @@ public class NativeIndexWriter {
      * @return correct NativeIndexWriter to make index specified in fieldInfo
      */
     public static NativeIndexWriter getWriter(final FieldInfo fieldInfo, SegmentWriteState state) {
-        return createWriter(fieldInfo, state, null, new NativeIndexBuildStrategyFactory(), null);
+        return createWriter(fieldInfo, state, null, new NativeIndexBuildStrategyFactory(), null, null);
     }
 
     /**
@@ -93,7 +96,7 @@ public class NativeIndexWriter {
         final QuantizationState quantizationState,
         final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
     ) {
-        return createWriter(fieldInfo, state, quantizationState, nativeIndexBuildStrategyFactory, null);
+        return createWriter(fieldInfo, state, quantizationState, nativeIndexBuildStrategyFactory, null, null);
     }
 
     /**
@@ -113,7 +116,41 @@ public class NativeIndexWriter {
         final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
         @Nullable final QuantizedByteVectorValues quantizedByteVectorValues
     ) {
-        return createWriter(fieldInfo, state, quantizationState, nativeIndexBuildStrategyFactory, quantizedByteVectorValues);
+        return createWriter(fieldInfo, state, quantizationState, nativeIndexBuildStrategyFactory, quantizedByteVectorValues, null);
+    }
+
+    /**
+     * Gets the correct writer type for the specified field, with optional SQ quantized vector values
+     * and an optional {@link Layer0LocalityOrdering} sink.
+     *
+     * <p>When {@code layer0LocalityOrdering} is non-null, the build is driven single-layer and the
+     * strategy writes the graph-derived page-locality permutation into the sink so the caller can
+     * read it back after the build returns. Used by the locality-reordered Faiss SQ writer.
+     *
+     * @param fieldInfo                       The FieldInfo object containing metadata about the field.
+     * @param state                           The SegmentWriteState representing the current segment's writing context.
+     * @param quantizationState               The QuantizationState for k-NN quantization, or null.
+     * @param nativeIndexBuildStrategyFactory The factory which will return the correct build strategy.
+     * @param quantizedByteVectorValues       The SQ quantized vector values, or null for non-SQ fields.
+     * @param layer0LocalityOrdering          Sink for the page-locality permutation, or null to disable it.
+     * @return                                A NativeIndexWriter instance appropriate for the specified field.
+     */
+    public static NativeIndexWriter getWriter(
+        final FieldInfo fieldInfo,
+        final SegmentWriteState state,
+        final QuantizationState quantizationState,
+        final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
+        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues,
+        @Nullable final Layer0LocalityOrdering layer0LocalityOrdering
+    ) {
+        return createWriter(
+            fieldInfo,
+            state,
+            quantizationState,
+            nativeIndexBuildStrategyFactory,
+            quantizedByteVectorValues,
+            layer0LocalityOrdering
+        );
     }
 
     /**
@@ -229,6 +266,10 @@ public class NativeIndexWriter {
             .segmentWriteState(state)
             .isFlush(isFlush)
             .quantizedByteVectorValues(quantizedByteVectorValues)
+            // A locality-ordering sink implies the caller wants the single-layer graph + the
+            // page-locality permutation; tie the two together so the strategy runs that path.
+            .buildLayer0Graph(layer0LocalityOrdering != null)
+            .layer0LocalityOrdering(layer0LocalityOrdering)
             .build();
     }
 
@@ -357,8 +398,16 @@ public class NativeIndexWriter {
         final SegmentWriteState state,
         @Nullable final QuantizationState quantizationState,
         NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
-        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues
+        @Nullable final QuantizedByteVectorValues quantizedByteVectorValues,
+        @Nullable final Layer0LocalityOrdering layer0LocalityOrdering
     ) {
-        return new NativeIndexWriter(state, fieldInfo, nativeIndexBuildStrategyFactory, quantizationState, quantizedByteVectorValues);
+        return new NativeIndexWriter(
+            state,
+            fieldInfo,
+            nativeIndexBuildStrategyFactory,
+            quantizationState,
+            quantizedByteVectorValues,
+            layer0LocalityOrdering
+        );
     }
 }

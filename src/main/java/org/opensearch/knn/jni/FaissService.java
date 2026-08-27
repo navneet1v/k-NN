@@ -593,4 +593,83 @@ class FaissService {
      * @param indexMemoryAddress pointer to the native Faiss SQ index (returned by {@link #initFaissSQIndex})
      */
     public static native void releaseFaissSQIndex(long indexMemoryAddress);
+
+    /**
+     * Forces the HNSW graph of a freshly-initialized Faiss SQ index to be <b>single-layer</b>
+     * (layer 0 only). Every node is assigned level 0, so no upper layers are ever allocated — the
+     * CAGRA-style flat graph the locality-aware layout builds on. The layer-0 neighbor width
+     * ({@code 2*M}) is unchanged.
+     *
+     * <p><b>Must be called right after {@link #initFaissSQIndex} and before
+     * {@link #addDocsToSQIndex}</b>; calling it after vectors have been added is unsupported (throws),
+     * because neighbor storage would already be laid out for multiple layers.
+     *
+     * <p>Scoped to the locality build path — the standard Faiss SQ format does not call this and keeps
+     * its multi-layer graph.
+     *
+     * @param indexMemoryAddress pointer to the native Faiss SQ index (returned by {@link #initFaissSQIndex})
+     */
+    public static native void setFaissSQHnswToSingleLayer(long indexMemoryAddress);
+
+    /**
+     * Computes the graph-derived page-locality permutation of vectors from the HNSW index structure
+     * and writes it into the caller-allocated {@code ordering} array.
+     *
+     * <p>Runs the page-capacity-aware greedy page-growing algorithm natively over the in-place layer-0
+     * adjacency (zero copy — the large {@code ntotal * M0} adjacency never crosses the JNI boundary),
+     * so only the compact {@code int[ntotal]} permutation is returned. Pages are seeded from the
+     * highest-degree hub nodes and grown by shared-neighbor affinity up to {@code pageCapacity} nodes.
+     *
+     * <p>The caller allocates {@code ordering} with length {@code ntotal}; on return this is the
+     * <b>forward</b> map {@code ordering[originalOrdinal] = physicalPosition} — index by the original
+     * insertion-order ordinal to get the physical (on-disk) slot its record occupies. The forward map
+     * is bijective and gap-free (length {@code ntotal}); the native side throws if the length does not
+     * match {@code ntotal}.
+     *
+     * <p><b>Strict page boundaries:</b> each page occupies exactly {@code pageCapacity} physical slots,
+     * so an early-closed page pads to the next boundary. Physical positions are therefore <b>sparse</b>
+     * (the max value is {@code numPages*pageCapacity - 1}, which can exceed {@code ntotal}) — the
+     * padding slots map to no vector and must be zero-filled on disk by the writer. This guarantees
+     * every logical page maps to exactly one physical {@code pageCapacity}-record (32 KB) page.
+     *
+     * <p>The {@code hubs} array is an additional output filled with search entry-point candidates: the
+     * highest-degree node ids (ORIGINAL ordinals). The caller sizes it (at most ~32); the native side
+     * fills {@code min(hubs.length, ntotal)} entries with the top hubs and pads any remainder with
+     * {@code -1}.
+     *
+     * @param indexMemoryAddress pointer to the native Faiss SQ index (returned by {@link #initFaissSQIndex})
+     * @param ordering           output array of length {@code ntotal}; filled with the forward permutation
+     * @param pageCapacity       number of records per physical page ({@code pageSizeBytes / recordSizeBytes}); must be >= 1
+     * @param hubs               output array (length <= ~32); filled with the top-degree hub ordinals, {@code -1}-padded
+     */
+    public static native void buildOrderingOfVectorsUsingIndexStructure(
+        long indexMemoryAddress,
+        int[] ordering,
+        int pageCapacity,
+        int[] hubs
+    );
+
+    /**
+     * Computes a BFS-based page-locality permutation of vectors from the HNSW index structure and
+     * writes it into the caller-allocated {@code ordering} array.
+     *
+     * <p>Simpler alternative to {@link #buildOrderingOfVectorsUsingIndexStructure} for experimentation:
+     * a breadth-first traversal of the in-place layer-0 adjacency (zero copy), seeded from the
+     * highest-degree hub nodes, emitting each node at its visitation order. Graph-adjacent vectors land
+     * near each other in the output.
+     *
+     * <p>The caller allocates {@code ordering} with length {@code ntotal}; on return this is the
+     * <b>forward</b> map {@code ordering[originalOrdinal] = physicalPosition}. Unlike the strict-page
+     * greedy variant, BFS packs <b>densely</b> — physical positions are a contiguous {@code 0..ntotal-1}
+     * with no padding, so it needs no {@code pageCapacity}. The native side throws if the length does
+     * not match {@code ntotal}.
+     *
+     * <p>As with the greedy variant, {@code hubs} is filled with the top-degree hub ordinals (ORIGINAL
+     * ordinals) as search entry-point candidates: {@code min(hubs.length, ntotal)} entries, {@code -1}-padded.
+     *
+     * @param indexMemoryAddress pointer to the native Faiss SQ index (returned by {@link #initFaissSQIndex})
+     * @param ordering           output array of length {@code ntotal}; filled with the dense forward permutation
+     * @param hubs               output array (length <= ~32); filled with the top-degree hub ordinals, {@code -1}-padded
+     */
+    public static native void buildOrderingOfVectorsUsingBFS(long indexMemoryAddress, int[] ordering, int[] hubs);
 }

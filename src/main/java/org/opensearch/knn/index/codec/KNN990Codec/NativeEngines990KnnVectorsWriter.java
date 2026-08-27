@@ -95,6 +95,7 @@ public class NativeEngines990KnnVectorsWriter extends AbstractNativeEnginesKnnVe
                 approximateThreshold,
                 segmentWriteState,
                 nativeIndexBuildStrategyFactory,
+                null,
                 null
             );
         }
@@ -107,7 +108,16 @@ public class NativeEngines990KnnVectorsWriter extends AbstractNativeEnginesKnnVe
 
         if (mergeRunnable != null) mergeRunnable.run();
 
-        doMergeOneField(fieldInfo, mergeState, this::train, approximateThreshold, segmentWriteState, nativeIndexBuildStrategyFactory, null);
+        doMergeOneField(
+            fieldInfo,
+            mergeState,
+            this::train,
+            approximateThreshold,
+            segmentWriteState,
+            nativeIndexBuildStrategyFactory,
+            null,
+            null
+        );
         return null;
     }
 

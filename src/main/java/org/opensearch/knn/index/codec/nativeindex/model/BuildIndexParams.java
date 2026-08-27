@@ -44,4 +44,15 @@ public class BuildIndexParams {
      */
     @Nullable
     QuantizedByteVectorValues quantizedByteVectorValues;
+
+    @Builder.Default
+    boolean buildLayer0Graph = false;
+
+    /**
+     * Optional sink for the graph-derived page-locality permutation. When non-null, the layer-0
+     * graph is built and the build strategy writes the computed ordering into it so the locality
+     * vectors writer can read it back after the build returns. Null for all non-locality fields.
+     */
+    @Nullable
+    Layer0LocalityOrdering layer0LocalityOrdering;
 }

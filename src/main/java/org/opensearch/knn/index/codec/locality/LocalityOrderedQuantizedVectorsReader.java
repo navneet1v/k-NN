@@ -9,7 +9,6 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.hnsw.FlatVectorsReader;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorScorer;
-import org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorsReader;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
@@ -31,7 +30,6 @@ import org.apache.lucene.util.packed.DirectReader;
 import org.apache.lucene.util.packed.DirectWriter;
 import org.apache.lucene.util.hnsw.CloseableRandomVectorScorerSupplier;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
-import org.apache.lucene.util.quantization.BaseQuantizedByteVectorValues;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 import org.apache.lucene.util.quantization.QuantizedVectorsReader;
@@ -145,7 +143,9 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         final int count = meta.readVInt();
         final int codeLength = meta.readVInt();
         final int recordSize = meta.readVInt();
-        final QuantizedByteVectorValues.ScalarEncoding scalarEncoding = QuantizedByteVectorValues.ScalarEncoding.fromWireNumber(meta.readVInt()).get();
+        final QuantizedByteVectorValues.ScalarEncoding scalarEncoding = QuantizedByteVectorValues.ScalarEncoding.fromWireNumber(
+            meta.readVInt()
+        ).get();
 
         final float[] centroid = new float[dimension];
         meta.readFloats(centroid, 0, dimension);
@@ -165,8 +165,18 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         for (int i = 0; i < count; i++) {
             ordToPhysicalOrdMap[i] = (int) directReader.get(i);
         }
-        // If another section were ever appended after the map, continue with:
-        //   meta.seek(packedStart + packedLen);
+
+        // Hub section lives at the end, right after the DirectWriter block (which was read via a slice
+        // and did NOT advance meta). Seek past it, then read the entry-point candidates: numHubs, the
+        // hub ordinals (highest-degree first), and each hub's quantized record (code + 4 corrections).
+        meta.seek(packedStart + packedLen);
+        final int numHubs = meta.readVInt();
+        final int[] hubOrdinals = new int[numHubs];
+        for (int i = 0; i < numHubs; i++) {
+            hubOrdinals[i] = meta.readVInt();
+        }
+        final byte[] hubRecords = new byte[numHubs * recordSize];
+        meta.readBytes(hubRecords, 0, hubRecords.length);
 
         // Records live in the data file, right after its index header.
         final long dataOffset = CodecUtil.indexHeaderLength(CODEC_NAME, segmentSuffix);
@@ -180,10 +190,12 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             codeLength,
             recordSize,
             centroidDp,
-                scalarEncoding,
+            scalarEncoding,
             centroid,
             ordToPhysicalOrdMap,
-            dataSlice
+            dataSlice,
+            hubOrdinals,
+            hubRecords
         );
     }
 
@@ -245,15 +257,30 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             return new ScalarQuantizedFloatVectorValues(floatVectorValues, null);
         }
 
-        return new ScalarQuantizedFloatVectorValues(
-                floatVectorValues,
-                getQuantizedVectorValues(field)
-        );
+        return new ScalarQuantizedFloatVectorValues(floatVectorValues, getQuantizedVectorValues(field));
     }
 
     @Override
     public ByteVectorValues getByteVectorValues(String field) throws IOException {
         return rawFlatVectorsReader.getByteVectorValues(field);
+    }
+
+    /**
+     * @return the hub entry-point ordinals for the field (original ordinals, highest-degree first), or
+     * an empty array if the field is unknown or has no hubs
+     */
+    public int[] getHubOrdinals(final String field) {
+        final FieldEntry entry = fields.get(field);
+        return entry == null ? new int[0] : entry.hubOrdinals;
+    }
+
+    /**
+     * @return the packed quantized hub records for the field, parallel to {@link #getHubOrdinals} and
+     * {@code recordSize} bytes each (1-bit code + 4 correction fields); empty if none
+     */
+    public byte[] getHubRecords(final String field) {
+        final FieldEntry entry = fields.get(field);
+        return entry == null ? new byte[0] : entry.hubRecords;
     }
 
     @Override
@@ -344,11 +371,7 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         private final int[] ordToPhysicalOrdMap;
         private int[] scratch = new int[0];
 
-        PhysicalOrdinalTranslatingScorer(
-            final KnnVectorValues values,
-            final RandomVectorScorer delegate,
-            final int[] ordToPhysicalOrdMap
-        ) {
+        PhysicalOrdinalTranslatingScorer(final KnnVectorValues values, final RandomVectorScorer delegate, final int[] ordToPhysicalOrdMap) {
             super(values);
             this.delegate = delegate;
             this.ordToPhysicalOrdMap = ordToPhysicalOrdMap;
@@ -401,6 +424,11 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         /** Original (insertion-order) ordinal -&gt; physical position of its record in {@link #dataSlice}. */
         final int[] ordToPhysicalOrdMap;
 
+        /** Hub entry-point candidates: original ordinals, highest-degree first. */
+        final int[] hubOrdinals;
+        /** Quantized records for the hubs (parallel to {@link #hubOrdinals}), each {@link #recordSize} bytes. */
+        final byte[] hubRecords;
+
         FieldEntry(
             final int fieldNumber,
             final int dimension,
@@ -411,7 +439,9 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             final QuantizedByteVectorValues.ScalarEncoding scalarEncoding,
             final float[] centroid,
             final int[] ordToPhysicalOrdMap,
-            final IndexInput dataSlice
+            final IndexInput dataSlice,
+            final int[] hubOrdinals,
+            final byte[] hubRecords
         ) {
             this.fieldNumber = fieldNumber;
             this.dimension = dimension;
@@ -423,6 +453,8 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             this.centroid = centroid;
             this.dataSlice = dataSlice;
             this.ordToPhysicalOrdMap = ordToPhysicalOrdMap;
+            this.hubOrdinals = hubOrdinals;
+            this.hubRecords = hubRecords;
         }
     }
 }

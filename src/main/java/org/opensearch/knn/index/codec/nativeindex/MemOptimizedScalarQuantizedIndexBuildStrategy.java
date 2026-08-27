@@ -5,13 +5,16 @@
 
 package org.opensearch.knn.index.codec.nativeindex;
 
+import com.google.common.base.Stopwatch;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
+import org.opensearch.knn.index.codec.nativeindex.model.Layer0LocalityOrdering;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.jni.JNIService;
@@ -71,6 +74,7 @@ import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorV
  * @see NativeIndexBuildStrategyFactory — returns this strategy when field info contains sq_config
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
+@Log4j2
 public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeIndexBuildStrategy {
 
     private static MemOptimizedScalarQuantizedIndexBuildStrategy INSTANCE = new MemOptimizedScalarQuantizedIndexBuildStrategy();
@@ -140,6 +144,14 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
             )
         );
 
+        if (indexInfo.isBuildLayer0Graph()) {
+            log.info("Updating the faiss index to use layer 0 only");
+            AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+                JNIService.setFaissSQHnswToSingleLayer(indexMemoryAddress, indexInfo.getKnnEngine());
+                return null;
+            });
+        }
+
         // Track whether writeIndex (Phase 3) was reached. Once writeIndex is called,
         // the native C++ side wraps the pointer in a unique_ptr that frees the index on exit
         // (even if writeIndex itself throws). Calling releaseSQIndex after that would be a
@@ -154,6 +166,45 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
             // hierarchy (IndexBinaryIDMap → FaissSQHnsw → FaissSQFlat) via own_fields = true.
             JNIService.releaseSQIndex(indexMemoryAddress, indexInfo.getKnnEngine());
             throw e;
+        }
+
+        // Deliver the graph-derived page-locality permutation back to the locality writer via the sink
+        // threaded down through BuildIndexParams (see Layer0LocalityOrdering for the rationale). The
+        // permutation is computed natively over the in-place layer-0 adjacency (zero-copy) and returned
+        // as the forward map int[ntotal] (ordering[originalOrdinal] = physicalPosition).
+        if (indexInfo.isBuildLayer0Graph()) {
+            log.info("building the ordering of the docIds");
+            final Stopwatch stopwatch = Stopwatch.createStarted();
+            final Layer0LocalityOrdering layer0LocalityOrdering = indexInfo.getLayer0LocalityOrdering();
+            if (layer0LocalityOrdering.isPopulated() == false) {
+                int numberOfHubs = Math.min(indexInfo.getTotalLiveDocs(), KNNConstants.MAX_HUBS_IN_HNSW);
+                layer0LocalityOrdering.populate(new int[indexInfo.getTotalLiveDocs()], new int[numberOfHubs]);
+            }
+            // Records-per-page for the strict-page greedy layout: 32 KB page / one record. A record is
+            // the quantized code plus the 4 correction factors (4 bytes each).
+            // TODO: source the record size from the locality store's own record layout once the locality
+            // writer wiring lands, rather than recomputing it here.
+            // final int recordSizeBytes = quantizedVecBytes + Integer.BYTES * 4;
+            // final int pageCapacity = Math.max(1, (32 * 1024) / recordSizeBytes);
+            // Top-degree hub ordinals to use as search entry-point candidates. Native fills these
+            // (original ordinals, -1-padded); pool capped at 32.
+            // TODO: deliver these back to the locality writer (via the sink) so they can be persisted
+            // for hub-based entry-point selection at search time.
+            AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+                JNIService.buildOrderingOfVectorsUsingBFS(
+                    indexMemoryAddress,
+                    layer0LocalityOrdering.getPhysicalOrdinals(),
+                    layer0LocalityOrdering.getHubs(),
+                    indexInfo.getKnnEngine()
+                );
+                return null;
+            });
+            stopwatch.stop();
+            log.info(
+                "The total time to get ordering of vectors from HNSW graph is : {} ms, total vectors: {}",
+                stopwatch.elapsed().toMillis(),
+                indexInfo.getTotalLiveDocs()
+            );
         }
 
         // Phase 3: write index to disk.

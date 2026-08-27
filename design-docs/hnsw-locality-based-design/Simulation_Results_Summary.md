@@ -198,3 +198,202 @@ Items that must be resolved or explicitly tracked before writing plugin code.
 | 5 | **Hub entry point scaling at 10M+** | Does 1 hub suffice, or do we need multiple? |
 | 6 | **Boundary replication (SOAR)** | Marginal reduction from replicating 2-5% of boundary nodes (Phase 3). |
 | 7 | **Build time at 10M+** | 15s at 1M → ~150s at 10M in Python. C++/Java target: <5s at 1M. |
+
+
+--------------------------
+(base) 09:14 ~/workplace/k-NN-main (hnsw_locality)$ python scripts/locality_simulation.py --dataset scripts/documents-1m.hdf5 --nq 10000 --M 16 --ef-search 256 --ef-construction 256
+======================================================================
+HNSW Locality Reordering Simulation
+======================================================================
+
+Loading dataset from scripts/documents-1m.hdf5...
+Keys: ['neighbors', 'test', 'train']
+Train: (1000000, 768), Test: (10000, 768)
+Ground truth neighbors: (10000, 100)
+
+Config:
+Vectors: 1000000, Dim: 768, Queries: 10000
+HNSW M: 16, efConstruction: 256, efSearch: 256
+Page size: 32768 bytes
+Record size (SQ 1-bit): 112 bytes
+Page capacity: 292 vectors/page
+Total pages: 3425
+Entry points per query: 1
+
+Building single-layer HNSW index (shuffled insertion order)...
+Built in 361.8s
+Insertion order shuffled (first 5 internal ordinals map to original IDs: [ 97305 228106 970098 780379 966161])
+Extracting graph structure...
+Extracted in 3.7s
+Entry point: 768932 (level 0)
+Max level: 0
+Level distribution: {np.int32(0): np.int64(1000000)}
+Layer 0 degree — avg: 22.9, p10: 12, p50: 24, p90: 32, p99: 32, max: 32
+
+Computing reordering strategies...
+Identity: 0.000s
+BFS: 1.535s
+RCM: 4.060s
+Greedy (strict pages): 6.468s
+Strict pages: 43399 pages, 11672508 padded slots (92.1% overhead)
+
+Simulating 10000 searches with Faiss entry point (efSearch=256)...
+100/10000 queries (2.4s, 41.7 qps)
+200/10000 queries (4.4s, 45.0 qps)
+300/10000 queries (6.0s, 49.8 qps)
+400/10000 queries (7.5s, 53.1 qps)
+500/10000 queries (9.1s, 55.1 qps)
+600/10000 queries (10.8s, 55.4 qps)
+700/10000 queries (12.4s, 56.5 qps)
+800/10000 queries (14.2s, 56.5 qps)
+900/10000 queries (15.8s, 56.9 qps)
+1000/10000 queries (17.3s, 57.8 qps)
+1100/10000 queries (18.8s, 58.4 qps)
+1200/10000 queries (20.5s, 58.6 qps)
+1300/10000 queries (22.1s, 58.9 qps)
+1400/10000 queries (23.9s, 58.6 qps)
+1500/10000 queries (25.5s, 58.8 qps)
+1600/10000 queries (27.1s, 59.1 qps)
+1700/10000 queries (28.6s, 59.5 qps)
+1800/10000 queries (30.1s, 59.8 qps)
+1900/10000 queries (31.8s, 59.7 qps)
+2000/10000 queries (33.7s, 59.4 qps)
+2100/10000 queries (35.3s, 59.5 qps)
+2200/10000 queries (36.8s, 59.8 qps)
+2300/10000 queries (38.4s, 60.0 qps)
+2400/10000 queries (39.9s, 60.2 qps)
+2500/10000 queries (41.6s, 60.1 qps)
+2600/10000 queries (43.2s, 60.1 qps)
+2700/10000 queries (44.8s, 60.3 qps)
+2800/10000 queries (46.4s, 60.3 qps)
+2900/10000 queries (48.4s, 59.9 qps)
+3000/10000 queries (50.1s, 59.9 qps)
+3100/10000 queries (51.9s, 59.7 qps)
+3200/10000 queries (53.4s, 59.9 qps)
+3300/10000 queries (54.9s, 60.2 qps)
+3400/10000 queries (56.6s, 60.1 qps)
+3500/10000 queries (58.3s, 60.1 qps)
+3600/10000 queries (59.9s, 60.1 qps)
+3700/10000 queries (61.5s, 60.1 qps)
+3800/10000 queries (63.3s, 60.0 qps)
+3900/10000 queries (65.0s, 60.0 qps)
+4000/10000 queries (66.6s, 60.0 qps)
+4100/10000 queries (68.2s, 60.1 qps)
+4200/10000 queries (70.0s, 60.0 qps)
+4300/10000 queries (71.8s, 59.9 qps)
+4400/10000 queries (73.5s, 59.8 qps)
+4500/10000 queries (75.3s, 59.8 qps)
+4600/10000 queries (77.2s, 59.6 qps)
+4700/10000 queries (79.0s, 59.5 qps)
+4800/10000 queries (80.8s, 59.4 qps)
+4900/10000 queries (82.5s, 59.4 qps)
+5000/10000 queries (84.0s, 59.5 qps)
+5100/10000 queries (85.4s, 59.7 qps)
+5200/10000 queries (87.0s, 59.8 qps)
+5300/10000 queries (88.4s, 60.0 qps)
+5400/10000 queries (89.7s, 60.2 qps)
+5500/10000 queries (91.2s, 60.3 qps)
+5600/10000 queries (92.6s, 60.5 qps)
+5700/10000 queries (94.1s, 60.6 qps)
+5800/10000 queries (95.4s, 60.8 qps)
+5900/10000 queries (96.7s, 61.0 qps)
+6000/10000 queries (98.0s, 61.2 qps)
+6100/10000 queries (99.3s, 61.4 qps)
+6200/10000 queries (100.6s, 61.6 qps)
+6300/10000 queries (102.1s, 61.7 qps)
+6400/10000 queries (103.5s, 61.8 qps)
+6500/10000 queries (104.9s, 62.0 qps)
+6600/10000 queries (106.3s, 62.1 qps)
+6700/10000 queries (107.7s, 62.2 qps)
+6800/10000 queries (109.2s, 62.2 qps)
+6900/10000 queries (110.6s, 62.4 qps)
+7000/10000 queries (111.9s, 62.5 qps)
+7100/10000 queries (113.3s, 62.7 qps)
+7200/10000 queries (114.7s, 62.8 qps)
+7300/10000 queries (116.4s, 62.7 qps)
+7400/10000 queries (117.9s, 62.8 qps)
+7500/10000 queries (119.3s, 62.9 qps)
+7600/10000 queries (120.8s, 62.9 qps)
+7700/10000 queries (122.2s, 63.0 qps)
+7800/10000 queries (123.7s, 63.1 qps)
+7900/10000 queries (125.2s, 63.1 qps)
+8000/10000 queries (126.4s, 63.3 qps)
+8100/10000 queries (127.7s, 63.4 qps)
+8200/10000 queries (129.3s, 63.4 qps)
+8300/10000 queries (130.8s, 63.5 qps)
+8400/10000 queries (132.3s, 63.5 qps)
+8500/10000 queries (133.8s, 63.5 qps)
+8600/10000 queries (135.4s, 63.5 qps)
+8700/10000 queries (136.8s, 63.6 qps)
+8800/10000 queries (138.3s, 63.6 qps)
+8900/10000 queries (139.8s, 63.7 qps)
+9000/10000 queries (141.2s, 63.7 qps)
+9100/10000 queries (142.6s, 63.8 qps)
+9200/10000 queries (145.1s, 63.4 qps)
+9300/10000 queries (146.7s, 63.4 qps)
+9400/10000 queries (148.2s, 63.4 qps)
+9500/10000 queries (149.7s, 63.5 qps)
+9600/10000 queries (151.1s, 63.5 qps)
+9700/10000 queries (152.5s, 63.6 qps)
+9800/10000 queries (154.0s, 63.7 qps)
+9900/10000 queries (155.3s, 63.7 qps)
+10000/10000 queries (156.7s, 63.8 qps)
+Completed in 156.7s, avg nodes visited: 5053.0
+Recall@10 (Faiss entry point): 0.9722
+
+Faiss native search (sanity check)...
+Recall@10 (Faiss native): 0.9722
+
+Hub pool: 256 nodes (degree range: 32 down to 32)
+Simulating 10000 FLAT searches (efSearch=256, 1 hub entry points)...
+500/10000 queries (3.1s, 163.8 qps)
+1000/10000 queries (5.9s, 168.6 qps)
+1500/10000 queries (8.6s, 174.8 qps)
+2000/10000 queries (11.3s, 176.4 qps)
+2500/10000 queries (13.8s, 180.5 qps)
+3000/10000 queries (16.3s, 183.8 qps)
+3500/10000 queries (18.6s, 188.1 qps)
+4000/10000 queries (21.2s, 188.6 qps)
+4500/10000 queries (23.5s, 191.8 qps)
+5000/10000 queries (25.9s, 192.9 qps)
+5500/10000 queries (28.2s, 194.7 qps)
+6000/10000 queries (30.4s, 197.4 qps)
+6500/10000 queries (32.7s, 198.6 qps)
+7000/10000 queries (35.1s, 199.4 qps)
+7500/10000 queries (37.6s, 199.7 qps)
+8000/10000 queries (39.7s, 201.3 qps)
+8500/10000 queries (42.1s, 202.0 qps)
+9000/10000 queries (44.6s, 201.8 qps)
+9500/10000 queries (47.0s, 201.9 qps)
+10000/10000 queries (49.3s, 202.7 qps)
+49.3s, avg visited: 4972.0, Recall@10: 0.9723
+
+================================================================================
+PAGES TOUCHED: Faiss entry point search (baseline)
+================================================================================
+Layout                          Avg Pages   Median      P95      P99
+--------------------------------------------------------------------------------
+Insertion Order                  2618.7             2661.0   2885.0   2937.0
+BFS Order                        1527.4 (+41.7%)    1580.0   1998.0   2143.0
+Reverse Cuthill-McKee            1648.6 (+37.0%)    1696.0   2132.0   2255.0
+Greedy (strict pages)            1377.0 (+47.4%)    1419.0   1872.0   2003.0
+
+================================================================================
+PAGES TOUCHED: Flat search (1 entry points)
+================================================================================
+Layout                          Avg Pages   Median      P95      P99
+--------------------------------------------------------------------------------
+Insertion Order                  2600.5             2643.0   2868.0   2926.0
+BFS Order                        1530.8 (+41.1%)    1580.0   1996.0   2146.0
+Reverse Cuthill-McKee            1613.2 (+38.0%)    1662.0   2110.0   2236.0
+Greedy (strict pages)            1348.0 (+48.2%)    1386.0   1845.0   1986.0
+
+================================================================================
+INTRA-PAGE EDGE RATIO (edges staying within same page)
+================================================================================
+Insertion Order                0.0003 (0.0%)
+BFS Order                      0.0091 (0.9%)
+Reverse Cuthill-McKee          0.0072 (0.7%)
+Greedy (strict pages)          0.1711 (17.1%)
+
+Done.
