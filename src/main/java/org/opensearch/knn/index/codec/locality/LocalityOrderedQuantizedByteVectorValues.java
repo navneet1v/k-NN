@@ -5,10 +5,14 @@
 
 package org.opensearch.knn.index.codec.locality;
 
+import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorEncoding;
+import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.VectorScorer;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 
@@ -42,6 +46,9 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
     private final float centroidDp;
     private final OptimizedScalarQuantizer quantizer;
     private final ScalarEncoding encoding;
+    private final VectorSimilarityFunction similarity;
+    // The reader's shared quantized (ADC) scorer, reused for the exact-search scorer() path.
+    private final FlatVectorsScorer quantizedVectorScorer;
     private final IndexInput slice;
 
     private final byte[] vector;
@@ -50,10 +57,6 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
     final ByteBuffer byteBuffer;
     private int quantizedComponentSum;
 
-    // Physical ordinals sorted by ascending docId; built lazily when iterator() is first used.
-    // Needed because the physical (locality) ordering is not doc-ascending, but a DocIdSetIterator
-    // must return docIDs in ascending order.
-    private int[] docSortedOrds;
     private final FloatVectorValues floatVectorValues;
     private final int[] ordToPhysicalOrdMap;
 
@@ -66,6 +69,8 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
         final float centroidDp,
         final OptimizedScalarQuantizer quantizer,
         final ScalarEncoding encoding,
+        final VectorSimilarityFunction similarity,
+        final FlatVectorsScorer quantizedVectorScorer,
         final int[] ordToPhysicalOrdMap,
         final IndexInput slice,
         final FloatVectorValues floatVectorValues
@@ -78,6 +83,8 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
         this.centroidDp = centroidDp;
         this.quantizer = quantizer;
         this.encoding = encoding;
+        this.similarity = similarity;
+        this.quantizedVectorScorer = quantizedVectorScorer;
         this.ordToPhysicalOrdMap = ordToPhysicalOrdMap;
         this.slice = slice;
         this.byteBuffer = ByteBuffer.allocate(codeLength);
@@ -196,7 +203,70 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
 
     @Override
     public VectorScorer scorer(float[] query) throws IOException {
-        throw new RuntimeException("Not implemented right now");
+        // Exact-search scorer: score `query` against every record, in doc order, reusing the reader's
+        // shared quantized (ADC) scorer. That scorer addresses records PHYSICALLY (base + ord*recordSize
+        // via the SIMD path), so build it over a physical-addressed (identity) view and translate each
+        // original ordinal to its physical position before delegating — mirroring the reader's
+        // getRandomVectorScorer / PhysicalOrdinalTranslatingScorer.
+        final LocalityOrderedQuantizedByteVectorValues physicalView = new LocalityOrderedQuantizedByteVectorValues(
+            dimension,
+            size,
+            codeLength,
+            recordSize,
+            centroid,
+            centroidDp,
+            quantizer,
+            encoding,
+            similarity,
+            quantizedVectorScorer,
+            null,
+            slice.clone(),
+            floatVectorValues
+        );
+        final RandomVectorScorer physicalDelegate = quantizedVectorScorer.getRandomVectorScorer(similarity, physicalView, query);
+
+        // Translating scorer: stays in ORIGINAL-ordinal space (backed by `this`, so maxOrd/ordToDoc are
+        // correct) and maps each ordinal to its physical position before delegating. Its bulkScore
+        // pre-translates the batch into physical ordinals in one pass so the delegate's SIMD bulk path
+        // reads the right records — same shape as the reader's PhysicalOrdinalTranslatingScorer.
+        final RandomVectorScorer translating = new RandomVectorScorer.AbstractRandomVectorScorer(this) {
+            private int[] scratch = new int[0];
+
+            @Override
+            public float score(final int node) throws IOException {
+                return physicalDelegate.score(toPhysical(node));
+            }
+
+            @Override
+            public float bulkScore(final int[] nodes, final float[] scores, final int numNodes) throws IOException {
+                if (scratch.length < numNodes) {
+                    scratch = new int[numNodes];
+                }
+                for (int i = 0; i < numNodes; i++) {
+                    scratch[i] = toPhysical(nodes[i]);
+                }
+                return physicalDelegate.bulkScore(scratch, scores, numNodes);
+            }
+        };
+
+        final DocIndexIterator iterator = iterator();
+        return new VectorScorer() {
+            @Override
+            public float score() throws IOException {
+                return translating.score(iterator.index());
+            }
+
+            @Override
+            public DocIdSetIterator iterator() {
+                return iterator;
+            }
+
+            @Override
+            public Bulk bulk(final DocIdSetIterator matchingDocs) {
+                // Sparse: the field may be sparse (some docs have no vector), matching createADCScorer.
+                return Bulk.fromRandomScorerSparse(translating, iterator, matchingDocs);
+            }
+        };
     }
 
     @Override
@@ -215,6 +285,8 @@ final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVector
             centroidDp,
             quantizer,
             encoding,
+            similarity,
+            quantizedVectorScorer,
             ordToPhysicalOrdMap,
             slice.clone(),
             floatVectorValues.copy()

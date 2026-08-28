@@ -5,10 +5,12 @@
 
 package org.opensearch.knn.index.engine.faiss;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.KnnVectorsFormat;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.codec.KNN1040Codec.Faiss1040SQHNSWReorderedKnnVectorsFormat;
 import org.opensearch.knn.index.codec.KNN1040Codec.Faiss1040ScalarQuantizedKnnVectorsFormat;
 import org.opensearch.knn.index.codec.KNN990Codec.NativeEngines990KnnVectorsFormat;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategyFactory;
@@ -26,6 +28,7 @@ import java.util.Optional;
  * <p>Placed in the {@code faiss} package alongside {@link FaissMethodResolver} because
  * NMSLIB is deprecated and no new NMSLIB indices are created.</p>
  */
+@Log4j2
 public class FaissCodecFormatResolver implements CodecFormatResolver {
 
     private final Optional<MapperService> mapperService;
@@ -52,6 +55,10 @@ public class FaissCodecFormatResolver implements CodecFormatResolver {
         int defaultBeamWidth
     ) {
         if (isSQOneBitEncoder(params)) {
+            if (mapperService.isPresent() && KNNSettings.isReOrderingEnabled(mapperService.get().getIndexSettings())) {
+                log.info("Reordering enabled for index {}", mapperService.get().index().getName());
+                return new Faiss1040SQHNSWReorderedKnnVectorsFormat(nativeIndexBuildStrategyFactory);
+            }
             return new Faiss1040ScalarQuantizedKnnVectorsFormat(nativeIndexBuildStrategyFactory);
         }
         return resolve();

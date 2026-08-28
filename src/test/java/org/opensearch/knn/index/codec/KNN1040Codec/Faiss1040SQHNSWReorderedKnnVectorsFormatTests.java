@@ -23,6 +23,11 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.AcceptDocs;
+import org.apache.lucene.search.knn.KnnSearchStrategy;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TopKnnCollector;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.InfoStream;
@@ -30,6 +35,7 @@ import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.Version;
 import org.opensearch.knn.KNNTestCase;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -38,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -72,6 +79,73 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
             Faiss1040SQHNSWReorderedKnnVectorsFormat.class.getSimpleName(),
             new Faiss1040SQHNSWReorderedKnnVectorsFormat().getName()
         );
+    }
+
+    /**
+     * End-to-end ANN search: index vectors, then run {@code reader.search(...)} with a
+     * {@link TopKnnCollector}. Uses each query = an indexed vector, so the query's own doc is its exact
+     * nearest neighbor; a working hub-seeded, single-layer graph search over the quantized data should
+     * return that doc in the top-k for the large majority of queries. This is the only test that
+     * exercises the full search path (memory-optimized searcher + hub entry point + graph traversal +
+     * reordered-store scoring).
+     */
+    @SneakyThrows
+    public void testSearch_whenQueryIsIndexedVector_thenSelfRecallIsHigh() {
+        final int numVectors = 200;
+        final int k = 10;
+        final float[][] vectors = generateRandomVectors(numVectors, DIMENSION);
+
+        try (Directory directory = newDirectory()) {
+            final SegmentWriteState writeState = createWriteState(directory, "_0", numVectors);
+            final FieldInfo fi = createRealFieldInfo();
+            final Faiss1040SQHNSWReorderedKnnVectorsFormat format = new Faiss1040SQHNSWReorderedKnnVectorsFormat();
+
+            try (KnnVectorsWriter knnWriter = format.fieldsWriter(writeState)) {
+                @SuppressWarnings("unchecked")
+                final KnnFieldVectorsWriter<float[]> fw = (KnnFieldVectorsWriter<float[]>) knnWriter.addField(fi);
+                for (int i = 0; i < numVectors; i++) {
+                    fw.addValue(i, vectors[i]);
+                }
+                knnWriter.flush(numVectors, null);
+                knnWriter.finish();
+            }
+
+            // The search path resolves the .faiss engine file via SegmentInfo.files(); an IndexWriter
+            // would populate this, so we do it manually for the direct-writer test.
+            writeState.segmentInfo.setFiles(
+                Arrays.stream(directory.listAll()).filter(f -> f.startsWith(writeState.segmentInfo.name)).collect(Collectors.toSet())
+            );
+
+            final SegmentReadState readState = new SegmentReadState(
+                directory,
+                writeState.segmentInfo,
+                new FieldInfos(new FieldInfo[] { fi }),
+                IOContext.DEFAULT,
+                FIELD_NAME
+            );
+            try (KnnVectorsReader knnReader = format.fieldsReader(readState)) {
+                final int numQueries = 20;
+                int selfHits = 0;
+                for (int q = 0; q < numQueries; q++) {
+                    final int queryDoc = q * (numVectors / numQueries);
+                    final float[] query = vectors[queryDoc];
+
+                    final TopKnnCollector collector = new TopKnnCollector(k, Integer.MAX_VALUE, KnnSearchStrategy.Hnsw.DEFAULT);
+                    knnReader.search(FIELD_NAME, query, collector, AcceptDocs.fromLiveDocs(null, numVectors));
+
+                    final TopDocs topDocs = collector.topDocs();
+                    assertTrue("search returned no results for query doc " + queryDoc, topDocs.scoreDocs.length > 0);
+                    assertTrue("search returned more than k results", topDocs.scoreDocs.length <= k);
+                    for (final ScoreDoc sd : topDocs.scoreDocs) {
+                        if (sd.doc == queryDoc) {
+                            selfHits++;
+                            break;
+                        }
+                    }
+                }
+                assertTrue("self-recall too low: " + selfHits + "/" + numQueries, selfHits >= (int) (numQueries * 0.8));
+            }
+        }
     }
 
     /**
@@ -201,7 +275,6 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
                     (org.opensearch.knn.index.codec.locality.LocalityOrderedQuantizedVectorsReader) delegateField.get(knnReader);
 
                 final int[] hubs = localityReader.getHubOrdinals(FIELD_NAME);
-                final byte[] hubRecords = localityReader.getHubRecords(FIELD_NAME);
 
                 // Native JNI populates up to ~32 hubs (capped by BuildStrategy); every entry must be a
                 // valid original ordinal in [0, numVectors).
@@ -217,9 +290,10 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
                 }
                 assertEquals("hubs must be distinct", hubs.length, distinct.size());
 
-                // Records buffer is aligned to hubs.length: (codeLength + 16) bytes each. For SINGLE_BIT
-                // and dimension=128, codeLength = 16 bytes -> recordSize = 32.
-                assertEquals("hubRecords must be numHubs * recordSize bytes", hubs.length * (DIMENSION / 8 + 16), hubRecords.length);
+                // Selecting the closest hub for a query scores the stored hub records and returns one of
+                // the hub ordinals (validates the metadata hub-record slice is scoreable).
+                final int best = localityReader.selectBestHubOrdinal(FIELD_NAME, vectors[0]);
+                assertTrue("selected hub must be one of the stored hubs", distinct.contains(best));
             }
         }
     }
@@ -418,7 +492,393 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
         }
     }
 
+    /**
+     * Index the <b>same</b> vectors into the reordered format and the baseline
+     * {@link Faiss1040ScalarQuantizedKnnVectorsFormat}, then compare results rank-by-rank.
+     *
+     * <p>Searches are <b>exhaustive</b> ({@code k == numVectors}): at {@code k >= maxOrd} the
+     * memory-optimized searcher scores every vector and skips graph traversal entirely, so the two
+     * formats' different graphs (baseline multi-layer HNSW vs our single-layer CAGRA) and different
+     * entry points (descent vs hub seed) do not come into play. That isolates the only thing our change
+     * touches — storage layout + scoring — which must be identical: the reorder is score-preserving, so
+     * every doc must come back at the same rank with the same score.
+     */
+    @SneakyThrows
+    public void testSearchParity_reorderedVsBaseline_whenExhaustive_thenScoresAndOrderMatch() {
+        final int numVectors = 200;
+        final int k = numVectors; // exhaustive
+        final float[][] vectors = generateRandomVectors(numVectors, DIMENSION);
+        final FieldInfo fi = createRealFieldInfo();
+
+        try (Directory reorderedDir = newDirectory(); Directory baselineDir = newDirectory()) {
+            final SegmentWriteState reorderedWs = indexIntoDirectory(
+                reorderedDir,
+                new Faiss1040SQHNSWReorderedKnnVectorsFormat(),
+                fi,
+                vectors
+            );
+            final SegmentWriteState baselineWs = indexIntoDirectory(
+                baselineDir,
+                new Faiss1040ScalarQuantizedKnnVectorsFormat(),
+                fi,
+                vectors
+            );
+
+            try (
+                KnnVectorsReader reorderedReader = new Faiss1040SQHNSWReorderedKnnVectorsFormat().fieldsReader(
+                    readStateFor(reorderedDir, reorderedWs, fi)
+                );
+                KnnVectorsReader baselineReader = new Faiss1040ScalarQuantizedKnnVectorsFormat().fieldsReader(
+                    readStateFor(baselineDir, baselineWs, fi)
+                )
+            ) {
+                // Use a spread of the indexed vectors as queries; each query is identical across formats.
+                for (int qi = 0; qi < numVectors; qi += 20) {
+                    final float[] query = vectors[qi];
+                    final TopDocs baseline = searchAll(baselineReader, query, k, numVectors);
+                    final TopDocs reordered = searchAll(reorderedReader, query, k, numVectors);
+
+                    assertEquals("result count differs for query " + qi, baseline.scoreDocs.length, reordered.scoreDocs.length);
+                    for (int rank = 0; rank < baseline.scoreDocs.length; rank++) {
+                        assertEquals(
+                            "doc at rank " + rank + " differs for query " + qi,
+                            baseline.scoreDocs[rank].doc,
+                            reordered.scoreDocs[rank].doc
+                        );
+                        assertEquals(
+                            "score at rank " + rank + " (doc " + baseline.scoreDocs[rank].doc + ") differs for query " + qi,
+                            baseline.scoreDocs[rank].score,
+                            reordered.scoreDocs[rank].score,
+                            0.0f
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Recall@10 after a merge, for both formats. Indexes the same vectors as {@code numSegments}
+     * separate segments, merges them into one, then measures how well the k=10 ANN (graph) search
+     * recovers the exhaustive (score-exact) top-10. Ground truth is the format's own exhaustive search
+     * ({@code k == numVectors}, which scores every vector), so this isolates <b>graph-search recall</b>
+     * from quantization error. Logs the recall for the reordered (hub-seeded CAGRA) and baseline
+     * (multi-layer HNSW) formats.
+     */
+    @SneakyThrows
+    public void testRecallAtK10_afterMerge_reorderedVsBaseline() {
+        final int numVectors = 300;
+        final int numSegments = 3;
+        final int k = 10;
+        final int numQueries = 50;
+        final float[][] vectors = generateRandomVectors(numVectors, DIMENSION);
+        final float[][] queries = generateQueries(numQueries, DIMENSION, 7L);
+        final FieldInfo fi = createRealFieldInfo();
+
+        try (Directory reorderedDir = newDirectory(); Directory baselineDir = newDirectory()) {
+            final SegmentWriteState reorderedWs = mergeIntoOneSegment(
+                reorderedDir,
+                new Faiss1040SQHNSWReorderedKnnVectorsFormat(),
+                fi,
+                vectors,
+                numSegments
+            );
+            final SegmentWriteState baselineWs = mergeIntoOneSegment(
+                baselineDir,
+                new Faiss1040ScalarQuantizedKnnVectorsFormat(),
+                fi,
+                vectors,
+                numSegments
+            );
+
+            try (
+                KnnVectorsReader reorderedReader = new Faiss1040SQHNSWReorderedKnnVectorsFormat().fieldsReader(
+                    readStateFor(reorderedDir, reorderedWs, fi)
+                );
+                KnnVectorsReader baselineReader = new Faiss1040ScalarQuantizedKnnVectorsFormat().fieldsReader(
+                    readStateFor(baselineDir, baselineWs, fi)
+                )
+            ) {
+                final double reorderedRecall = recallAtK(reorderedReader, queries, k, numVectors);
+                final double baselineRecall = recallAtK(baselineReader, queries, k, numVectors);
+
+                log.info(
+                    "RECALL@{} after merge [{} docs, {} segments merged, {} queries]: "
+                        + "reordered(hub-seeded CAGRA)={}, baseline(multi-layer HNSW)={}",
+                    k,
+                    numVectors,
+                    numSegments,
+                    numQueries,
+                    String.format(java.util.Locale.ROOT, "%.4f", reorderedRecall),
+                    String.format(java.util.Locale.ROOT, "%.4f", baselineRecall)
+                );
+
+                assertTrue("reordered recall@" + k + " too low: " + reorderedRecall, reorderedRecall >= 0.3);
+                assertTrue("baseline recall@" + k + " too low: " + baselineRecall, baselineRecall >= 0.3);
+            }
+        }
+    }
+
+    /**
+     * Validates <b>scores</b> after a merge (not just doc overlap). For each query, over the merged
+     * segment:
+     * <ol>
+     *   <li><b>Cross-format:</b> every doc gets the identical score in the reordered and baseline
+     *       formats (exhaustive scan) — scoring is doc-intrinsic, so the reorder/merge must not change
+     *       any score.</li>
+     *   <li><b>Within-format:</b> the score the k=10 ANN (graph) search returns for a doc equals that
+     *       doc's true exhaustive score — the graph path reports correct scores, it just may visit a
+     *       different subset of docs.</li>
+     * </ol>
+     */
+    @SneakyThrows
+    public void testScores_afterMerge_matchExhaustiveWithinAndAcrossFormats() {
+        final int numVectors = 300;
+        final int numSegments = 3;
+        final int k = 10;
+        final int numQueries = 20;
+        final float[][] vectors = generateRandomVectors(numVectors, DIMENSION);
+        final float[][] queries = generateQueries(numQueries, DIMENSION, 11L);
+        final FieldInfo fi = createRealFieldInfo();
+
+        // Guard against a degenerate test: every ingested vector must be distinct, otherwise the
+        // score-equality checks below would pass trivially on duplicate data.
+        assertAllVectorsDistinct(vectors);
+
+        try (Directory reorderedDir = newDirectory(); Directory baselineDir = newDirectory()) {
+            final SegmentWriteState reorderedWs = mergeIntoOneSegment(
+                reorderedDir,
+                new Faiss1040SQHNSWReorderedKnnVectorsFormat(),
+                fi,
+                vectors,
+                numSegments
+            );
+            final SegmentWriteState baselineWs = mergeIntoOneSegment(
+                baselineDir,
+                new Faiss1040ScalarQuantizedKnnVectorsFormat(),
+                fi,
+                vectors,
+                numSegments
+            );
+
+            try (
+                KnnVectorsReader reorderedReader = new Faiss1040SQHNSWReorderedKnnVectorsFormat().fieldsReader(
+                    readStateFor(reorderedDir, reorderedWs, fi)
+                );
+                KnnVectorsReader baselineReader = new Faiss1040ScalarQuantizedKnnVectorsFormat().fieldsReader(
+                    readStateFor(baselineDir, baselineWs, fi)
+                )
+            ) {
+                for (final float[] query : queries) {
+                    final Map<Integer, Float> reorderedExhaustive = scoreByDoc(searchAll(reorderedReader, query, numVectors, numVectors));
+                    final Map<Integer, Float> baselineExhaustive = scoreByDoc(searchAll(baselineReader, query, numVectors, numVectors));
+
+                    // Guard: the query must actually differentiate docs — most docs should get distinct
+                    // scores. If vectors were duplicated (or scoring were degenerate) this would collapse.
+                    final long distinctScores = reorderedExhaustive.values().stream().distinct().count();
+                    assertTrue(
+                        "scores are not differentiated across docs (distinct=" + distinctScores + " of " + numVectors + ")",
+                        distinctScores >= numVectors * 0.9
+                    );
+
+                    // (1) cross-format: identical score for every doc.
+                    assertEquals("scored doc count differs", baselineExhaustive.size(), reorderedExhaustive.size());
+                    for (final Map.Entry<Integer, Float> entry : baselineExhaustive.entrySet()) {
+                        final float baselineScore = entry.getValue();
+                        final Float reorderedScore = reorderedExhaustive.get(entry.getKey());
+                        assertNotNull("doc " + entry.getKey() + " missing from reordered scores", reorderedScore);
+                        assertEquals("cross-format score differs for doc " + entry.getKey(), baselineScore, reorderedScore, 0.0f);
+                    }
+
+                    // (2) within-format: the ANN-returned score is the doc's true (exhaustive) score.
+                    for (final ScoreDoc sd : searchAll(reorderedReader, query, k, numVectors).scoreDocs) {
+                        assertEquals("reordered ANN score wrong for doc " + sd.doc, reorderedExhaustive.get(sd.doc), sd.score, 0.0f);
+                    }
+                    for (final ScoreDoc sd : searchAll(baselineReader, query, k, numVectors).scoreDocs) {
+                        assertEquals("baseline ANN score wrong for doc " + sd.doc, baselineExhaustive.get(sd.doc), sd.score, 0.0f);
+                    }
+                }
+            }
+        }
+    }
+
     // ===================== helpers =====================
+
+    /** Fails if any two vectors are identical — ensures score-parity tests aren't run on duplicate data. */
+    private void assertAllVectorsDistinct(final float[][] vectors) {
+        final Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < vectors.length; i++) {
+            assertTrue("duplicate vector at index " + i, seen.add(Arrays.toString(vectors[i])));
+        }
+    }
+
+    private Map<Integer, Float> scoreByDoc(final TopDocs topDocs) {
+        final Map<Integer, Float> byDoc = new HashMap<>();
+        for (final ScoreDoc sd : topDocs.scoreDocs) {
+            byDoc.put(sd.doc, sd.score);
+        }
+        return byDoc;
+    }
+
+    /** recall@k = mean over queries of |annTopK ∩ exhaustiveTopK| / k, using the format's own exhaustive search as truth. */
+    private double recallAtK(final KnnVectorsReader reader, final float[][] queries, final int k, final int numVectors) throws IOException {
+        int found = 0;
+        for (final float[] query : queries) {
+            final Set<Integer> truth = topDocIds(searchAll(reader, query, numVectors, numVectors), k);
+            final TopDocs ann = searchAll(reader, query, k, numVectors);
+            for (final ScoreDoc sd : ann.scoreDocs) {
+                if (truth.contains(sd.doc)) {
+                    found++;
+                }
+            }
+        }
+        return (double) found / ((long) queries.length * k);
+    }
+
+    private Set<Integer> topDocIds(final TopDocs topDocs, final int limit) {
+        final Set<Integer> ids = new java.util.HashSet<>();
+        for (int i = 0; i < Math.min(limit, topDocs.scoreDocs.length); i++) {
+            ids.add(topDocs.scoreDocs[i].doc);
+        }
+        return ids;
+    }
+
+    private float[][] generateQueries(final int numQueries, final int dimension, final long seed) {
+        final Random rng = new Random(seed);
+        final float[][] queries = new float[numQueries][dimension];
+        for (int i = 0; i < numQueries; i++) {
+            for (int j = 0; j < dimension; j++) {
+                queries[i][j] = rng.nextFloat() * 2 - 1;
+            }
+        }
+        return queries;
+    }
+
+    /**
+     * Indexes {@code allVectors} as {@code numSegments} equal segments, merges them into one segment via
+     * {@code mergeOneField}, and returns the merged {@link SegmentWriteState} with its file set populated.
+     */
+    private SegmentWriteState mergeIntoOneSegment(
+        final Directory dir,
+        final org.apache.lucene.codecs.KnnVectorsFormat format,
+        final FieldInfo fi,
+        final float[][] allVectors,
+        final int numSegments
+    ) throws IOException {
+        final int total = allVectors.length;
+        final int perSegment = total / numSegments;
+        final FieldInfos fieldInfos = new FieldInfos(new FieldInfo[] { fi });
+
+        final SegmentInfo[] segInfos = new SegmentInfo[numSegments];
+        final KnnVectorsReader[] readers = new KnnVectorsReader[numSegments];
+        for (int s = 0; s < numSegments; s++) {
+            segInfos[s] = createSegmentInfo(dir, "_" + s, perSegment);
+            final SegmentWriteState ws = new SegmentWriteState(
+                InfoStream.NO_OUTPUT,
+                dir,
+                segInfos[s],
+                fieldInfos,
+                null,
+                IOContext.DEFAULT,
+                FIELD_NAME
+            );
+            try (KnnVectorsWriter knnWriter = format.fieldsWriter(ws)) {
+                @SuppressWarnings("unchecked")
+                final KnnFieldVectorsWriter<float[]> fw = (KnnFieldVectorsWriter<float[]>) knnWriter.addField(fi);
+                for (int i = 0; i < perSegment; i++) {
+                    fw.addValue(i, allVectors[s * perSegment + i]);
+                }
+                knnWriter.flush(perSegment, null);
+                knnWriter.finish();
+            }
+            readers[s] = format.fieldsReader(new SegmentReadState(dir, segInfos[s], fieldInfos, IOContext.DEFAULT, FIELD_NAME));
+        }
+
+        final MergeState.DocMap[] docMaps = new MergeState.DocMap[numSegments];
+        final int[] maxDocs = new int[numSegments];
+        final FieldInfos[] perSegFieldInfos = new FieldInfos[numSegments];
+        int docBase = 0;
+        for (int s = 0; s < numSegments; s++) {
+            final int base = docBase;
+            docMaps[s] = docID -> base + docID;
+            maxDocs[s] = perSegment;
+            perSegFieldInfos[s] = fieldInfos;
+            docBase += perSegment;
+        }
+
+        final SegmentInfo mergedSegInfo = createSegmentInfo(dir, "_merged", total);
+        final MergeState mergeState = new MergeState(
+            docMaps,
+            mergedSegInfo,
+            fieldInfos,
+            null,
+            null,
+            null,
+            null,
+            perSegFieldInfos,
+            new org.apache.lucene.util.Bits[numSegments],
+            null,
+            null,
+            readers,
+            maxDocs,
+            InfoStream.NO_OUTPUT,
+            Runnable::run,
+            false,
+            null
+        );
+        final SegmentWriteState mergedWs = new SegmentWriteState(
+            InfoStream.NO_OUTPUT,
+            dir,
+            mergedSegInfo,
+            fieldInfos,
+            null,
+            IOContext.DEFAULT,
+            FIELD_NAME
+        );
+        try (KnnVectorsWriter mergedWriter = format.fieldsWriter(mergedWs)) {
+            mergedWriter.mergeOneField(fi, mergeState);
+            mergedWriter.finish();
+        }
+        for (final KnnVectorsReader reader : readers) {
+            reader.close();
+        }
+
+        mergedWs.segmentInfo.setFiles(
+            Arrays.stream(dir.listAll()).filter(f -> f.startsWith(mergedSegInfo.name)).collect(Collectors.toSet())
+        );
+        return mergedWs;
+    }
+
+    /** Writes {@code vectors} into {@code dir} via {@code format} and populates the segment's file set. */
+    private SegmentWriteState indexIntoDirectory(
+        final Directory dir,
+        final org.apache.lucene.codecs.KnnVectorsFormat format,
+        final FieldInfo fi,
+        final float[][] vectors
+    ) throws IOException {
+        final SegmentWriteState ws = createWriteState(dir, "_0", vectors.length);
+        try (KnnVectorsWriter knnWriter = format.fieldsWriter(ws)) {
+            @SuppressWarnings("unchecked")
+            final KnnFieldVectorsWriter<float[]> fw = (KnnFieldVectorsWriter<float[]>) knnWriter.addField(fi);
+            for (int i = 0; i < vectors.length; i++) {
+                fw.addValue(i, vectors[i]);
+            }
+            knnWriter.flush(vectors.length, null);
+            knnWriter.finish();
+        }
+        ws.segmentInfo.setFiles(Arrays.stream(dir.listAll()).filter(f -> f.startsWith(ws.segmentInfo.name)).collect(Collectors.toSet()));
+        return ws;
+    }
+
+    private SegmentReadState readStateFor(final Directory dir, final SegmentWriteState ws, final FieldInfo fi) {
+        return new SegmentReadState(dir, ws.segmentInfo, new FieldInfos(new FieldInfo[] { fi }), IOContext.DEFAULT, FIELD_NAME);
+    }
+
+    private TopDocs searchAll(final KnnVectorsReader reader, final float[] query, final int k, final int maxDoc) throws IOException {
+        final TopKnnCollector collector = new TopKnnCollector(k, Integer.MAX_VALUE, KnnSearchStrategy.Hnsw.DEFAULT);
+        reader.search(FIELD_NAME, query, collector, AcceptDocs.fromLiveDocs(null, maxDoc));
+        return collector.topDocs();
+    }
 
     /** Opens a reader on the segment and asserts every vector matches, in iteration order. */
     @SneakyThrows
@@ -475,6 +935,8 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
             DocValuesSkipIndexType.NONE,
             -1,
             Map.of(
+                KNNVectorFieldMapper.KNN_FIELD,
+                "true",
                 KNNConstants.PARAMETERS,
                 PARAMETERS_JSON,
                 KNNConstants.VECTOR_DATA_TYPE_FIELD,

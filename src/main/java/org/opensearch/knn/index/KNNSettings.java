@@ -1077,8 +1077,7 @@ public class KNNSettings {
     }
 
     public static boolean isReOrderingEnabled(@NonNull final IndexSettings indexSettings) {
-        indexSettings.getSettings().getAsBoolean(INDEX_KNN_REORDERING_ENABLED, false);
-        return false;
+        return indexSettings.getSettings().getAsBoolean(INDEX_KNN_REORDERING_ENABLED, false);
     }
 
     public static Settings getIndexSettings(@NonNull final String indexName) {

@@ -35,6 +35,7 @@ import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 import org.apache.lucene.util.quantization.QuantizedVectorsReader;
 import org.apache.lucene.util.quantization.ScalarQuantizer;
 import org.opensearch.knn.index.codec.KNN1040Codec.ScalarQuantizedFloatVectorValues;
+import org.opensearch.knn.memoryoptsearch.faiss.FlatVectorsScorerProvider;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -73,6 +74,13 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         FileDataHint.KNN_VECTORS,
         DataAccessHint.RANDOM
     ).filter(Objects::nonNull).toArray(IOContext.FileOpenHint[]::new);
+
+    // Plain Lucene104 (Java ADC) scorer used to score the query against the in-heap hub records. It
+    // reads through the values API, so it works on heap-backed values with no off-heap slice — unlike
+    // the SIMD scorer, which requires one.
+    private static final Lucene104ScalarQuantizedVectorScorer HUB_SCORER = new Lucene104ScalarQuantizedVectorScorer(
+        FlatVectorsScorerProvider.getLucene99FlatVectorsScorer()
+    );
 
     private final SegmentReadState segmentReadState;
     private final IndexInput metaInput;
@@ -166,21 +174,34 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             ordToPhysicalOrdMap[i] = (int) directReader.get(i);
         }
 
+        final String fieldName = fieldInfos.fieldInfo(fieldNumber).getName();
+
         // Hub section lives at the end, right after the DirectWriter block (which was read via a slice
         // and did NOT advance meta). Seek past it, then read the entry-point candidates: numHubs, the
-        // hub ordinals (highest-degree first), and each hub's quantized record (code + 4 corrections).
+        // hub ordinals (highest-degree first), then the numHubs quantized records — parsed straight into
+        // an in-heap QuantizedByteVectorValues so the entry-point scorer can be built anywhere (no slice).
         meta.seek(packedStart + packedLen);
         final int numHubs = meta.readVInt();
         final int[] hubOrdinals = new int[numHubs];
         for (int i = 0; i < numHubs; i++) {
             hubOrdinals[i] = meta.readVInt();
         }
-        final byte[] hubRecords = new byte[numHubs * recordSize];
-        meta.readBytes(hubRecords, 0, hubRecords.length);
+        final OptimizedScalarQuantizer hubQuantizer = new OptimizedScalarQuantizer(
+            fieldInfos.fieldInfo(fieldNumber).getVectorSimilarityFunction()
+        );
+        final HeapQuantizedByteVectorValues hubValues = HeapQuantizedByteVectorValues.read(
+            meta,
+            numHubs,
+            dimension,
+            codeLength,
+            centroid,
+            centroidDp,
+            hubQuantizer,
+            scalarEncoding
+        );
 
         // Records live in the data file, right after its index header.
         final long dataOffset = CodecUtil.indexHeaderLength(CODEC_NAME, segmentSuffix);
-        final String fieldName = fieldInfos.fieldInfo(fieldNumber).getName();
         final IndexInput dataSlice = data.slice("veqo-records" + fieldName, dataOffset, (long) count * recordSize);
 
         return new FieldEntry(
@@ -195,7 +216,7 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             ordToPhysicalOrdMap,
             dataSlice,
             hubOrdinals,
-            hubRecords
+            hubValues
         );
     }
 
@@ -275,12 +296,41 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
     }
 
     /**
-     * @return the packed quantized hub records for the field, parallel to {@link #getHubOrdinals} and
-     * {@code recordSize} bytes each (1-bit code + 4 correction fields); empty if none
+     * Picks the single hub closest to {@code target} to seed the HNSW search.
+     *
+     * <p>Scores the query against each stored hub's quantized record (from the metadata hub section)
+     * using the same SQ ADC scorer used for the graph, and returns the <b>original ordinal</b> of the
+     * best-scoring hub. The returned ordinal is a valid graph entry point (no {@code acceptOrds}
+     * filtering is applied here — the filter is honored later during traversal/collection).
+     *
+     * @return the best hub's original ordinal, or {@code -1} if the field is unknown or has no hubs
      */
-    public byte[] getHubRecords(final String field) {
+    public int selectBestHubOrdinal(final String field, final float[] target) throws IOException {
         final FieldEntry entry = fields.get(field);
-        return entry == null ? new byte[0] : entry.hubRecords;
+        if (entry == null || entry.hubOrdinals.length == 0) {
+            return -1;
+        }
+        final VectorSimilarityFunction similarity = segmentReadState.fieldInfos.fieldInfo(field).getVectorSimilarityFunction();
+
+        // The hubs are already an in-heap QuantizedByteVectorValues; score the query against all of them
+        // in one bulk pass. HUB_SCORER is the plain Lucene104 (Java ADC) scorer — the heap values have no
+        // off-heap slice, so the SIMD path doesn't apply (and isn't worth it for <=32 hubs).
+        final RandomVectorScorer scorer = HUB_SCORER.getRandomVectorScorer(similarity, entry.hubValues, target);
+        final int numHubs = entry.hubOrdinals.length;
+        final int[] hubIndices = new int[numHubs];
+        for (int i = 0; i < numHubs; i++) {
+            hubIndices[i] = i;
+        }
+        final float[] scores = new float[numHubs];
+        scorer.bulkScore(hubIndices, scores, numHubs);
+
+        int bestHubIndex = 0;
+        for (int i = 1; i < numHubs; i++) {
+            if (scores[i] > scores[bestHubIndex]) {
+                bestHubIndex = i;
+            }
+        }
+        return entry.hubOrdinals[bestHubIndex];
     }
 
     @Override
@@ -305,7 +355,8 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
         throws IOException {
         final FieldInfo fieldInfo = segmentReadState.fieldInfos.fieldInfo(field);
         final FloatVectorValues floatVectorValues = rawFlatVectorsReader.getFloatVectorValues(field);
-        final OptimizedScalarQuantizer quantizer = new OptimizedScalarQuantizer(fieldInfo.getVectorSimilarityFunction());
+        final VectorSimilarityFunction similarity = fieldInfo.getVectorSimilarityFunction();
+        final OptimizedScalarQuantizer quantizer = new OptimizedScalarQuantizer(similarity);
         return new LocalityOrderedQuantizedByteVectorValues(
             entry.dimension,
             entry.count,
@@ -315,6 +366,8 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             entry.centroidDp,
             quantizer,
             entry.scalarEncoding,
+            similarity,
+            quantizedVectorScorer,
             ordinalMap,
             entry.dataSlice.clone(),
             floatVectorValues
@@ -426,8 +479,8 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
 
         /** Hub entry-point candidates: original ordinals, highest-degree first. */
         final int[] hubOrdinals;
-        /** Quantized records for the hubs (parallel to {@link #hubOrdinals}), each {@link #recordSize} bytes. */
-        final byte[] hubRecords;
+        /** In-heap quantized records for the hubs (parallel to {@link #hubOrdinals}), ready to score. */
+        final QuantizedByteVectorValues hubValues;
 
         FieldEntry(
             final int fieldNumber,
@@ -441,7 +494,7 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             final int[] ordToPhysicalOrdMap,
             final IndexInput dataSlice,
             final int[] hubOrdinals,
-            final byte[] hubRecords
+            final QuantizedByteVectorValues hubValues
         ) {
             this.fieldNumber = fieldNumber;
             this.dimension = dimension;
@@ -454,7 +507,7 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             this.dataSlice = dataSlice;
             this.ordToPhysicalOrdMap = ordToPhysicalOrdMap;
             this.hubOrdinals = hubOrdinals;
-            this.hubRecords = hubRecords;
+            this.hubValues = hubValues;
         }
     }
 }
