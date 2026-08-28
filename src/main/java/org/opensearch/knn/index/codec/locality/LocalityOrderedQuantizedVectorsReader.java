@@ -419,7 +419,7 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
      * {@code values.prefetch}. Since we pass it the already-translated physical ordinals, it warms
      * exactly the records the native score will read.
      */
-    private static final class PhysicalOrdinalTranslatingScorer extends RandomVectorScorer.AbstractRandomVectorScorer {
+    public static final class PhysicalOrdinalTranslatingScorer extends RandomVectorScorer.AbstractRandomVectorScorer {
         private final RandomVectorScorer delegate;
         private final int[] ordToPhysicalOrdMap;
         private int[] scratch = new int[0];

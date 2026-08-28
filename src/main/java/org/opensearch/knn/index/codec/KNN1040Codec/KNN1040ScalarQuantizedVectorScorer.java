@@ -8,13 +8,14 @@ package org.opensearch.knn.index.codec.KNN1040Codec;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.codecs.lucene104.Lucene104ScalarQuantizedVectorScorer;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
-import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.index.codec.locality.LocalityOrderedQuantizedByteVectorValues;
 import org.opensearch.knn.index.codec.scorer.PrefetchableFlatVectorScorer.PrefetchableRandomVectorScorer;
 import org.opensearch.knn.jni.SimdVectorComputeService;
 import org.opensearch.knn.memoryoptsearch.MemorySegmentAddressExtractorUtil;
@@ -109,11 +110,14 @@ public class KNN1040ScalarQuantizedVectorScorer extends Lucene104ScalarQuantized
         final QuantizedByteVectorValues quantizedByteVectorValues,
         final float[] target
     ) throws IOException {
-        final IndexInput indexInput = quantizedByteVectorValues.getSlice();
-        final long[] addressAndSize = MemorySegmentAddressExtractorUtil.tryExtractAddressAndSize(indexInput, 0, indexInput.length());
-        if (addressAndSize != null) {
-            // Try bulk SIMD
-            return bulkSimdRandomVectorScorer(quantizedByteVectorValues, target, addressAndSize, similarityFunction);
+        if (quantizedByteVectorValues instanceof LocalityOrderedQuantizedByteVectorValues == false) {
+            final IndexInput indexInput = quantizedByteVectorValues.getSlice();
+            final long[] addressAndSize = MemorySegmentAddressExtractorUtil.tryExtractAddressAndSize(indexInput, 0, indexInput.length());
+            if (addressAndSize != null) {
+                log.warn("Bulk SIMD for SQ is supported");
+                // Try bulk SIMD
+                return bulkSimdRandomVectorScorer(quantizedByteVectorValues, target, addressAndSize, similarityFunction);
+            }
         }
 
         // Fallback

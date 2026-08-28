@@ -30,6 +30,7 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopKnnCollector;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.Version;
@@ -144,6 +145,71 @@ public class Faiss1040SQHNSWReorderedKnnVectorsFormatTests extends KNNTestCase {
                     }
                 }
                 assertTrue("self-recall too low: " + selfHits + "/" + numQueries, selfHits >= (int) (numQueries * 0.8));
+            }
+        }
+    }
+
+    /**
+     * Same self-recall check as above, but forced onto a real {@link MMapDirectory}. This is the
+     * critical case: on mmap the SQ scorer takes the SIMD path, which reads records by raw address
+     * arithmetic ({@code base + ord*recordSize}) on the record slice — bypassing the
+     * {@code toPhysical(ord)} translation that only the Java {@code vectorValue()} fallback applies.
+     * If the reordered store's physical layout is not honored on the SIMD path, every graph node is
+     * scored against the wrong record and self-recall collapses. Uses more docs so the graph-derived
+     * permutation is non-trivial (identity ordering would hide the bug).
+     */
+    @SneakyThrows
+    public void testSearch_onMMapDirectory_whenQueryIsIndexedVector_thenSelfRecallIsHigh() {
+        final int numVectors = 1000;
+        final int k = 10;
+        final float[][] vectors = generateRandomVectors(numVectors, DIMENSION);
+
+        try (Directory directory = new MMapDirectory(createTempDir())) {
+            final SegmentWriteState writeState = createWriteState(directory, "_0", numVectors);
+            final FieldInfo fi = createRealFieldInfo();
+            final Faiss1040SQHNSWReorderedKnnVectorsFormat format = new Faiss1040SQHNSWReorderedKnnVectorsFormat();
+
+            try (KnnVectorsWriter knnWriter = format.fieldsWriter(writeState)) {
+                @SuppressWarnings("unchecked")
+                final KnnFieldVectorsWriter<float[]> fw = (KnnFieldVectorsWriter<float[]>) knnWriter.addField(fi);
+                for (int i = 0; i < numVectors; i++) {
+                    fw.addValue(i, vectors[i]);
+                }
+                knnWriter.flush(numVectors, null);
+                knnWriter.finish();
+            }
+
+            writeState.segmentInfo.setFiles(
+                Arrays.stream(directory.listAll()).filter(f -> f.startsWith(writeState.segmentInfo.name)).collect(Collectors.toSet())
+            );
+
+            final SegmentReadState readState = new SegmentReadState(
+                directory,
+                writeState.segmentInfo,
+                new FieldInfos(new FieldInfo[] { fi }),
+                IOContext.DEFAULT,
+                FIELD_NAME
+            );
+            try (KnnVectorsReader knnReader = format.fieldsReader(readState)) {
+                final int numQueries = 50;
+                int selfHits = 0;
+                for (int q = 0; q < numQueries; q++) {
+                    final int queryDoc = q * (numVectors / numQueries);
+                    final float[] query = vectors[queryDoc];
+
+                    final TopKnnCollector collector = new TopKnnCollector(k, Integer.MAX_VALUE, KnnSearchStrategy.Hnsw.DEFAULT);
+                    knnReader.search(FIELD_NAME, query, collector, AcceptDocs.fromLiveDocs(null, numVectors));
+
+                    final TopDocs topDocs = collector.topDocs();
+                    assertTrue("search returned no results for query doc " + queryDoc, topDocs.scoreDocs.length > 0);
+                    for (final ScoreDoc sd : topDocs.scoreDocs) {
+                        if (sd.doc == queryDoc) {
+                            selfHits++;
+                            break;
+                        }
+                    }
+                }
+                assertTrue("self-recall too low on MMapDirectory: " + selfHits + "/" + numQueries, selfHits >= (int) (numQueries * 0.8));
             }
         }
     }

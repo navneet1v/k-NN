@@ -36,7 +36,7 @@ import java.nio.ByteBuffer;
  * {@code LocalityOrderedQuantizedVectorsReader.PhysicalOrdinalTranslatingScorer}); {@link #ordToDoc(int)}
  * / {@link #iterator()} are not meaningful in this mode and must not be used.
  */
-final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVectorValues {
+public final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVectorValues {
 
     private final int dimension;
     private final int size;
