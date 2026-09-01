@@ -133,7 +133,8 @@ public final class QuantizedVectorReader {
         int[] ordBuf,
         boolean[] validBuf,
         float[] centroid,
-        float centroidDp
+        float centroidDp,
+        float centroidNormSq
     ) throws IOException {
         // Count valid entries without separate loop — check while reading
         boolean anyValid = false;
@@ -149,7 +150,7 @@ public final class QuantizedVectorReader {
             return;
         }
 
-        ensureQueryQuantized(centroid);
+        ensureQueryQuantized(centroid, centroidNormSq);
 
         // Read corrections FIRST (small — 16 bytes per vector)
         readFloatsFromInts(input, blockLower, blockSize);
@@ -186,24 +187,6 @@ public final class QuantizedVectorReader {
                     input.skipBytes((long) blockSize * packedBytes);
                     return;
                 }
-            }
-
-            // Detailed per-vector check (only if fast check didn't skip)
-            float maxUpperBound = Float.NEGATIVE_INFINITY;
-            float docBitScaleCheck = encoding.docBitScale();
-            for (int j = 0; j < blockSize; j++) {
-                if (!validBuf[blockStart + j]) continue;
-                float docScale = (blockUpper[j] - blockLower[j]) * docBitScaleCheck;
-                float maxScore = blockLower[j] * currentQueryLower * fieldState.dimension + Math.abs(currentQueryLower) * docScale * Math
-                    .abs(blockSum[j]) + Math.abs(blockLower[j]) * Math.abs(currentQueryScale) * Math.abs(currentQueryComponentSum)
-                    + docScale * Math.abs(currentQueryScale) * packedBytes * 4f;
-                float upperBound = maxScore + blockAdd[j] + centroidDp - currentCentroidNormSq;
-                if (upperBound > maxUpperBound) maxUpperBound = upperBound;
-            }
-            float upperSimilarity = maxUpperBound >= 0 ? maxUpperBound + 1 : 1f / (1f - maxUpperBound);
-            if (upperSimilarity <= blockThreshold) {
-                input.skipBytes((long) blockSize * packedBytes);
-                return;
             }
         }
 
@@ -309,15 +292,13 @@ public final class QuantizedVectorReader {
     }
 
     /** Cache query quantization per centroid — skip if same centroid reference. */
-    private void ensureQueryQuantized(float[] centroid) {
+    private void ensureQueryQuantized(float[] centroid, float centroidNormSq) {
         if (centroid == cachedCentroid) return;
         cachedCentroid = centroid;
 
-        Arrays.fill(scratch, (byte) 0);
         System.arraycopy(queryVector, 0, queryCopy, 0, queryVector.length);
         OptimizedScalarQuantizer.QuantizationResult qResult = osq.multiScalarQuantize(queryCopy, destinations, bitsArray, centroid)[0];
 
-        Arrays.fill(transposedBuffer, (byte) 0);
         OptimizedScalarQuantizer.transposeHalfByte(scratch, transposedBuffer);
 
         currentTransposed = transposedBuffer;
@@ -325,7 +306,7 @@ public final class QuantizedVectorReader {
         currentQueryScale = (qResult.upperInterval() - currentQueryLower) * FOUR_BIT_SCALE;
         currentQueryComponentSum = (float) qResult.quantizedComponentSum();
         currentQueryAdditionalCorrection = qResult.additionalCorrection();
-        currentCentroidNormSq = VectorUtil.dotProduct(centroid, centroid);
+        currentCentroidNormSq = centroidNormSq;
     }
 
 

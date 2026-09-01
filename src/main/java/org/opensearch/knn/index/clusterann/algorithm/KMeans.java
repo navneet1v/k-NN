@@ -106,7 +106,7 @@ public final class KMeans {
             sanitizeCentroids(centroids, k, dim);
 
             if (config.rebalanceEmpty) {
-                rebalanceEmptyClusters(vectors, centroids, clusterCounts, iterAssignments, k, config);
+                rebalanceEmptyClusters(iterVectors, centroids, clusterCounts, iterAssignments, k, config);
                 centroidProximityMap = null; // invalidate after rebalance
             }
 

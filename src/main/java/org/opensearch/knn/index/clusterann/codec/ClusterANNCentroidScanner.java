@@ -81,7 +81,28 @@ public final class ClusterANNCentroidScanner {
         this.forceExact = force;
     }
 
+    // Reusable centroid buffer — allocated once, reused across primary + SOAR postings
+    private float[] centroidBuf;
+    private float centroidDp;
+    private float centroidNormSq;
+    private int lastCentroidLoaded = -1;
+
     public int scan(KnnCollector collector) throws IOException {
+        // Load centroid ONCE for both primary and SOAR postings (same centroidIdx)
+        if (useADC && adcReader != null && centroidIdx != lastCentroidLoaded) {
+            if (centroidBuf == null) {
+                centroidBuf = new float[fieldState.dimension];
+            }
+            centroidReader.readTransformedCentroid(centroidIdx, centroidBuf);
+            centroidDp = 0f;
+            if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
+                centroidDp = VectorUtil.dotProduct(target, centroidBuf);
+            }
+            // Use precomputed norm from fieldState (avoids 768 FP ops)
+            centroidNormSq = fieldState.centroidNorms[centroidIdx];
+            lastCentroidLoaded = centroidIdx;
+        }
+
         int totalScored = 0;
         totalScored += scanOnePosting(collector);
         totalScored += scanOnePosting(collector);
@@ -126,19 +147,12 @@ public final class ClusterANNCentroidScanner {
     }
 
     private int scoreADC(KnnCollector collector, int count, int validCount) throws IOException {
-        // Read transformed centroid from off-heap (.clac) into a NEW array (cache uses reference equality)
-        float[] centroid = new float[fieldState.dimension];
-        centroidReader.readTransformedCentroid(centroidIdx, centroid);
-        float centroidDp = 0f;
-        if (adcReader.getSimFunc() != VectorSimilarityFunction.EUCLIDEAN) {
-            centroidDp = VectorUtil.dotProduct(target, centroid);
-        }
-
+        // Use pre-loaded centroid buffer from scan() — no allocation, enables cache hit in ensureQueryQuantized
         int scored = 0;
         int pos = 0;
         while (pos < count) {
             int blockSize = Math.min(BLOCK_SIZE, count - pos);
-            adcReader.scoreBlock(postingsInput, pos, blockSize, docIdBuf, ordBuf, validBuf, centroid, centroidDp);
+            adcReader.scoreBlock(postingsInput, pos, blockSize, docIdBuf, ordBuf, validBuf, centroidBuf, centroidDp, centroidNormSq);
             for (int j = 0; j < blockSize; j++) {
                 if (validBuf[pos + j]) scored++;
             }
