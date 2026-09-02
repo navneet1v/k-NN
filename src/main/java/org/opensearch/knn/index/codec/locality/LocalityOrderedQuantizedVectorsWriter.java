@@ -169,18 +169,14 @@ public final class LocalityOrderedQuantizedVectorsWriter implements Closeable {
      * {@link #writeVectorDataUsingQuantizedVectorValues} (the source is {@link QuantizedByteVectorValues#copy()
      * copied} so record iteration does not disturb the caller's instance).
      *
-     * <p><b>LIMITATION — this currently only handles a DENSE permutation, i.e. the BFS ordering
-     * ({@code FaissService.buildOrderingOfVectorsUsingBFS}), NOT the greedy page-aligned ordering
-     * ({@code FaissService.buildOrderingOfVectorsUsingIndexStructure}).</b> The inversion below assumes
-     * physical positions are a contiguous {@code 0..N-1} (one record per vector, no gaps), which holds
-     * for BFS. The greedy strict-page layout instead pads each page to a {@code pageCapacity} boundary,
-     * so its physical positions are <b>sparse</b> — values can exceed {@code N-1} and some physical
-     * slots map to no vector (padding). Feeding a greedy permutation here would (a) index the
-     * {@code N}-sized {@code physicalOrdinals} array out of bounds, and (b) leave no notion of the
-     * zero-filled padding slots. Supporting greedy requires sizing the inverse to
-     * {@code numPages*pageCapacity}, marking padding slots with a sentinel, emitting zero-filled records
-     * for them, and separating the record count (physical slots) from the vector count in
-     * {@link #writeMetadata}. Until then, wire the BFS ordering into the build strategy for this path.
+     * <p><b>Requires a DENSE permutation</b> — physical positions must be a contiguous {@code 0..N-1}
+     * (one record per vector, no gaps). Both native orderings satisfy this: {@code
+     * buildOrderingOfVectorsUsingBFS} and the dense greedy {@code buildOrderingOfVectorsUsingIndexStructure}
+     * (which packs affine clusters back-to-back, no page padding). The only layout that would violate it
+     * is the deferred <i>strict-page</i> greedy variant (padded, sparse positions that can exceed
+     * {@code N-1}); if that is ever revived, this path needs the inverse sized to
+     * {@code numPages*pageCapacity}, padding slots marked with a sentinel and emitted as zero-filled
+     * records, and the record count separated from the vector count in {@link #writeMetadata}.
      *
      * <p>Only a single field per file is supported (see {@link #writeMetadata}); the caller must not
      * also drive this writer via the flat {@code addField}/{@code flush} path for the same file.
@@ -190,7 +186,7 @@ public final class LocalityOrderedQuantizedVectorsWriter implements Closeable {
      *                                   centroid; consumed as-is, not re-quantized
      * @param layer0LocalityOrdering     holds the forward permutation {@code [originalOrdinal] =
      *                                   physicalPosition} produced by the native build; must be a DENSE
-     *                                   (BFS) permutation — see the limitation above
+     *                                   permutation (BFS or dense greedy)
      */
     public void writeReorderedLocalityStore(
         @NonNull final FieldInfo fieldInfo,
@@ -202,11 +198,9 @@ public final class LocalityOrderedQuantizedVectorsWriter implements Closeable {
         final int[] ordinalToPhysicalOrdinal = layer0LocalityOrdering.getPhysicalOrdinals();
 
         // Invert the forward map into physicalOrdinals[physicalPos] = originalOrdinal.
-        // DENSE / BFS ONLY: this array is sized to N and assumes every physicalPosition is in [0, N)
-        // with no gaps. That holds for the BFS ordering. It does NOT hold for the greedy page-aligned
-        // ordering, whose physical positions are sparse (padding between pages) and can exceed N-1 —
-        // ordinalToPhysicalOrdinal[i] would then index this array out of bounds, and padding slots
-        // would have no record written. See this method's Javadoc for what greedy support needs.
+        // DENSE only: this array is sized to N and assumes every physicalPosition is in [0, N) with no
+        // gaps. Both BFS and dense greedy satisfy this. Only the deferred strict-page greedy variant
+        // (sparse, padded positions > N-1) would index out of bounds here — see this method's Javadoc.
         for (int i = 0; i < ordinalToPhysicalOrdinal.length; i++) {
             physicalOrdinalsArray[ordinalToPhysicalOrdinal[i]] = i;
         }

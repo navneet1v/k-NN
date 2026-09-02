@@ -63,11 +63,11 @@ import java.util.List;
  * locality store writes only {@code .veqlo}/{@code .vemlo} and emits no {@code .vec}, so there is no
  * file collision between the two.
  *
- * <p><b>Current limitation.</b> {@link LocalityOrderedQuantizedVectorsWriter#writeReorderedLocalityStore}
- * only handles a <b>dense</b> permutation (the BFS ordering,
- * {@code FaissService.buildOrderingOfVectorsUsingBFS}); the greedy strict-page ordering
- * ({@code buildOrderingOfVectorsUsingIndexStructure}) produces sparse (padded) physical positions it
- * does not yet support.
+ * <p>The build strategy computes the layout with the <b>dense greedy</b> ordering
+ * ({@code FaissService.buildOrderingOfVectorsUsingIndexStructure}), which packs affine clusters
+ * back-to-back into a contiguous {@code 0..N-1} permutation.
+ * {@link LocalityOrderedQuantizedVectorsWriter#writeReorderedLocalityStore} consumes any such dense
+ * permutation (BFS or dense greedy); only the deferred strict-page (padded, sparse) variant is unsupported.
  *
  * @see Faiss1040ScalarQuantizedKnnVectorsWriter
  */
@@ -234,11 +234,9 @@ class Faiss1040SQHNSWReorderedWriter extends AbstractNativeEnginesKnnVectorsWrit
      * <b>forward</b> map {@code physicalOrdinals[originalOrdinal] = physicalPosition}; the locality
      * writer inverts it to lay records out in physical order.
      *
-     * <p><b>Limitation:</b> {@link LocalityOrderedQuantizedVectorsWriter#writeReorderedLocalityStore}
-     * currently only supports a <b>dense</b> permutation (the BFS ordering,
-     * {@code buildOrderingOfVectorsUsingBFS}). The greedy strict-page ordering
-     * ({@code buildOrderingOfVectorsUsingIndexStructure}) produces sparse physical positions (padding
-     * gaps) that it does not yet handle — see that method's Javadoc.
+     * <p>Consumes a <b>dense</b> permutation ({@code 0..N-1}, no gaps) — produced by the dense greedy
+     * ordering {@code buildOrderingOfVectorsUsingIndexStructure} (or BFS). Only the deferred strict-page
+     * (sparse, padded) variant is unsupported — see that method's Javadoc.
      *
      * @param fieldInfo              the field being written
      * @param quantizedValues        quantized codes (by original ordinal) sourced from the SQ flat store

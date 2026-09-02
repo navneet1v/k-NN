@@ -12,6 +12,7 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.hnsw.RandomVectorScorerSupplier;
+import org.opensearch.knn.index.codec.locality.LocalityOrderedQuantizedByteVectorValues;
 
 import java.io.IOException;
 
@@ -108,7 +109,11 @@ public class PrefetchableFlatVectorScorer implements FlatVectorsScorer {
          */
         @Override
         public float bulkScore(int[] nodes, float[] scores, int numNodes) throws IOException {
-            PrefetchableVectorValuesHelper.doPrefetch(values(), nodes, numNodes);
+            if (values() instanceof LocalityOrderedQuantizedByteVectorValues localityOrderedQuantizedByteVectorValues) {
+                localityOrderedQuantizedByteVectorValues.prefetch(nodes, numNodes);
+            } else {
+                PrefetchableVectorValuesHelper.doPrefetch(values(), nodes, numNodes);
+            }
             return delegate.bulkScore(nodes, scores, numNodes);
         }
 

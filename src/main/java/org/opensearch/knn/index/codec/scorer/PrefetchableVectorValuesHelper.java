@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.lucene95.HasIndexSlice;
 import org.apache.lucene.index.KnnVectorValues;
+import org.apache.lucene.store.IndexInput;
 import java.io.IOException;
 
 /**
@@ -40,8 +41,17 @@ class PrefetchableVectorValuesHelper {
      */
     public static void doPrefetch(final KnnVectorValues vectorValues, final int[] nodes, final int numNodes) throws IOException {
         if (vectorValues instanceof HasIndexSlice vectorValuesWithSlice && vectorValuesWithSlice.getSlice() != null) {
+            final IndexInput slice = vectorValuesWithSlice.getSlice();
+            // Prefetch stride must be the on-disk RECORD stride, not the byte-vector (code) length.
+            // getVectorByteLength() returns only the quantized code bytes (e.g. 96 for 768-dim 1-bit),
+            // but SQ records interleave code + correction factors (e.g. 112 bytes), so ord*codeLength
+            // addresses the wrong bytes. Derive the true stride from the record slice: sliceLength/size.
+            // For raw-float flat vectors this equals getVectorByteLength() (dim*4), so no behavior change;
+            // for SQ it corrects 96 -> 112. Fall back to getVectorByteLength() if size is unknown (<=0).
+            final int size = vectorValues.size();
+            final long stride = size > 0 ? slice.length() / size : vectorValues.getVectorByteLength();
             // passing base offset as 0, since the index input is a slice and its base offset is 0.
-            PrefetchHelper.prefetch(vectorValuesWithSlice.getSlice(), 0, vectorValues.getVectorByteLength(), nodes, numNodes);
+            PrefetchHelper.prefetch(slice, 0, stride, nodes, numNodes);
         } else {
             log.warn("Not able to do prefetch on instance {}", vectorValues.getClass().getSimpleName());
         }

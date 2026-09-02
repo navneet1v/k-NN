@@ -180,20 +180,23 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
                 int numberOfHubs = Math.min(indexInfo.getTotalLiveDocs(), KNNConstants.MAX_HUBS_IN_HNSW);
                 layer0LocalityOrdering.populate(new int[indexInfo.getTotalLiveDocs()], new int[numberOfHubs]);
             }
-            // Records-per-page for the strict-page greedy layout: 32 KB page / one record. A record is
-            // the quantized code plus the 4 correction factors (4 bytes each).
-            // TODO: source the record size from the locality store's own record layout once the locality
-            // writer wiring lands, rather than recomputing it here.
-            // final int recordSizeBytes = quantizedVecBytes + Integer.BYTES * 4;
-            // final int pageCapacity = Math.max(1, (32 * 1024) / recordSizeBytes);
+            // Cluster-size bound for the dense greedy layout: one 32 KB page worth of records. A record
+            // is the quantized code plus the 4 correction factors (4 bytes each), matching the locality
+            // store's on-disk record layout. Greedy grows each affine cluster up to this many nodes, then
+            // packs clusters back-to-back (dense 0..n-1, no padding) — see
+            // buildOrderingOfVectorsUsingIndexStructure. Greedy co-locates a node's own dense neighborhood
+            // far better than BFS (higher intra-page edge ratio), so more neighbor reads hit one page.
+            final int recordSizeBytes = quantizedVecBytes + Integer.BYTES * 4;
+            final int pageCapacity = Math.max(1, (32 * 1024) / recordSizeBytes);
             // Top-degree hub ordinals to use as search entry-point candidates. Native fills these
             // (original ordinals, -1-padded); pool capped at 32.
             // TODO: deliver these back to the locality writer (via the sink) so they can be persisted
             // for hub-based entry-point selection at search time.
             AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-                JNIService.buildOrderingOfVectorsUsingBFS(
+                JNIService.buildOrderingOfVectorsUsingIndexStructure(
                     indexMemoryAddress,
                     layer0LocalityOrdering.getPhysicalOrdinals(),
+                    pageCapacity,
                     layer0LocalityOrdering.getHubs(),
                     indexInfo.getKnnEngine()
                 );

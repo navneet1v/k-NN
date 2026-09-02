@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.codec.locality;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.hnsw.FlatVectorsReader;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
@@ -67,6 +68,7 @@ import static org.opensearch.knn.index.codec.locality.LocalityOrderedQuantizedVe
  * right after the data file's header, independent of metadata size. Per-field parsed state is held
  * in a {@link FieldEntry}.
  */
+@Log4j2
 public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsReader implements QuantizedVectorsReader {
 
     private static final IOContext.FileOpenHint[] RANDOM_ACCESS_HINT = Stream.of(
@@ -176,6 +178,29 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
 
         final String fieldName = fieldInfos.fieldInfo(fieldNumber).getName();
 
+        // DIAGNOSTIC (one line per field at open): is the stored permutation actually a reordering, or is
+        // it ~identity (which would mean the reorder never took effect)? "displaced" = ordinals whose
+        // physical slot differs from the identity slot; "meanAbsShift" = average |physical - original|,
+        // a coarse sense of how far records move. Identity => displaced≈0. A real reorder => displaced≈100%
+        // and a large meanAbsShift. Logged at INFO so it shows without changing log levels.
+        int displaced = 0;
+        long sumAbsShift = 0L;
+        for (int i = 0; i < count; i++) {
+            if (ordToPhysicalOrdMap[i] != i) {
+                displaced++;
+            }
+            sumAbsShift += Math.abs((long) ordToPhysicalOrdMap[i] - i);
+        }
+        log.info(
+            "LocalityOrdering field=[{}] count=[{}] displaced=[{}] displacedPct=[{}] meanAbsShift=[{}] sample[0..7]=[{}]",
+            fieldName,
+            count,
+            displaced,
+            count == 0 ? "0.0" : String.format("%.2f", 100.0 * displaced / count),
+            count == 0 ? "0.0" : String.format("%.1f", (double) sumAbsShift / count),
+            sampleMap(ordToPhysicalOrdMap)
+        );
+
         // Hub section lives at the end, right after the DirectWriter block (which was read via a slice
         // and did NOT advance meta). Seek past it, then read the entry-point candidates: numHubs, the
         // hub ordinals (highest-degree first), then the numHubs quantized records — parsed straight into
@@ -218,6 +243,19 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
             hubOrdinals,
             hubValues
         );
+    }
+
+    /** Formats the first few {@code originalOrdinal -> physicalPosition} entries for the diagnostic log. */
+    private static String sampleMap(final int[] map) {
+        final int limit = Math.min(8, map.length);
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < limit; i++) {
+            if (i > 0) {
+                sb.append(' ');
+            }
+            sb.append(i).append("->").append(map[i]);
+        }
+        return sb.toString();
     }
 
     @Override

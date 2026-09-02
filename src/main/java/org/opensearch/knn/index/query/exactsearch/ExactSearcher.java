@@ -28,6 +28,7 @@ import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.codec.scorer.PageTouchTracker;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationInfo;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationUtil;
 import org.opensearch.knn.index.engine.KNNEngine;
@@ -113,10 +114,26 @@ public class ExactSearcher {
         final boolean isNested = context.getParentsFilter() != null;
         final DocIdSetIterator matchedDocs = isNested ? null : context.getMatchedDocsIterator();
 
-        if (context.getRadius() != null) {
-            return doRadialSearch(fieldInfo, context, vectorScorer, matchedDocs);
+        // Instrument full-precision (.vec) reads: this path reads raw vectors one-per-doc via
+        // vectorValue(docId) with NO prefetch, so PageTouchTracker's prefetch hook never sees them.
+        // Bracket the scoring here and record each scored doc in the loops (recordOrd). Only for FLOAT
+        // rescore (not the quantized SCORE mode). No-op unless the PageTouchTracker logger is at DEBUG.
+        final boolean fullPrecisionReads = context.isUseQuantizedVectorsForSearch() == false
+            && FieldInfoExtractor.extractVectorDataType(fieldInfo) == VectorDataType.FLOAT;
+        final PageTouchTracker pageTouchTracker = PageTouchTracker.get();
+        if (fullPrecisionReads) {
+            pageTouchTracker.beginFullPrecision((long) fieldInfo.getVectorDimension() * Float.BYTES);
         }
-        return exactNearestNeighborSearch(context, vectorScorer, matchedDocs);
+        try {
+            if (context.getRadius() != null) {
+                return doRadialSearch(fieldInfo, context, vectorScorer, matchedDocs);
+            }
+            return exactNearestNeighborSearch(context, vectorScorer, matchedDocs);
+        } finally {
+            if (fullPrecisionReads) {
+                pageTouchTracker.end("rescore-vec field=[" + context.getField() + "] dim=" + fieldInfo.getVectorDimension());
+            }
+        }
     }
 
     public Scorer exactSearchScorer(final LeafReaderContext leafReaderContext, final ExactSearcherContext context) throws IOException {
@@ -229,6 +246,7 @@ public class ExactSearcher {
         final List<ScoreDoc> scoreDocList = new ArrayList<>();
         final DocIdSetIterator scorerIterator = scorer.iterator();
         for (int docId = scorerIterator.nextDoc(); docId != DocIdSetIterator.NO_MORE_DOCS; docId = scorerIterator.nextDoc()) {
+            PageTouchTracker.get().recordOrd(docId);   // account the full-precision .vec read (no-op unless tracking)
             scoreDocList.add(new ScoreDoc(docId, scorer.score()));
         }
 
@@ -248,6 +266,7 @@ public class ExactSearcher {
         int collectedCount = 0;
 
         for (int doc = iter.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iter.nextDoc()) {
+            PageTouchTracker.get().recordOrd(doc);   // account the full-precision .vec read (no-op unless tracking)
             float score = scorer.score();
             if (score > topDoc.score) {
                 topDoc.score = score;

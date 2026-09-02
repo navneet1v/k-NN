@@ -45,19 +45,28 @@ def load_dataset(path: str, max_train: int = None):
     return train, test, gt_neighbors
 
 
-def build_hnsw_index(vectors: np.ndarray, M: int, ef_construction: int):
+def build_hnsw_index(vectors: np.ndarray, M: int, ef_construction: int, shuffle: bool = True):
     """
     Build single-layer HNSW index with shuffled insertion order wrapped in IndexIDMap.
     Single-layer: all nodes at level 0, no upper layers (CAGRA-style flat graph).
     Returns (index, insertion_order) where insertion_order[i] = original vector ID
     that was inserted at position i.
+
+    When shuffle=False the insertion order is the dataset's natural order (0..n-1), i.e.
+    internal ordinal == original id. Use this to model an ingest whose doc order already
+    follows vector-space locality (as OpenSearch does when fed a pre-clustered dataset),
+    vs the default shuffle which models the realistic worst case of random doc arrival.
     """
     dim = vectors.shape[1]
     n = vectors.shape[0]
 
-    # Shuffle insertion order so insertion order != semantic order
-    rng = np.random.default_rng(seed=42)
-    insertion_order = rng.permutation(n).astype(np.int64)
+    if shuffle:
+        # Shuffle insertion order so insertion order != semantic order
+        rng = np.random.default_rng(seed=42)
+        insertion_order = rng.permutation(n).astype(np.int64)
+    else:
+        # Natural order: insertion order == semantic order (no decorrelation)
+        insertion_order = np.arange(n, dtype=np.int64)
 
     base_index = faiss.IndexHNSWFlat(dim, M, faiss.METRIC_INNER_PRODUCT)
     base_index.hnsw.efConstruction = ef_construction
@@ -495,7 +504,7 @@ def run_simulation(args):
     # Build single-layer HNSW index with shuffled insertion order
     print("Building single-layer HNSW index (shuffled insertion order)...")
     t0 = time.time()
-    index, insertion_order = build_hnsw_index(train, args.M, args.ef_construction)
+    index, insertion_order = build_hnsw_index(train, args.M, args.ef_construction, shuffle=not args.no_shuffle)
     build_time = time.time() - t0
     print(f"  Built in {build_time:.1f}s")
     print(f"  Insertion order shuffled (first 5 internal ordinals map to original IDs: {insertion_order[:5]})")
@@ -712,5 +721,11 @@ if __name__ == "__main__":
     parser.add_argument("--ef-search", type=int, default=64, help="HNSW efSearch")
     parser.add_argument("--page-size", type=int, default=32768, help="Page size in bytes")
     parser.add_argument("--num-entry-points", type=int, default=1, help="Hub entry points for flat search")
+    parser.add_argument(
+        "--no-shuffle",
+        action="store_true",
+        help="insert vectors in natural (dataset) order instead of shuffling; models an ingest whose "
+        "doc order already follows vector-space locality (removes the reordering's headroom)",
+    )
     args = parser.parse_args()
     run_simulation(args)

@@ -715,10 +715,11 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_setFaissSQHnswTo
 //                      node ids in the layer-0 adjacency.
 //   physicalPosition : the slot the vector's record occupies on disk (its position in the reordered
 //                      file). This is what we compute.
-//   page             : a run of exactly `pageCapacity` consecutive physical slots (= one 32 KB SSD
-//                      page). pageCapacity = pageBytes / recordBytes.
-//   affinity(node)   : while a page is being filled, how many of `node`'s neighbors are ALREADY on
-//                      that page. High affinity ⇒ placing `node` here keeps many of its edges local.
+//   cluster          : one contiguous run of up to `pageCapacity` records grown from a seed. It is the
+//                      target size of a 32 KB SSD page (pageCapacity = pageBytes / recordBytes) and
+//                      bounds how large a single dense pocket may grow before we seed a new one.
+//   affinity(node)   : while a cluster is being filled, how many of `node`'s neighbors are ALREADY on
+//                      that cluster. High affinity ⇒ placing `node` here keeps many of its edges local.
 //
 // THE ALGORITHM (greedy page-growing, hub-seeded — mirrors greedy_page_growing_permutation in
 // scripts/locality_simulation.py)
@@ -726,18 +727,19 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_setFaissSQHnswTo
 //   1. Compute each node's layer-0 out-degree.
 //   2. Sort nodes by degree, descending (ties by id). The highest-degree nodes are graph "hubs" —
 //      the centers of the densest clusters — so we seed pages from them first.
-//   3. For each still-unassigned hub, GROW A PAGE:
-//        a. Put the seed on the page; assign it the next physical slot.
+//   3. For each still-unassigned hub, GROW A CLUSTER:
+//        a. Put the seed on the cluster; assign it the next physical slot.
 //        b. Its unassigned neighbors become "candidates", each with affinity = 1.
-//        c. Repeatedly take the candidate with the HIGHEST affinity, add it to the page (next slot),
+//        c. Repeatedly take the candidate with the HIGHEST affinity, add it (next slot),
 //           and bump the affinity of ITS unassigned neighbors (adding new candidates as they appear).
-//        d. Stop when the page holds `pageCapacity` nodes OR no candidate remains (a cluster smaller
+//        d. Stop when the cluster holds `pageCapacity` nodes OR no candidate remains (a pocket smaller
 //           than a page — "close early").
-//        e. STRICT BOUNDARY: pad the slot cursor up to the next multiple of pageCapacity. Any slots
-//           between the last node and the boundary are empty (zero-filled on disk). This guarantees
-//           one logical page == one physical 32 KB page (no page straddles a boundary).
+//        e. DENSE PACKING: do NOT pad. The next cluster starts at the very next slot, so records are a
+//           contiguous 0..n-1 with no gaps. A cluster may straddle a physical 32 KB boundary (vs the
+//           deferred strict-page variant which padded each cluster to its own page), but the file stays
+//           exactly n records — far fewer physical pages when clusters (~avg degree) ≪ pageCapacity.
 //   4. After all hubs, a safety pass seeds any leftover node (there are none in a connected graph,
-//      but degree-0/unreachable nodes get their own singleton page here).
+//      but degree-0/unreachable nodes get their own singleton cluster here).
 //
 // PICKING THE BEST CANDIDATE FAST — the "bucket queue"
 // ----------------------------------------------------
@@ -752,10 +754,10 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_setFaissSQHnswTo
 //
 // OUTPUT / CONTRACT
 // -----------------
-//   ordering[originalOrdinal] = physicalPosition   (the FORWARD map; length n; bijective, gap-free)
-// The forward map is what the reader's ordToPhysicalOrdMap needs. Because of strict-page padding the
-// physicalPosition VALUES are sparse — the maximum is numPages*pageCapacity - 1, which can exceed n —
-// so the writer must lay out numPages*pageCapacity slots and zero-fill the padding gaps.
+//   ordering[originalOrdinal] = physicalPosition   (the FORWARD map; length n; bijective, DENSE 0..n-1)
+// The forward map is what the reader's ordToPhysicalOrdMap needs. Physical positions are DENSE (a
+// contiguous 0..n-1 with no padding gaps), the same shape the BFS variant emits — so the locality
+// writer needs no special sparse/padding handling; the greedy clustering just yields a better layout.
 //
 // PERFORMANCE / MEMORY
 // --------------------
@@ -952,23 +954,25 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfV
             page.clear();
             candidatesToClear.clear();
             topBucket = 0;
-            const int pageStart = nextOrd;   // page-aligned by construction (nextOrd is always a boundary here)
 
             addToPage(seed);
-            // Fill the page with the most-affine candidates until full or no candidate is left.
+            // Fill the cluster with the most-affine candidates until it reaches pageCapacity or no
+            // candidate is left. pageCapacity bounds a cluster to roughly one physical page's worth of
+            // records so a single dense pocket does not grow unbounded across the whole component.
             while ((int) page.size() < pageCapacity) {
                 const int best = popBest();
                 if (best < 0) {
-                    break;   // cluster smaller than a page — close it early
+                    break;   // cluster exhausted its affine candidates — close it and seed a new one
                 }
                 isCandidate[best] = false;
                 addToPage(best);
             }
 
-            // STRICT BOUNDARY: advance the cursor to the next page boundary. Slots
-            // [pageStart + page.size(), pageStart + pageCapacity) hold no vector (zero-filled on disk),
-            // so this page can never straddle two physical 32 KB pages.
-            nextOrd = pageStart + pageCapacity;
+            // DENSE PACKING: no page-boundary padding. nextOrd was advanced by exactly one per node in
+            // addToPage, so the next cluster begins immediately after this one (contiguous 0..n-1). A
+            // cluster may straddle a physical 32 KB page boundary (the trade-off vs strict padding), but
+            // the file stays exactly n records instead of numClusters*pageCapacity — far fewer physical
+            // pages overall when clusters (~avg degree) are much smaller than pageCapacity.
 
             // Reset all scratch touched by this page so the next page starts from a clean slate.
             // (1) affinity was bumped on neighbors of placed nodes — zero those.
@@ -1008,6 +1012,12 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfV
                 throw std::runtime_error(
                     "buildOrderingOfVectorsUsingIndexStructure: node " + std::to_string(i) + " was left unassigned");
             }
+        }
+        // Dense packing invariant: exactly n slots consumed (contiguous 0..n-1, no padding gaps).
+        if (nextOrd != n) {
+            throw std::runtime_error(
+                "buildOrderingOfVectorsUsingIndexStructure: emitted " + std::to_string(nextOrd)
+                + " physical slots for " + std::to_string(n) + " nodes (expected dense 0..n-1)");
         }
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);

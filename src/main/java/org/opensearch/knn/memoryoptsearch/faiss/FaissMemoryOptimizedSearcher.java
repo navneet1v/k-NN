@@ -25,6 +25,7 @@ import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.common.RobustUniqueRandomIterator;
 import org.opensearch.knn.index.KNNVectorSimilarityFunction;
+import org.opensearch.knn.index.codec.scorer.PageTouchTracker;
 import org.opensearch.knn.index.util.WarmupUtil;
 import org.opensearch.knn.memoryoptsearch.VectorSearcher;
 import org.opensearch.knn.memoryoptsearch.faiss.cagra.FaissCagraHNSW;
@@ -161,42 +162,50 @@ public class FaissMemoryOptimizedSearcher implements VectorSearcher {
         final KnnCollector collector = createKnnCollector(knnCollector, scorer);
         final Bits acceptedOrds = scorer.getAcceptOrds(acceptDocs.bits());
 
-        if (knnCollector.k() < scorer.maxOrd()) {
-            // Do ANN search with Lucene's HNSW graph searcher.
-            HnswGraphSearcher.search(scorer, collector, new FaissHnswGraph(hnsw, indexInput.clone()), acceptedOrds);
-        } else {
-            // if k is larger than the number of vectors we expect to visit in an HNSW search,
-            // we can just iterate over all vectors and collect them.
-            int numVectors = scorer.maxOrd();
-            int[] ords = new int[EXHAUSTIVE_BULK_SCORE_ORDS];
-            float[] scores = new float[EXHAUSTIVE_BULK_SCORE_ORDS];
-            int numOrds = 0;
-            for (int i = 0; i < numVectors; i++) {
-                if (acceptedOrds == null || acceptedOrds.get(i)) {
-                    if (knnCollector.earlyTerminated()) {
-                        break;
-                    }
-                    ords[numOrds++] = i;
-                    if (numOrds == ords.length) {
-                        knnCollector.incVisitedCount(numOrds);
-                        if (scorer.bulkScore(ords, scores, numOrds) > knnCollector.minCompetitiveSimilarity()) {
-                            for (int j = 0; j < numOrds; j++) {
-                                knnCollector.collect(scorer.ordToDoc(ords[j]), scores[j]);
-                            }
+        // Per-query distinct-page instrumentation (no-op unless -Dknn.pageTouch.enabled=true). Brackets
+        // this segment's traversal so PrefetchHelper accounting reflects exactly this query's reads.
+        final PageTouchTracker pageTouchTracker = PageTouchTracker.get();
+        pageTouchTracker.begin();
+        try {
+            if (knnCollector.k() < scorer.maxOrd()) {
+                // Do ANN search with Lucene's HNSW graph searcher.
+                HnswGraphSearcher.search(scorer, collector, new FaissHnswGraph(hnsw, indexInput.clone()), acceptedOrds);
+            } else {
+                // if k is larger than the number of vectors we expect to visit in an HNSW search,
+                // we can just iterate over all vectors and collect them.
+                int numVectors = scorer.maxOrd();
+                int[] ords = new int[EXHAUSTIVE_BULK_SCORE_ORDS];
+                float[] scores = new float[EXHAUSTIVE_BULK_SCORE_ORDS];
+                int numOrds = 0;
+                for (int i = 0; i < numVectors; i++) {
+                    if (acceptedOrds == null || acceptedOrds.get(i)) {
+                        if (knnCollector.earlyTerminated()) {
+                            break;
                         }
-                        numOrds = 0;
+                        ords[numOrds++] = i;
+                        if (numOrds == ords.length) {
+                            knnCollector.incVisitedCount(numOrds);
+                            if (scorer.bulkScore(ords, scores, numOrds) > knnCollector.minCompetitiveSimilarity()) {
+                                for (int j = 0; j < numOrds; j++) {
+                                    knnCollector.collect(scorer.ordToDoc(ords[j]), scores[j]);
+                                }
+                            }
+                            numOrds = 0;
+                        }
                     }
                 }
-            }
 
-            if (numOrds > 0) {
-                knnCollector.incVisitedCount(numOrds);
-                if (scorer.bulkScore(ords, scores, numOrds) > knnCollector.minCompetitiveSimilarity()) {
-                    for (int j = 0; j < numOrds; j++) {
-                        knnCollector.collect(scorer.ordToDoc(ords[j]), scores[j]);
+                if (numOrds > 0) {
+                    knnCollector.incVisitedCount(numOrds);
+                    if (scorer.bulkScore(ords, scores, numOrds) > knnCollector.minCompetitiveSimilarity()) {
+                        for (int j = 0; j < numOrds; j++) {
+                            knnCollector.collect(scorer.ordToDoc(ords[j]), scores[j]);
+                        }
                     }
                 }
             }
+        } finally {
+            pageTouchTracker.end("nvec=" + faissIndex.getTotalNumberOfVectors() + " k=" + knnCollector.k());
         }
     }
 

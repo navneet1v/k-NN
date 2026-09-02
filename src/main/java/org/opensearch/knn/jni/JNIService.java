@@ -559,7 +559,8 @@ public class JNIService {
      * Computes the graph-derived page-locality permutation from the SQ index's HNSW structure via the
      * page-capacity-aware greedy page-growing algorithm and writes it into the caller-allocated
      * {@code ordering} array (length {@code ntotal}); on return this is the forward map
-     * {@code ordering[originalOrdinal] = physicalPosition}, with strict (sparse) page boundaries. Also
+     * {@code ordering[originalOrdinal] = physicalPosition}, densely packed (contiguous 0..ntotal-1, no
+     * padding), where {@code pageCapacity} bounds each greedy cluster to ~one 32 KB page. Also
      * fills {@code hubs} (length <= ~32) with the top-degree hub ordinals as entry-point candidates. See
      * {@link FaissService#buildOrderingOfVectorsUsingIndexStructure(long, int[], int, int[])}.
      */

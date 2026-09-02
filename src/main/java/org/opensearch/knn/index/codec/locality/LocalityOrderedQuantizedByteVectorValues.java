@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.index.codec.locality;
 
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.hnsw.FlatVectorsScorer;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorEncoding;
@@ -15,6 +16,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
+import org.opensearch.knn.index.codec.scorer.PrefetchHelper;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -36,6 +38,7 @@ import java.nio.ByteBuffer;
  * {@code LocalityOrderedQuantizedVectorsReader.PhysicalOrdinalTranslatingScorer}); {@link #ordToDoc(int)}
  * / {@link #iterator()} are not meaningful in this mode and must not be used.
  */
+@Log4j2
 public final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByteVectorValues {
 
     private final int dimension;
@@ -59,6 +62,9 @@ public final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByt
 
     private final FloatVectorValues floatVectorValues;
     private final int[] ordToPhysicalOrdMap;
+    // Scratch for translating ords -> physical positions in prefetch(); grown on demand since the
+    // number of ords per bulk-score batch is bounded by ef_search / neighbor count, not a fixed 64.
+    private int[] ordToPrefetchScratch = new int[0];
 
     LocalityOrderedQuantizedByteVectorValues(
         final int dimension,
@@ -183,12 +189,13 @@ public final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByt
         if (finalNumOrds <= 1) {
             return;
         }
-
-        // 1. calculate offset and prefetch immediately
-        for (int i = 0; i < finalNumOrds; i++) {
-            long offset = (long) toPhysical(ordsToPrefetch[i]) * recordSize;
-            slice.prefetch(offset, recordSize);
+        if (ordToPrefetchScratch.length < finalNumOrds) {
+            ordToPrefetchScratch = new int[finalNumOrds];
         }
+        for (int i = 0; i < finalNumOrds; i++) {
+            ordToPrefetchScratch[i] = toPhysical(ordsToPrefetch[i]);
+        }
+        PrefetchHelper.prefetch(getSlice(), 0, recordSize, ordToPrefetchScratch, finalNumOrds);
     }
 
     @Override

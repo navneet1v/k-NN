@@ -37,7 +37,7 @@ import java.util.Arrays;
 public class PrefetchHelper {
 
     // TODO: If needed we can get this value via Cluster Settings
-    private static final long BYTES_128 = 128 * 1024;
+    private static final long BYTES_128 = 32 * 1024;
 
     /**
      * Prefetches vector data from disk using exact byte range strategy.
@@ -63,6 +63,10 @@ public class PrefetchHelper {
         if (ordsToPrefetch == null || numOrds <= 1) {
             return;
         }
+        // Instrumentation: account the distinct physical pages this batch touches, for the per-query
+        // distinct-page metric. No-op unless -Dknn.pageTouch.enabled=true; recorded independently of the
+        // prefetch feature flag so the metric reflects reads whether or not prefetch I/O is issued.
+        PageTouchTracker.get().recordBatch(baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
         if (KNNFeatureFlags.isPrefetchEnabled()) {
             prefetchExactVectorSize(indexInput, baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
         } else {
@@ -107,6 +111,11 @@ public class PrefetchHelper {
         long lastOffset = baseOffset + (long) ordsToPrefetch[numOrds - 1] * oneVectorByteSize;
         indexInput.prefetch(groupStartOffset, (lastOffset + oneVectorByteSize) - groupStartOffset);
 
-        log.trace("Prefetching grouped [{}] vectors where num of ords was [{}] using exact prefetch size", groupCount, numOrds);
+        log.trace(
+            "Prefetching grouped [{}] vectors where num of ords was [{}] using exact prefetch size, vector size: {}",
+            groupCount,
+            numOrds,
+            oneVectorByteSize
+        );
     }
 }
