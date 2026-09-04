@@ -68,6 +68,10 @@ _PAGE_TOUCH_RE = re.compile(
     r".*32KB: dataReadBytes=\[(\d+)\].*?distinctPages=\[(\d+)\]"
     r".*8KB: dataReadBytes=\[(\d+)\].*?distinctPages=\[(\d+)\]"
 )
+# Optional shadow: bytes the SAME reads would touch if .vec were reordered by the permutation.
+_SHADOW_RE = re.compile(
+    r"REORDERED32: dataReadBytes=\[(\d+)\].*?REORDERED8: dataReadBytes=\[(\d+)\]"
+)
 
 
 def set_page_touch_logging(host, level):
@@ -103,9 +107,12 @@ def summarize_page_touch(path, start_offset, label):
 
     # Group by recordSize so the quantized store (112/144 B) and the full-precision .vec rescore reads
     # (dim*4, e.g. 3072/4096 B) report as SEPARATE streams instead of being summed together.
-    # stream[recordSize] = [events, sum_used, sum_vecs, sum_read32, sum_pages32, sum_read8, sum_pages8]
-    streams = defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0])
-    for m in _PAGE_TOUCH_RE.finditer(text):
+    # stream[recordSize] = [events, used, vecs, read32, pages32, read8, pages8, shadowRead32, shadowRead8]
+    streams = defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0, 0, 0])
+    for line in text.splitlines():
+        m = _PAGE_TOUCH_RE.search(line)
+        if not m:
+            continue
         used_b, vecs, rs, read32, pages32, read8, pages8 = (
             int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]), int(m[6]), int(m[7])
         )
@@ -117,6 +124,10 @@ def summarize_page_touch(path, start_offset, label):
         s[4] += pages32
         s[5] += read8
         s[6] += pages8
+        sh = _SHADOW_RE.search(line)   # present only for reordered .vec (permutation available)
+        if sh:
+            s[7] += int(sh[1])
+            s[8] += int(sh[2])
 
     if not streams:
         log(f"  page-touch [{label}]: no PageTouch log lines found (is the logger at DEBUG? is --log-file correct?)")
@@ -131,7 +142,7 @@ def summarize_page_touch(path, start_offset, label):
 
     log(f"  page-touch [{label}] — READ AMPLIFICATION (by stream):")
     for rs in sorted(streams):
-        n, sum_used, sum_vecs, sum_read32, sum_pages32, sum_read8, sum_pages8 = streams[rs]
+        n, sum_used, sum_vecs, sum_read32, sum_pages32, sum_read8, sum_pages8, sh_read32, sh_read8 = streams[rs]
         log(f"    stream recordSize={rs}B [{kind(rs)}] — {n} search events:")
         log(f"      data used (vector records): {sum_used / mb:>9.1f} MB   (avg {sum_used / n / 1024:>8.1f} KB/query, avg {sum_vecs / n:>7.0f} vecs/query)")
 
@@ -146,6 +157,18 @@ def summarize_page_touch(path, start_offset, label):
 
         report("32KB", sum_read32, sum_pages32)
         report(" 8KB", sum_read8, sum_pages8)
+
+        # If a shadow permutation was available (reordered index), show what reordering .vec too would give.
+        if sh_read32 > 0 or sh_read8 > 0:
+            amp32 = sum_read32 / sum_used if sum_used else 0.0
+            amp8 = sum_read8 / sum_used if sum_used else 0.0
+            samp32 = sh_read32 / sum_used if sum_used else 0.0
+            samp8 = sh_read8 / sum_used if sum_used else 0.0
+            red32 = (1 - samp32 / amp32) * 100 if amp32 else 0.0
+            red8 = (1 - samp8 / amp8) * 100 if amp8 else 0.0
+            log(f"      IF .vec REORDERED (measured shadow, no file change):")
+            log(f"        [32KB] read {sh_read32 / mb:>9.1f} MB  READ_AMP {samp32:>7.1f}x  (was {amp32:.1f}x -> {red32:+.0f}%)")
+            log(f"        [ 8KB] read {sh_read8 / mb:>9.1f} MB  READ_AMP {samp8:>7.1f}x  (was {amp8:.1f}x -> {red8:+.0f}%)")
 
 
 def delete_index(host, index):

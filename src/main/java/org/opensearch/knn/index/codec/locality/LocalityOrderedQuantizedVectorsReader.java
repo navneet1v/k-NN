@@ -27,6 +27,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LongValues;
+import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.packed.DirectReader;
 import org.apache.lucene.util.packed.DirectWriter;
 import org.apache.lucene.util.hnsw.CloseableRandomVectorScorerSupplier;
@@ -36,6 +37,7 @@ import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
 import org.apache.lucene.util.quantization.QuantizedVectorsReader;
 import org.apache.lucene.util.quantization.ScalarQuantizer;
 import org.opensearch.knn.index.codec.KNN1040Codec.ScalarQuantizedFloatVectorValues;
+import org.opensearch.knn.index.codec.scorer.PageTouchTracker;
 import org.opensearch.knn.memoryoptsearch.faiss.FlatVectorsScorerProvider;
 
 import java.io.IOException;
@@ -127,6 +129,14 @@ public final class LocalityOrderedQuantizedVectorsReader extends FlatVectorsRead
                 throw new IllegalStateException("Unknown field number [" + entry.fieldNumber + "] in " + metaFileName);
             }
             fields.put(fieldInfo.name, entry);
+            // Publish this field's permutation so the rescore path can compute the shadow reordered-.vec
+            // read amplification (what .vec reads would touch if .vec were reordered by the same map).
+            // Key by the globally-unique segment id (segment NAMES like "_0" collide across indices).
+            PageTouchTracker.registerPermutation(
+                StringHelper.idToString(state.segmentInfo.getId()),
+                fieldInfo.name,
+                entry.ordToPhysicalOrdMap
+            );
 
             this.metaInput = meta;
             this.dataInput = data;

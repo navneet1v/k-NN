@@ -188,10 +188,9 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
             // far better than BFS (higher intra-page edge ratio), so more neighbor reads hit one page.
             final int recordSizeBytes = quantizedVecBytes + Integer.BYTES * 4;
             final int pageCapacity = Math.max(1, (32 * 1024) / recordSizeBytes);
-            // Top-degree hub ordinals to use as search entry-point candidates. Native fills these
-            // (original ordinals, -1-padded); pool capped at 32.
-            // TODO: deliver these back to the locality writer (via the sink) so they can be persisted
-            // for hub-based entry-point selection at search time.
+            // Native also fills the hub array (top-degree original ordinals, -1-padded; pool capped at 32)
+            // in layer0LocalityOrdering. The locality writer persists these (see writeHubs), and the reader
+            // uses the closest one as the search entry point (selectBestHubOrdinal / maybeSeedWithClosestHub).
             AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
                 JNIService.buildOrderingOfVectorsUsingIndexStructure(
                     indexMemoryAddress,

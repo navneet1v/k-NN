@@ -8,7 +8,9 @@ package org.opensearch.knn.index.codec.scorer;
 import lombok.extern.log4j.Log4j2;
 
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -69,9 +71,19 @@ public final class PageTouchTracker {
 
     private static final ThreadLocal<PageTouchTracker> THREAD_LOCAL = ThreadLocal.withInitial(PageTouchTracker::new);
 
+    // Registry of per-(segment,field) reordering permutations (ordToPhysicalOrdMap), published by the
+    // locality reader when it loads .vemlo. Lets the rescore path compute a "shadow" reordered-.vec
+    // read amplification — what the .vec reads WOULD touch if .vec were reordered by the same map —
+    // without actually reordering the file. Instrumentation-only; entries are bounded (per field/segment).
+    private static final Map<String, int[]> PERMUTATIONS = new ConcurrentHashMap<>();
+
     // Distinct pages touched at each granularity (a record straddling a boundary counts both pages).
     private final Set<Long> pages32 = new HashSet<>();
     private final Set<Long> pages8 = new HashSet<>();
+    // Shadow: pages that would be touched if reads went to a .vec REORDERED by the permutation.
+    private final Set<Long> pages32Shadow = new HashSet<>();
+    private final Set<Long> pages8Shadow = new HashSet<>();
+    private int[] shadowPermutation;   // ordToPhysicalOrdMap for the shadow stream; null = no shadow
     // Distinct physical ordinals actually read this query (deduped across neighbor lists). This is the
     // "useful" set — a vector only needs to be paged in once — and is the denominator for read amplification.
     private final Set<Integer> distinctOrds = new HashSet<>();
@@ -97,6 +109,17 @@ public final class PageTouchTracker {
         return THREAD_LOCAL.get();
     }
 
+    /** Publishes a field's reordering permutation (ordToPhysicalOrdMap) so the rescore path can compute
+     *  the shadow reordered-.vec amplification. Called by the locality reader on load. */
+    public static void registerPermutation(final String segment, final String field, final int[] ordToPhysical) {
+        PERMUTATIONS.put(segment + "|" + field, ordToPhysical);
+    }
+
+    /** Looks up the reordering permutation for a (segment, field), or null if none. */
+    public static int[] permutationFor(final String segment, final String field) {
+        return PERMUTATIONS.get(segment + "|" + field);
+    }
+
     /**
      * Whether tracking is currently on. Enabled either by {@code -Dknn.pageTouch.enabled=true} OR — the easy
      * runtime toggle, no restart — by setting this class's logger to {@code DEBUG}:
@@ -117,11 +140,14 @@ public final class PageTouchTracker {
         }
         pages32.clear();
         pages8.clear();
+        pages32Shadow.clear();
+        pages8Shadow.clear();
         distinctOrds.clear();
         ordsScored = 0;
         prefetchCalls = 0;
         recordSize = 0;
         directRecordSize = 0;
+        shadowPermutation = null;
     }
 
     /**
@@ -132,11 +158,14 @@ public final class PageTouchTracker {
      * with its own {@code recordSize} (e.g. dim*4 for float) — the script groups lines by record size.
      *
      * @param recordBytes on-disk stride of one full-precision record (e.g. dimension * 4 for float32)
+     * @param shadowPerm  reordering permutation (ordToPhysicalOrdMap) to also account a hypothetical
+     *                    reordered-.vec stream, or null for none
      */
-    public void beginFullPrecision(final long recordBytes) {
+    public void beginFullPrecision(final long recordBytes, final int[] shadowPerm) {
         begin();
         if (active) {
             directRecordSize = recordBytes;
+            shadowPermutation = shadowPerm;
         }
     }
 
@@ -156,6 +185,17 @@ public final class PageTouchTracker {
         }
         for (long p = start / PAGE_BYTES_8K; p <= end / PAGE_BYTES_8K; p++) {
             pages8.add(p);
+        }
+        // Shadow: where this read would land if .vec were reordered by the permutation.
+        if (shadowPermutation != null && ord >= 0 && ord < shadowPermutation.length) {
+            final long sStart = (long) shadowPermutation[ord] * directRecordSize;
+            final long sEnd = sStart + directRecordSize - 1;
+            for (long p = sStart / PAGE_BYTES_32K; p <= sEnd / PAGE_BYTES_32K; p++) {
+                pages32Shadow.add(p);
+            }
+            for (long p = sStart / PAGE_BYTES_8K; p <= sEnd / PAGE_BYTES_8K; p++) {
+                pages8Shadow.add(p);
+            }
         }
         if (distinctOrds.add(ord)) {
             recordSize = directRecordSize;
@@ -228,13 +268,36 @@ public final class PageTouchTracker {
         final double util8 = read8 == 0 ? 0.0 : 100.0 * usefulBytes / read8;
         final double vpp8 = pages8Count == 0 ? 0.0 : (double) distinctVectors / pages8Count;
 
+        // Shadow (only for the full-precision rescore stream with a permutation): what the SAME reads
+        // would touch if .vec were reordered by the permutation. This is the "if we reorder .vec too"
+        // number, measured without actually reordering the file.
+        String shadowSuffix = "";
+        if (shadowPermutation != null) {
+            final long sPages32 = pages32Shadow.size();
+            final long sPages8 = pages8Shadow.size();
+            final long sRead32 = sPages32 * PAGE_BYTES_32K;
+            final long sRead8 = sPages8 * PAGE_BYTES_8K;
+            final double sAmp32 = usefulBytes == 0 ? 0.0 : (double) sRead32 / usefulBytes;
+            final double sAmp8 = usefulBytes == 0 ? 0.0 : (double) sRead8 / usefulBytes;
+            shadowSuffix = String.format(
+                " | REORDERED32: dataReadBytes=[%d] readAmplification=[%.1fx] distinctPages=[%d]"
+                    + " | REORDERED8: dataReadBytes=[%d] readAmplification=[%.1fx] distinctPages=[%d]",
+                sRead32,
+                sAmp32,
+                sPages32,
+                sRead8,
+                sAmp8,
+                sPages8
+            );
+        }
+
         // Headline per page size: dataReadBytes (X) = whole pages faulted in; dataUsedBytes (Y) = visited
         // vectors' records; readAmplification = X / Y (bytes moved per useful byte, 1.0x = perfect).
         log.info(
             "PageTouch query#[{}] context=[{}] dataUsedBytes=[{}] distinctVectors=[{}] recordSize=[{}] "
                 + "| 32KB: dataReadBytes=[{}] readAmplification=[{}x] distinctPages=[{}] vecsPerPage=[{}] pageUtilPct=[{}] "
                 + "| 8KB: dataReadBytes=[{}] readAmplification=[{}x] distinctPages=[{}] vecsPerPage=[{}] pageUtilPct=[{}] "
-                + "| ordsScored=[{}] prefetchCalls=[{}]",
+                + "| ordsScored=[{}] prefetchCalls=[{}]{}",
             QUERY_SEQ.incrementAndGet(),
             context,
             usefulBytes,
@@ -251,10 +314,13 @@ public final class PageTouchTracker {
             String.format("%.2f", vpp8),
             String.format("%.2f", util8),
             ordsScored,
-            prefetchCalls
+            prefetchCalls,
+            shadowSuffix
         );
         pages32.clear();
         pages8.clear();
+        pages32Shadow.clear();
+        pages8Shadow.clear();
         distinctOrds.clear();
     }
 }

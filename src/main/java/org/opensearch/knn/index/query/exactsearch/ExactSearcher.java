@@ -28,6 +28,7 @@ import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.common.FieldInfoExtractor;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
+import org.apache.lucene.util.StringHelper;
 import org.opensearch.knn.index.codec.scorer.PageTouchTracker;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationInfo;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationUtil;
@@ -122,7 +123,13 @@ public class ExactSearcher {
             && FieldInfoExtractor.extractVectorDataType(fieldInfo) == VectorDataType.FLOAT;
         final PageTouchTracker pageTouchTracker = PageTouchTracker.get();
         if (fullPrecisionReads) {
-            pageTouchTracker.beginFullPrecision((long) fieldInfo.getVectorDimension() * Float.BYTES);
+            // If this field has a reordering permutation (reordered index), also account a shadow stream:
+            // what the .vec reads WOULD touch if .vec were reordered by the same map (measured, no file change).
+            final int[] shadowPerm = PageTouchTracker.permutationFor(
+                StringHelper.idToString(reader.getSegmentInfo().info.getId()),
+                context.getField()
+            );
+            pageTouchTracker.beginFullPrecision((long) fieldInfo.getVectorDimension() * Float.BYTES, shadowPerm);
         }
         try {
             if (context.getRadius() != null) {

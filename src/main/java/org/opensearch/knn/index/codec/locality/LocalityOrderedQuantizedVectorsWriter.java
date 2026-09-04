@@ -28,10 +28,10 @@ import java.nio.ByteOrder;
  * metadata file ({@value #METADATA_EXTENSION}) and a records file ({@value #EXTENSION}), in an
  * <b>arbitrary ordinal ordering</b>.
  *
- * <p>This is the foundational write path for locality-aware layout (Milestone 0). The caller
- * supplies an {@code order} array where {@code order[physicalPos] = originalOrdinal}; records are
- * emitted in that physical order. For the initial milestone the ordering is a random shuffle
- * (a test vehicle); later it will be the greedy page-assignment permutation.
+ * <p>The physical order is the graph-derived permutation produced by the native build (dense greedy
+ * page-growing; see {@code FaissService.buildOrderingOfVectorsUsingIndexStructure}), delivered via
+ * {@link org.opensearch.knn.index.codec.nativeindex.model.Layer0LocalityOrdering}. Records are emitted
+ * in that physical order so graph-adjacent vectors tend to share a page.
  *
  * <p>An {@code originalOrdinal -> physicalPosition} map ({@code ordToPhysicalOrdMap}) is stored in
  * the metadata file so the reader can translate an original (insertion-order) ordinal to the physical
