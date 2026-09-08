@@ -495,6 +495,13 @@ dependencies {
     // Explicitly include a safe version of json-smart for test fixtures
     testFixturesImplementation group: 'net.minidev', name: 'json-smart', version: "${versions.json_smart}"
     testFixturesImplementation "org.opensearch:common-utils:${version}"
+    // JUnit 5 for the ClusterANN unit tests. They are plain unit tests with no cluster or JNI
+    // dependency, and are run by the clusterAnnTest task since the main test task uses the
+    // OpenSearch randomized (JUnit 4) runner.
+    testImplementation "org.junit.jupiter:junit-jupiter-api:5.11.4"
+    testImplementation "org.junit.jupiter:junit-jupiter-params:5.11.4"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.11.4"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
     implementation 'com.github.oshi:oshi-core:6.4.13'
     api "net.java.dev.jna:jna:${versions.jna}"
     api "net.java.dev.jna:jna-platform:${versions.jna}"
@@ -583,6 +590,18 @@ tasks.register('buildJniTest', Test) {
     }
 }
 
+// ClusterANN unit tests are written against JUnit 5, which the randomized runner used by the test
+// task does not understand, so they get a task of their own on the JUnit Platform.
+tasks.register('clusterAnnTest', Test) {
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    systemProperty 'tests.security.manager', 'false'
+    include '**/clusterann/**'
+}
+
+check.dependsOn clusterAnnTest
+
 test {
     dependsOn buildJniTest
     systemProperty 'tests.security.manager', 'false'
@@ -590,6 +609,7 @@ test {
     //this change enables mockito-inline that supports mocking of static classes/calls
     systemProperty "jdk.attach.allowAttachSelf", true
     exclude '**/*BT*'
+    exclude '**/clusterann/**'
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         // Add the paths of built JNI libraries and its dependent libraries to PATH variable in System variables
         environment('PATH', System.getenv('PATH') + ";$rootDir/jni/build/release" + ";$rootDir/src/main/resources/windowsDependencies")
