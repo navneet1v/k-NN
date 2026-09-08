@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The layout is unpadded: a block holds only the vectors it has, so the final block is shorter than the
  * rest. Block starts are still a constant stride, because every block <em>before</em> the last is full.
  */
-class ScalarQuantizedBlockReaderTests {
+class SQScanContextBlockReaderTests {
 
     private static final int DIMENSION = 8;
     private static final ScalarEncoding ENCODING = ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE;

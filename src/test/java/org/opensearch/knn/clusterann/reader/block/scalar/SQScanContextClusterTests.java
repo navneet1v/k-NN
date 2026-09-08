@@ -22,6 +22,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.reader.Centroid;
 import org.opensearch.knn.clusterann.reader.PostingScorer;
 import org.opensearch.knn.clusterann.reader.ScanParams;
+import org.opensearch.knn.clusterann.reader.orchestration.ScanContext;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -30,12 +31,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Fast, isolated unit tests for {@link ScalarQuantizedCluster} (JUnit 5).
  */
-class ScalarQuantizedClusterTests {
+class SQScanContextClusterTests {
 
     private static final ScalarEncoding ENCODING = ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE;
     private static final int DIMENSION = 64;
@@ -82,7 +86,7 @@ class ScalarQuantizedClusterTests {
     @Test
     void testScorer_whenNothingIsFiltered_thenVisitsEveryEntryInPostingOrder() throws IOException {
         // given
-        PostingScorer scorer = cluster().scorer(scanParams(), null);
+        PostingScorer scorer = cluster().scorer(scanContext(), null);
 
         // when
         List<Integer> visited = drain(scorer);
@@ -99,7 +103,7 @@ class ScalarQuantizedClusterTests {
         accepted.set(ORDINALS[0]);
         accepted.set(ORDINALS[5]);
         accepted.set(ORDINALS[9]);
-        PostingScorer scorer = cluster().scorer(scanParams(), accepted);
+        PostingScorer scorer = cluster().scorer(scanContext(), accepted);
 
         // when
         List<Integer> visited = drain(scorer);
@@ -111,7 +115,7 @@ class ScalarQuantizedClusterTests {
     @Test
     void testScorer_thenEveryScoreIsAUsableSimilarity() throws IOException {
         // given
-        PostingScorer scorer = cluster().scorer(scanParams(), null);
+        PostingScorer scorer = cluster().scorer(scanContext(), null);
 
         // when / then
         while (scorer.advance(Float.NEGATIVE_INFINITY)) {
@@ -131,12 +135,129 @@ class ScalarQuantizedClusterTests {
         ScalarQuantizedCluster cluster = cluster();
 
         // when
-        List<Integer> first = drain(cluster.scorer(scanParams(), null));
-        List<Integer> second = drain(cluster.scorer(scanParams(), null));
+        List<Integer> first = drain(cluster.scorer(scanContext(), null));
+        List<Integer> second = drain(cluster.scorer(scanContext(), null));
 
         // then
         assertEquals(CLUSTER_SIZE, first.size());
         assertEquals(first, second, "a fresh scorer starts at the beginning of the posting");
+    }
+
+    // ---------------------------------------------------------------- prepareScan
+
+    /**
+     * The whole point of the two-step contract: a query goes in, and what comes back drives a real scan of this
+     * cluster. Every other scan test hand-builds a context, so this is the only place the quantisation path itself is
+     * exercised.
+     */
+    @Test
+    void testPrepareScan_thenProducesAContextThatScansThisCluster() throws IOException {
+        // given
+        ScalarQuantizedCluster cluster = cluster();
+
+        // when
+        ScanContext context = cluster.prepareScan(ScanParams.of(query()));
+        List<Integer> visited = drain(cluster.scorer(context, null));
+
+        // then
+        assertArrayEquals(ORDINALS, visited.stream().mapToInt(Integer::intValue).toArray());
+    }
+
+    /** Every score from a prepared context has to be usable, not merely produced. */
+    @Test
+    void testPrepareScan_thenEveryScoreIsAUsableSimilarity() throws IOException {
+        // given
+        ScalarQuantizedCluster cluster = cluster();
+
+        // when
+        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query())), null);
+
+        // then
+        while (scorer.advance(Float.NEGATIVE_INFINITY)) {
+            assertTrue(scorer.score() >= 0f, "a euclidean ADC similarity is non-negative, got " + scorer.score());
+            assertFalse(Float.isNaN(scorer.score()), "score must not be NaN");
+        }
+    }
+
+    /**
+     * The quantizer centres its input in place, and one query array is shared across every cluster a scan visits — so
+     * preparing against this cluster must not disturb it. If it did, the damage would show as lost recall on the
+     * clusters visited afterwards rather than as a failure here.
+     */
+    @Test
+    void testPrepareScan_thenLeavesTheCallersQueryUntouched() throws IOException {
+        // given
+        float[] query = query();
+        float[] before = query.clone();
+
+        // when
+        cluster().prepareScan(ScanParams.of(query));
+
+        // then
+        assertArrayEquals(before, query, "the query is shared across clusters; centring it in place would corrupt it");
+    }
+
+    /** The context carries the query it was prepared from, and a transposed buffer the kernels can read in full. */
+    @Test
+    void testPrepareScan_thenSizesTheTransposedQueryFromTheEncoding() throws IOException {
+        // given
+        float[] query = query();
+
+        // when
+        SQScanContext context = (SQScanContext) cluster().prepareScan(ScanParams.of(query));
+
+        // then
+        assertSame(query, context.query(), "the context reports the query it was prepared from");
+        assertEquals(ENCODING.getQueryPackedLength(DIMENSION), context.transposed().length);
+        assertEquals(ENCODING.getQueryBitsPerDim(), context.queryBitsPerDimension());
+    }
+
+    /**
+     * The kernels are written for one query width and the transposition packs for it, so a different width would be
+     * scored against a buffer laid out for another. {@link ScanParams} no longer constrains it, which is why this is
+     * checked here.
+     */
+    @ParameterizedTest(name = "queryBits {0}")
+    @ValueSource(ints = { 1, 2, 3, 8 })
+    void testPrepareScan_whenQueryWidthIsNotTheEncodingsOwn_thenThrows(int queryBits) throws IOException {
+        // given
+        ScalarQuantizedCluster cluster = cluster();
+        ScanParams params = new ScanParams(query(), queryBits);
+
+        // when
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> cluster.prepareScan(params));
+
+        // then
+        assertTrue(e.getMessage().contains("got: " + queryBits), e.getMessage());
+    }
+
+    /** Centring is relative to this cluster's centroid, which does not change — so it is read once, not per query. */
+    @Test
+    void testPrepareScan_whenPreparedRepeatedly_thenReadsTheCentroidOnce() throws IOException {
+        // given
+        CountingCentroid centroidSupplier = new CountingCentroid();
+        ScalarQuantizedCluster cluster = cluster(countingInput(), centroidSupplier);
+
+        // when
+        cluster.prepareScan(ScanParams.of(query()));
+        cluster.prepareScan(ScanParams.of(query()));
+
+        // then
+        assertEquals(1, centroidSupplier.calls, "the centroid is the same for every query against this cluster");
+    }
+
+    /** Two queries prepare to two contexts; nothing is cached between them. */
+    @Test
+    void testPrepareScan_thenPreparesEachQuerySeparately() throws IOException {
+        // given
+        ScalarQuantizedCluster cluster = cluster();
+
+        // when
+        ScanContext first = cluster.prepareScan(ScanParams.of(query()));
+        ScanContext second = cluster.prepareScan(ScanParams.of(query()));
+
+        // then
+        assertNotSame(first, second);
     }
 
     // ---------------------------------------------------------------- deferred reads
@@ -172,9 +293,9 @@ class ScalarQuantizedClusterTests {
         ScalarQuantizedCluster cluster = cluster(input, centroidSupplier);
 
         // when
-        drain(cluster.scorer(scanParams(), null));
+        drain(cluster.scorer(scanContext(), null));
         int headerReads = input.reads();
-        drain(cluster.scorer(scanParams(), null));
+        drain(cluster.scorer(scanContext(), null));
 
         // then
         assertTrue(headerReads > 0, "the first scan has to read the header");
@@ -196,7 +317,7 @@ class ScalarQuantizedClusterTests {
         long beforeScan = cluster.ramBytesUsed();
 
         // when
-        drain(cluster.scorer(scanParams(), null));
+        drain(cluster.scorer(scanContext(), null));
 
         // then
         long afterScan = cluster.ramBytesUsed();
@@ -218,7 +339,7 @@ class ScalarQuantizedClusterTests {
         cluster.prefetch(partial);
 
         // then
-        assertArrayEquals(ORDINALS, drain(cluster.scorer(scanParams(), null)).stream().mapToInt(Integer::intValue).toArray());
+        assertArrayEquals(ORDINALS, drain(cluster.scorer(scanContext(), null)).stream().mapToInt(Integer::intValue).toArray());
     }
 
     // ---------------------------------------------------------------- helpers
@@ -227,13 +348,29 @@ class ScalarQuantizedClusterTests {
         return 0.5f + position * 0.25f;
     }
 
-    private static ScanParams scanParams() {
+    /**
+     * A prepared query, built here rather than through {@code prepareScan}, which is still a stub. The values are
+     * arbitrary but fixed: these tests are about which entries a scan visits, not what it scores them.
+     */
+    /** A unit query, which is what the quantizer asks for on the similarities that check. */
+    private static float[] query() {
         float[] query = new float[DIMENSION];
         for (int i = 0; i < DIMENSION; i++) {
             query[i] = (i % 7) * 0.25f - 0.5f;
         }
         normalise(query);
-        return ScanParams.of(query);
+        return query;
+    }
+
+    private static SQScanContext scanContext() {
+        float[] query = query();
+
+        // The kernels read four query stripes per doc byte, so this length is what keeps them in bounds.
+        byte[] transposed = new byte[ENCODING.getQueryPackedLength(DIMENSION)];
+        for (int i = 0; i < transposed.length; i++) {
+            transposed[i] = (byte) (0x33 + i);
+        }
+        return new SQScanContext(query, 4, 1.0f, transposed, -0.75f, 0.05f, 42f, 2.5f);
     }
 
     /**

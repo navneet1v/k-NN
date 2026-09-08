@@ -16,6 +16,7 @@ import org.opensearch.knn.clusterann.reader.Cluster;
 import org.opensearch.knn.clusterann.reader.PostingScorer;
 import org.opensearch.knn.clusterann.reader.ScanParams;
 import org.opensearch.knn.clusterann.reader.block.BlockPostingScorer;
+import org.opensearch.knn.clusterann.reader.orchestration.ScanContext;
 
 import java.io.IOException;
 
@@ -127,18 +128,66 @@ public class ScalarQuantizedCluster implements Cluster {
     }
 
     @Override
-    public PostingScorer scorer(ScanParams params, Bits acceptedOrds) throws IOException {
-        load();
+    public PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds) throws IOException {
+        if (!(scanContext instanceof SQScanContext sqScanContext)) {
+            throw new IllegalArgumentException(
+                "A scalar quantized cluster needs a scalar quantized scan context, got: "
+                    + (scanContext == null ? "null" : scanContext.getClass().getSimpleName())
+            );
+        }
 
-        ADCScalarQuantizedBlockScorer scorer = new ADCScalarQuantizedBlockScorer(
-            reader,
-            params,
-            centroid,
-            quantizer,
-            encoding,
-            similarityFunction
-        );
+        load();
+        ADCScalarQuantizedBlockScorer scorer = new ADCScalarQuantizedBlockScorer(reader, sqScanContext, encoding, similarityFunction);
         return new BlockPostingScorer(scorer, ordinals, acceptedOrds);
+    }
+
+    /**
+     * Quantize the query into the space this cluster's codes live in: centred on <em>this</em> centroid, at the
+     * query width, and transposed into bit planes so the dot product can read a plane at a time.
+     */
+    @Override
+    public ScanContext prepareScan(ScanParams scanParams) throws IOException {
+        int queryBits = scanParams.queryBits();
+        if (queryBits != encoding.getQueryBitsPerDim()) {
+            throw new IllegalArgumentException("This encoding scores a " + encoding.getQueryBitsPerDim() + "-bit query, got: " + queryBits);
+        }
+
+        Centroid centroid = centroid();
+        float[] query = scanParams.query();
+
+        // multiScalarQuantize centres in place, so it gets a copy
+        float[] centred = query.clone();
+        byte[] codes = new byte[query.length];
+        OptimizedScalarQuantizer.QuantizationResult quantized = quantizer.multiScalarQuantize(
+            centred,
+            new byte[][] { codes },
+            new byte[] { (byte) queryBits },
+            centroid.vector()
+        )[0];
+
+        byte[] transposed = new byte[encoding.getQueryPackedLength(dimension)];
+        OptimizedScalarQuantizer.transposeHalfByte(codes, transposed);
+
+        float lower = quantized.lowerInterval();
+        float scale = (quantized.upperInterval() - lower) / ((1 << queryBits) - 1);
+        return new SQScanContext(
+            query,
+            queryBits,
+            centroid.normSq(),
+            transposed,
+            lower,
+            scale,
+            quantized.quantizedComponentSum(),
+            quantized.additionalCorrection()
+        );
+    }
+
+    /** This cluster's centroid, read once and kept: every scan of this cluster centres on the same point. */
+    private Centroid centroid() throws IOException {
+        if (centroid == null) {
+            centroid = centroidSupplier.get();
+        }
+        return centroid;
     }
 
     /**

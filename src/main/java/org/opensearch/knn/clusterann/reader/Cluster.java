@@ -7,6 +7,7 @@ package org.opensearch.knn.clusterann.reader;
 
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
+import org.opensearch.knn.clusterann.reader.orchestration.ScanContext;
 
 import java.io.IOException;
 
@@ -19,8 +20,10 @@ import java.io.IOException;
  * from the stored form. So a caller drives any storage family without learning anything about it, and
  * whatever a query may vary arrives as data in {@link ScanParams}.
  *
- * <p>All reads are deferred to {@link #scorer}, including this cluster's own centroid. One instance per
- * query; not thread-safe.
+ * <p>Scanning is two steps: {@link #prepareScan} turns a query into the form this cluster scores against,
+ * and {@link #scorer} walks the posting with it. Splitting them lets the prepared form be reused across
+ * scorers and lets a scan be abandoned before paying for preparation. Nothing is read until one of the
+ * two is called. One instance per query; not thread-safe.
  *
  * <p>{@link Accountable} because a scan holds one of these per cluster it may visit, and what a cluster costs
  * depends on whether it was scanned — so the total is only knowable by asking each one.
@@ -34,23 +37,27 @@ public interface Cluster extends Accountable {
     int size();
 
     /**
-     * Hint that this cluster's posting will be read soon, so it can be warmed before the scan
-     * arrives. Hinting is free since obtaining a cluster reads nothing. This belongs on the cluster
-     * because only it knows how its postings are laid out.
+     * Hint that this posting will be read soon so it can be warmed first.
      *
-     * @param partial if true, hint only the prefix the scan is near-certain to read, letting the scan
-     *     stream the rest — this avoids over-fetching a posting. If false, hint the whole posting,
-     *     which is better when a near-full scan is expected since one large sequential hint beats many small ones.
+     * @param partial if true, hint only the prefix the scan is near-certain to read and stream the rest;
+     *     if false, hint the whole posting (better when a near-full scan is expected).
      */
     void prefetch(boolean partial) throws IOException;
 
     /**
-     * A scorer over this cluster's postings — a cursor that scores as it advances.
+     * A cursor over this cluster's postings that scores as it advances.
      *
-     * @param params the prepared query plus the per-query scoring knobs this cluster should honour
-     *     (see {@link ScanParams}).
-     * @param acceptedOrds the ordinals the caller wants scored, or {@code null} for all. Read-only, and
-     *     honoured <em>before</em> scoring rather than filtered afterwards.
+     * @param scanContext a query prepared by this cluster's own {@link #prepareScan}; a context from
+     *     another cluster family is rejected rather than misread.
+     * @param acceptedOrds ordinals to score, or {@code null} for all; honoured before scoring, not after.
      */
-    PostingScorer scorer(ScanParams params, Bits acceptedOrds) throws IOException;
+    PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds) throws IOException;
+
+    /**
+     * Turn a query into the form this cluster scores against.
+     *
+     * @param scanParams the query and per-query knobs to honour
+     * @return a context for {@link #scorer}, valid only for this cluster
+     */
+    ScanContext prepareScan(ScanParams scanParams) throws IOException;
 }

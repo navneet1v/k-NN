@@ -170,6 +170,14 @@ public final class ClusterANNFieldMetaEncoder {
         return this;
     }
 
+    /**
+     * Whether this entry describes a rotated field, and so whether the layout carries its rotation values at all —
+     * which is also what decides whether the segment has a {@code .clar} file for a reader to open.
+     */
+    public boolean hasRotation() {
+        return rotationId != ClusterANNFieldMeta.ROTATION_NONE;
+    }
+
     public ClusterANNFieldMetaEncoder clarOffset(long clarOffset) {
         this.clarOffset = clarOffset;
         return this;

@@ -12,14 +12,12 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
-import org.opensearch.knn.clusterann.reader.Centroid;
 import org.opensearch.knn.clusterann.reader.ScanParams;
 
 import java.io.IOException;
@@ -36,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Fast, isolated unit tests for {@link ADCScalarQuantizedBlockScorer} (JUnit 5).
  */
-class ADCScalarQuantizedBlockScorerTests {
+class ADCSQScanContextBlockScorerTests {
 
     /** 1-bit doc codes: the only width the kernel supports alongside dibit, and the cheapest to lay out. */
     private static final ScalarEncoding ENCODING = ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE;
@@ -249,26 +247,10 @@ class ADCScalarQuantizedBlockScorerTests {
     }
 
     /**
-     * The kernels are written for a 4-bit query and nothing else: the transposed layout is four bit planes, and
-     * both {@code bit} and {@code dibit} read four query stripes per doc byte. {@link ScanParams} no longer
-     * constrains the width, so the scorer refuses it — and does so while quantising the query, before a buffer
-     * has been packed for a width it does not have. Every width is therefore reachable, including the wide ones
-     * that would otherwise trip the transposition's own assertion first.
+     * The scorer takes the query width from the prepared context and does not check it — the kernels assume four
+     * bits, so whoever prepares the context owns that constraint now. This pins the width the kernels were written
+     * for, so a change to it cannot pass unnoticed.
      */
-    @ParameterizedTest(name = "queryBits {0}")
-    @ValueSource(ints = { 1, 2, 3, 8 })
-    void testConstructor_whenQueryWidthIsNotFourBits_thenThrows(int queryBits) {
-        // given / when
-        IllegalArgumentException e = assertThrows(
-            IllegalArgumentException.class,
-            () -> scorer(reader(), VectorSimilarityFunction.EUCLIDEAN, ENCODING, queryBits)
-        );
-
-        // then
-        assertTrue(e.getMessage().contains("Unsupported queryBits: " + queryBits), e.getMessage());
-    }
-
-    /** The default width is the supported one, so it must score rather than throw. */
     @Test
     void testScoreBlock_whenQueryWidthIsTheDefault_thenScores() throws IOException {
         // given
@@ -366,24 +348,38 @@ class ADCScalarQuantizedBlockScorerTests {
         ScalarEncoding encoding,
         int queryBits
     ) {
+        return new ADCScalarQuantizedBlockScorer(reader, scanContext(encoding, queryBits), encoding, sim);
+    }
+
+    /**
+     * A prepared query, built here rather than by quantising one.
+     *
+     * <p>The scorer no longer quantises: it takes the already-prepared {@link SQScanContext}, so a test supplies the
+     * quantised query directly. That is the point of the split — the arithmetic can be driven with chosen values
+     * instead of whatever {@code OptimizedScalarQuantizer} happens to produce.
+     */
+    private static SQScanContext scanContext(ScalarEncoding encoding, int queryBits) {
         float[] query = new float[DIMENSION];
-        float[] centroid = new float[DIMENSION];
         for (int i = 0; i < DIMENSION; i++) {
             query[i] = (i % 7) * 0.25f - 0.5f;
-            centroid[i] = (i % 3) * 0.1f + 0.05f;
         }
-        // The quantizer asserts unit vectors for COSINE, so both are normalised for every case rather than
-        // only that one — it keeps the inputs identical across similarities.
         normalise(query);
-        normalise(centroid);
 
-        return new ADCScalarQuantizedBlockScorer(
-            reader,
-            new ScanParams(query, queryBits),
-            new Centroid(centroid, 1.0f),
-            new OptimizedScalarQuantizer(sim),
-            encoding,
-            sim
+        // The kernels read four query stripes per doc byte, so this length is what makes them in-bounds.
+        byte[] transposed = new byte[encoding.getQueryPackedLength(DIMENSION)];
+        for (int i = 0; i < transposed.length; i++) {
+            transposed[i] = (byte) (0x33 + i);
+        }
+
+        return new SQScanContext(
+            query,
+            queryBits,
+            1.0f,        // centroidNormSq
+            transposed,
+            -0.75f,      // lower
+            0.05f,       // scale
+            42f,         // componentSum
+            2.5f         // correction
         );
     }
 
