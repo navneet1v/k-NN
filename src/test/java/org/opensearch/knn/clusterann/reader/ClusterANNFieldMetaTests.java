@@ -517,7 +517,8 @@ class ClusterANNFieldMetaTests {
             centroidLengths,
             clusterSizes,
             clarOffset,
-            clarLength
+            clarLength,
+            null
         );
     }
 }

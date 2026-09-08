@@ -288,7 +288,8 @@ class ClusterFactoryTests {
             centroidLengths,
             CLUSTER_SIZES,
             rotated ? 0L : ClusterANNFieldMeta.NO_ROTATION,   // clarOffset
-            rotated ? 64L : ClusterANNFieldMeta.NO_ROTATION   // clarLength
+            rotated ? 64L : ClusterANNFieldMeta.NO_ROTATION,  // clarLength
+            null                                    // ordToDoc, which the factory never consults
         );
     }
 

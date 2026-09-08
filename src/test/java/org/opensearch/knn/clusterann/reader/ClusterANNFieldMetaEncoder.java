@@ -5,7 +5,13 @@
 
 package org.opensearch.knn.clusterann.reader;
 
+import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
+import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
 
@@ -222,6 +228,37 @@ public final class ClusterANNFieldMetaEncoder {
         if (rotationId != ClusterANNFieldMeta.ROTATION_NONE) {
             out.writeLong(clarOffset);
             out.writeLong(clarLength);
+        }
+
+        writeDenseOrdToDoc(out);
+    }
+
+    /**
+     * The ord-to-doc mapping's stored meta, in the dense form: every document carries a vector, so the ordinal
+     * <em>is</em> the document id and there is no mapping to store. {@code -1} is the marker that says so, and it is
+     * what stops {@link org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration#fromStoredMeta} reading the
+     * addresses that would follow for a sparse field.
+     */
+    public static void writeDenseOrdToDoc(DataOutput out) throws IOException {
+        out.writeLong(-1L);         // docsWithFieldOffset, -1 meaning dense
+        out.writeLong(0L);          // docsWithFieldLength
+        out.writeShort((short) 0);  // jumpTableEntryCount
+        out.writeByte((byte) 0);    // denseRankPower
+    }
+
+    /**
+     * A dense configuration, for a test that builds a {@link ClusterANNFieldMeta} directly rather than decoding one.
+     *
+     * @param vectorCount the field's vector count, which the configuration carries as its size
+     */
+    public static OrdToDocDISIReaderConfiguration denseOrdToDoc(int vectorCount) throws IOException {
+        try (Directory directory = new ByteBuffersDirectory()) {
+            try (IndexOutput out = directory.createOutput("ordToDoc", IOContext.DEFAULT)) {
+                writeDenseOrdToDoc(out);
+            }
+            try (IndexInput in = directory.openInput("ordToDoc", IOContext.DEFAULT)) {
+                return OrdToDocDISIReaderConfiguration.fromStoredMeta(in, vectorCount);
+            }
         }
     }
 }

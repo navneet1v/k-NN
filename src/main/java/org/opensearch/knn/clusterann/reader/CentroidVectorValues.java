@@ -86,6 +86,14 @@ public final class CentroidVectorValues extends FloatVectorValues {
     }
 
     /**
+     * Whether each record carries a trailing ‖c‖², which is what makes {@link #norm()} answerable. Exposed because a
+     * caller that needs the norm can measure it from the vector instead, and so has to know which it is doing.
+     */
+    public boolean hasNorm() {
+        return hasNorm;
+    }
+
+    /**
      * The value stored alongside the centroid read by the last {@link #vectorValue} — the squared norm ‖c‖², which
      * is the form the ADC scorer consumes. Named for the field on disk rather than for the quantity, so read the
      * type it is handed to rather than the name here.
@@ -100,9 +108,12 @@ public final class CentroidVectorValues extends FloatVectorValues {
     /**
      * A private cursor over the same centroids. Clones the input rather than sharing it, so two callers cannot
      * move each other's file pointer or overwrite each other's buffer.
+     *
+     * <p>Narrows {@link FloatVectorValues#copy()} to this type: a copy of a centroid region is still one, and a
+     * caller that wants {@link #norm()} would otherwise have to cast to reach it.
      */
     @Override
-    public FloatVectorValues copy() throws IOException {
+    public CentroidVectorValues copy() throws IOException {
         return new CentroidVectorValues(input.clone(), numCentroids, dimension, hasNorm);
     }
 }

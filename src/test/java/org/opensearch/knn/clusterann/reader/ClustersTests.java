@@ -256,7 +256,7 @@ class ClustersTests {
         return new Clusters(open("clap", 3000), centroids, null, fieldMeta(similarity));
     }
 
-    private static ClusterANNFieldMeta fieldMeta(VectorSimilarityFunction similarity) {
+    private static ClusterANNFieldMeta fieldMeta(VectorSimilarityFunction similarity) throws IOException {
         return new ClusterANNFieldMeta(
             BLOCK_SIZE,
             DIMENSION,
@@ -276,8 +276,10 @@ class ClustersTests {
             CLAP_CENTROID_OFFSETS,
             CENTROID_LENGTHS,
             CLUSTER_SIZES,
-            ClusterANNFieldMeta.NO_ROTATION,        // clarOffset
-            ClusterANNFieldMeta.NO_ROTATION         // clarLength
+            ClusterANNFieldMeta.NO_ROTATION,         // clarLength
+            ClusterANNFieldMeta.NO_ROTATION,
+            // Dense: the fields under test have a vector per document, so the ordinal is the document id.
+            ClusterANNFieldMetaEncoder.denseOrdToDoc(VECTOR_COUNT)
         );
     }
 

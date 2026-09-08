@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.reader;
 
+import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ChecksumIndexInput;
@@ -49,12 +50,16 @@ import java.io.IOException;
 public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount, int centroidCount,
     VectorSimilarityFunction similarityFunction, int docBits, int rotationId, int quantizerId, byte[] quantizerParams, long clacOffset,
     long clacLength, long clacCentroidsOffset, long clacRotatedCentroidsOffset, long clapOffset, long clapLength,
-    long[] clapCentroidOffsets, int[] centroidLengths, int[] clusterSizes, long clarOffset, long clarLength) {
+    long[] clapCentroidOffsets, int[] centroidLengths, int[] clusterSizes, long clarOffset, long clarLength,
+    OrdToDocDISIReaderConfiguration ordToDoc) {
 
     /** {@link #rotationId()} of a field whose vectors were stored unrotated. */
     public static final int ROTATION_NONE = 0;
 
-    /** {@link #rotationId()} of a field rotated by a dense random Gaussian matrix, held in {@code .clar}. */
+    /**
+     * {@link #rotationId()} of a field rotated by a random Gaussian block-diagonal rotation — a permutation of the
+     * dimensions and one small orthogonal block per group, held in {@code .clar}.
+     */
     public static final int ROTATION_RANDOM_GAUSSIAN = 1;
 
     /**
@@ -147,6 +152,7 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
         }
 
         checkOffsets(meta, clacOffset, clacLength, clacCentroidsOffset, clapOffset, clapLength);
+        OrdToDocDISIReaderConfiguration ordToDoc = OrdToDocDISIReaderConfiguration.fromStoredMeta(meta, vectorCount);
 
         return new ClusterANNFieldMeta(
             blockSize,
@@ -168,7 +174,9 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
             centroidSizeInBytes,
             centroidVectorCounts,
             clarOffset,
-            clarLength
+            clarLength,
+            ordToDoc
+
         );
     }
 
