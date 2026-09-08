@@ -11,8 +11,6 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IntsRef;
 
-import java.io.IOException;
-
 /**
  * Scores blocks of one sequence against a query. The query is fixed at construction time; the
  * vectors come from the block reader this scorer owns.
@@ -39,7 +37,7 @@ public interface BlockVectorScorer {
      * uniqueness come for free, so the implementation never has to trust a hand-built list. Bits at
      * or beyond the block's vector count are never set.
      */
-    float scoreBlock(FixedBitSet validPos, BlockCandidates out) throws IOException;
+    float scoreBlock(FixedBitSet validPos, BlockCandidates out);
 
     /** Scores from one block, in ascending position order. A caller-owned buffer the scorer fills. */
     @Getter

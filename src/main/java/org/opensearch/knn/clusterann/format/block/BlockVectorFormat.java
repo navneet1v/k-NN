@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.clusterann.format.block;
 
+import org.apache.lucene.util.Accountable;
+
 import java.io.IOException;
 
 /**
@@ -23,7 +25,7 @@ public interface BlockVectorFormat {
      *
      * <p>Not thread-safe; one instance per sequence being scanned.
      */
-    interface Reader {
+    interface Reader extends Accountable {
 
         /** Number of blocks in the sequence. Known without positioning on any of them. */
         int numBlocks();

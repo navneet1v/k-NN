@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.reader;
 
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 
 import java.io.IOException;
@@ -20,8 +21,11 @@ import java.io.IOException;
  *
  * <p>All reads are deferred to {@link #scorer}, including this cluster's own centroid. One instance per
  * query; not thread-safe.
+ *
+ * <p>{@link Accountable} because a scan holds one of these per cluster it may visit, and what a cluster costs
+ * depends on whether it was scanned — so the total is only knowable by asking each one.
  */
-public interface Cluster {
+public interface Cluster extends Accountable {
 
     /** This cluster's centroid ordinal within the field (identity; useful for bookkeeping/logging). */
     int ordinal();

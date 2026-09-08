@@ -381,6 +381,11 @@ class BlockPostingScorerTests {
                 + prefetches
                 + "]";
         }
+
+        @Override
+        public long ramBytesUsed() {
+            return 0L;
+        }
     }
 
     /** Scores from a fixed table indexed by absolute position, so expected scores need no arithmetic. */

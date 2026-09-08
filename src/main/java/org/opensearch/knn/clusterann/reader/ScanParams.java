@@ -14,19 +14,14 @@ package org.opensearch.knn.clusterann.reader;
  * mutated while a scan is in flight.
  *
  * @param query the query vector, not copied.
- * @param queryBits query-side quantisation width, one of 1, 2, or 4. Wider is more precise but costs more
- *     per posting; cluster families that score against unquantized floats ignore it.
+ * @param queryBits query-side quantisation width. Can be used for SDC vs ADC scoring. The width a cluster
+ *     actually supports is the cluster's business, so it is not constrained here — a scorer rejects a width
+ *     it has no kernel for.
  */
 public record ScanParams(float[] query, int queryBits) {
 
     /** Query-side width used unless a query asks otherwise: precise enough that ADC bias stays small. */
     public static final int DEFAULT_QUERY_BITS = 4;
-
-    public ScanParams {
-        if (queryBits != 1 && queryBits != 2 && queryBits != 4) {
-            throw new IllegalArgumentException("queryBits must be 1, 2, or 4, got: " + queryBits);
-        }
-    }
 
     /** Scan with the default query width — the form to use unless a query asks for a different one. */
     public static ScanParams of(float[] query) {
