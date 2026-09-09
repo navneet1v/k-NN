@@ -9,6 +9,7 @@ import lombok.Setter;
 import org.apache.lucene.index.FieldInfo;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.knn.common.FieldInfoExtractor;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.codec.nativeindex.remote.RemoteIndexBuildStrategy;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNLibraryIndexingContext;
@@ -79,7 +80,8 @@ public final class NativeIndexBuildStrategyFactory {
         if (totalLiveDocs > MIN_DOCS_FOR_REMOTE_INDEX_BUILD
             && isKNNRemoteVectorBuildEnabled()
             && knnEngine.supportsRemoteIndexBuild(knnLibraryIndexingContext)
-            && RemoteIndexBuildStrategy.shouldBuildIndexRemotely(indexSettings, vectorBlobLength)) {
+            && RemoteIndexBuildStrategy.shouldBuildIndexRemotely(indexSettings, vectorBlobLength)
+            && knnVectorValues.dimension() >= KNNConstants.MIN_DIMENSIONS_FOR_REMOTE_INDEX_BUILD) {
             return new RemoteIndexBuildStrategy(repositoriesServiceSupplier, strategy, indexSettings, knnLibraryIndexingContext);
         } else {
             return strategy;
