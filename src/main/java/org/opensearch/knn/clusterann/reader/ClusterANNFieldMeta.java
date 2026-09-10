@@ -9,6 +9,7 @@ import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
 
@@ -178,6 +179,68 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
             ordToDoc
 
         );
+    }
+
+    /**
+     * Writes this entry, in the order {@link #read} consumes it.
+     *
+     * <p>Deliberately next to {@link #read}: this is the one place the layout is stated, so a field added on one side
+     * and forgotten on the other is a compile error rather than a segment that reads garbage. The field number that
+     * precedes an entry is the caller's, since it is what lets the reader resolve the {@code FieldInfo} before any of
+     * this makes sense.
+     *
+     * <p>{@link #blockSize()} is not written: it is shared by every field and lives in the file header.
+     *
+     * @param ordToDocMeta the already-serialized {@code ord → doc} entry, appended last.
+     *     {@code OrdToDocDISIReaderConfiguration.writeStoredMeta} writes its metadata and its packed data in one
+     *     call, to two different outputs, so it cannot be driven from here — the caller runs it against buffers and
+     *     hands the metadata half over.
+     */
+    public void write(IndexOutput meta, byte[] ordToDocMeta) throws IOException {
+        meta.writeVInt(dimension);
+        meta.writeVInt(vectorCount);
+        meta.writeVInt(centroidCount);
+        meta.writeByte(encodedSimilarity(similarityFunction));
+        meta.writeByte((byte) docBits);
+        meta.writeByte((byte) rotationId);
+        meta.writeByte((byte) quantizerId);
+        meta.writeInt(quantizerParams.length);
+        meta.writeBytes(quantizerParams, 0, quantizerParams.length);
+
+        meta.writeLong(clacOffset);
+        meta.writeLong(clacLength);
+        meta.writeLong(clacCentroidsOffset);
+        if (rotationId != ROTATION_NONE) {
+            meta.writeLong(clacRotatedCentroidsOffset);
+        }
+
+        meta.writeLong(clapOffset);
+        meta.writeLong(clapLength);
+        for (long offset : clapCentroidOffsets) {
+            meta.writeLong(offset);
+        }
+        for (int length : centroidLengths) {
+            meta.writeInt(length);
+        }
+        for (int size : clusterSizes) {
+            meta.writeInt(size);
+        }
+
+        if (rotationId != ROTATION_NONE) {
+            meta.writeLong(clarOffset);
+            meta.writeLong(clarLength);
+        }
+
+        meta.writeBytes(ordToDocMeta, 0, ordToDocMeta.length);
+    }
+
+    /** The inverse of {@link #similarityFunction(byte, ChecksumIndexInput)}, and the reason both live in this file. */
+    private static byte encodedSimilarity(VectorSimilarityFunction similarity) {
+        return switch (similarity) {
+            case EUCLIDEAN -> SIMILARITY_L2;
+            case DOT_PRODUCT, MAXIMUM_INNER_PRODUCT -> SIMILARITY_IP;
+            case COSINE -> SIMILARITY_COSINE;
+        };
     }
 
     /**

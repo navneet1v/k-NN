@@ -82,8 +82,41 @@ public interface BlockVectorFormat {
         default void prefetchBlock(int block) throws IOException {}
     }
 
-    /** Write side of the same layout: divides a sequence into blocks. */
+    /**
+     * Write side of the same layout: divides a sequence into blocks.
+     *
+     * <p>Narrower than {@link Reader} on purpose. A reader positions, skips and re-reads because choosing what
+     * <em>not</em> to read is its whole job; a writer appends, so it has no cursor, no {@code advance}, and no
+     * notion of a block it might revisit. Blocks fill in order and flush when full.
+     *
+     * <p>What a block holds stays with the implementation, exactly as it does on the read side — the two agree on
+     * the layout by being written and read in one place, not by sharing a type.
+     *
+     * <p>Not thread-safe; one instance per sequence being written.
+     */
     interface Writer {
-        // TODO: To be added when writer is being created
+
+        /**
+         * The fixed division this writer produces, which is what makes the reader's positioning arithmetic rather
+         * than a walk. Every block but the last holds exactly this many vectors.
+         */
+        int blockSize();
+
+        /**
+         * Append one vector, flushing the current block once it is full.
+         *
+         * @param vector the vector to store, in the space the field's codes live in
+         * @param reference the point the vector is encoded relative to, for a storage family that encodes residuals.
+         *     Families that store vectors outright ignore it.
+         */
+        void addVector(float[] vector, float[] reference) throws IOException;
+
+        /**
+         * Flush the final, partial block. Nothing after this may be added.
+         *
+         * <p>Must be called: the last block is short by definition, so without this the tail of a sequence is
+         * buffered and never written.
+         */
+        void finish() throws IOException;
     }
 }
