@@ -198,6 +198,12 @@ public class KNNRestTestCase extends ODFERestTestCase {
     public void setupRemoteIndexBuildSettings() throws Exception {
         final String remoteBuild = System.getProperty("test.remoteBuild", null);
         if (isRemoteIndexBuildSupported(getBWCVersion()) && remoteBuild != null) {
+            // On the remote-build job, only exercise tests that actually assert a remote build.
+            // Skip the rest (assumption-ignored) before doing any cluster/repository setup.
+            assumeTrue(
+                "Skipping: test has no @ExpectRemoteBuildValidation, not relevant to the remote-build run",
+                hasExpectRemoteBuildValidation()
+            );
             updateClusterSettings(KNN_REMOTE_VECTOR_BUILD_SETTING.getKey(), true);
             updateClusterSettings(KNNSettings.KNN_REMOTE_REPOSITORY, "integ-test-repo");
             updateClusterSettings(KNNSettings.KNN_REMOTE_BUILD_SERVICE_ENDPOINT, "http://0.0.0.0:80");
@@ -225,13 +231,16 @@ public class KNNRestTestCase extends ODFERestTestCase {
     }
 
     private boolean hasExpectRemoteBuildValidation() {
-        try {
-            Method method = this.getClass().getMethod(testName.getMethodName());
-            return method.isAnnotationPresent(ExpectRemoteBuildValidation.class);
-        } catch (NoSuchMethodException e) {
-            // Tests parameterized by @ParametersFactory will throw NoSuchMethodException
-            return false;
+        // testName.getMethodName() includes any @ParametersFactory suffix, e.g. "testFoo {compression:X1}".
+        // Strip it to resolve the declared method, then check the annotation on any matching overload.
+        final String rawName = testName.getMethodName();
+        final String baseName = rawName.contains(" ") ? rawName.substring(0, rawName.indexOf(' ')) : rawName;
+        for (Method method : this.getClass().getMethods()) {
+            if (method.getName().equals(baseName) && method.isAnnotationPresent(ExpectRemoteBuildValidation.class)) {
+                return true;
+            }
         }
+        return false;
     }
 
     @SneakyThrows
