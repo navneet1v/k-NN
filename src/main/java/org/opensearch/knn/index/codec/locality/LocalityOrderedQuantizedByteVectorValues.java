@@ -195,7 +195,7 @@ public final class LocalityOrderedQuantizedByteVectorValues extends QuantizedByt
         for (int i = 0; i < finalNumOrds; i++) {
             ordToPrefetchScratch[i] = toPhysical(ordsToPrefetch[i]);
         }
-        PrefetchHelper.prefetch(getSlice(), 0, recordSize, ordToPrefetchScratch, finalNumOrds);
+        PrefetchHelper.prefetchBasedOnOrdinals(getSlice(), 0, recordSize, ordToPrefetchScratch, finalNumOrds);
     }
 
     @Override

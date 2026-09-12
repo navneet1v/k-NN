@@ -75,6 +75,51 @@ public class PrefetchHelper {
     }
 
     /**
+     * Prefetches each ordinal's record individually — one {@code prefetch(ord*size, size)} per record,
+     * no sorting and no grouping.
+     * <p>
+     * This is the path for the locality-reordered store: because reordering co-locates a node's
+     * neighbors onto the same one/two pages, a per-record prefetch marks exactly those pages
+     * {@code WILLNEED} (the kernel coalesces requests that fall on the same page), avoiding both the
+     * hot-path sort and the grouped variant's over-read of the gap bytes between records. For the
+     * scattered baseline layout prefer {@link #prefetch} (grouping), which coalesces distant records
+     * and caps over-read at one page window.
+     * <p>
+     * Returns early if prefetch is disabled, ordinals are null, or fewer than 2 vectors.
+     *
+     * @param indexInput the index input to prefetch from
+     * @param baseOffset the base offset in the file where records start (0 for a record slice)
+     * @param oneVectorByteSize the size of one record in bytes
+     * @param ordsToPrefetch physical ordinals to prefetch (already translated for the reordered store)
+     * @param numOrds number of valid ordinals in the array
+     * @throws IOException if an I/O error occurs during prefetch
+     */
+    public static void prefetchBasedOnOrdinals(
+        final IndexInput indexInput,
+        final long baseOffset,
+        final long oneVectorByteSize,
+        final int[] ordsToPrefetch,
+        final int numOrds
+    ) throws IOException {
+        if (ordsToPrefetch == null || numOrds <= 1) {
+            return;
+        }
+
+        // Instrumentation: account the distinct physical pages this batch touches, for the per-query
+        // distinct-page metric. No-op unless -Dknn.pageTouch.enabled=true; recorded independently of the
+        // prefetch feature flag so the metric reflects reads whether or not prefetch I/O is issued.
+        PageTouchTracker.get().recordBatch(baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
+        if (KNNFeatureFlags.isPrefetchEnabled()) {
+            for (int i = 0; i < numOrds; i++) {
+                long currentOffset = baseOffset + (long) ordsToPrefetch[i] * oneVectorByteSize;
+                indexInput.prefetch(currentOffset, oneVectorByteSize);
+            }
+        } else {
+            log.debug("KNNVectors Prefetch is disabled");
+        }
+    }
+
+    /**
      * Prefetches vectors using exact byte ranges.
      * <p>
      * Groups vectors within 128KB ranges and prefetches only the exact bytes needed for each group.
