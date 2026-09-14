@@ -37,7 +37,7 @@ import java.util.Arrays;
 public class PrefetchHelper {
 
     // TODO: If needed we can get this value via Cluster Settings
-    private static final long BYTES_128 = 32 * 1024;
+    private static final long BYTES_32 = 32 * 1024;
 
     /**
      * Prefetches vector data from disk using exact byte range strategy.
@@ -75,15 +75,15 @@ public class PrefetchHelper {
     }
 
     /**
-     * Prefetches each ordinal's record individually — one {@code prefetch(ord*size, size)} per record,
-     * no sorting and no grouping.
+     * Prefetches records for the locality-reordered store, coalescing ordinals that fall on the same
+     * absolute 32KB block into a single prefetch.
      * <p>
-     * This is the path for the locality-reordered store: because reordering co-locates a node's
-     * neighbors onto the same one/two pages, a per-record prefetch marks exactly those pages
-     * {@code WILLNEED} (the kernel coalesces requests that fall on the same page), avoiding both the
-     * hot-path sort and the grouped variant's over-read of the gap bytes between records. For the
-     * scattered baseline layout prefer {@link #prefetch} (grouping), which coalesces distant records
-     * and caps over-read at one page window.
+     * Unlike {@link #prefetch} (whose grouping window floats — it is anchored at the first ordinal of
+     * the batch), the blocks here are fixed to multiples of {@link #BYTES_32} measured from the store
+     * start (vector 0). Two records that share a physical 32KB page therefore always coalesce into one
+     * {@code prefetch}, which matches exactly how {@link PageTouchTracker} counts touched pages
+     * ({@code offset / 32KB}). This suits the reordered layout, where reordering co-locates a node's
+     * neighbors onto a few pages, so most of a batch collapses to a handful of block-aligned prefetches.
      * <p>
      * Returns early if prefetch is disabled, ordinals are null, or fewer than 2 vectors.
      *
@@ -104,19 +104,38 @@ public class PrefetchHelper {
         if (ordsToPrefetch == null || numOrds <= 1) {
             return;
         }
+        Arrays.sort(ordsToPrefetch, 0, numOrds);
 
         // Instrumentation: account the distinct physical pages this batch touches, for the per-query
         // distinct-page metric. No-op unless -Dknn.pageTouch.enabled=true; recorded independently of the
         // prefetch feature flag so the metric reflects reads whether or not prefetch I/O is issued.
         PageTouchTracker.get().recordBatch(baseOffset, oneVectorByteSize, ordsToPrefetch, numOrds);
-        if (KNNFeatureFlags.isPrefetchEnabled()) {
-            for (int i = 0; i < numOrds; i++) {
-                long currentOffset = baseOffset + (long) ordsToPrefetch[i] * oneVectorByteSize;
-                indexInput.prefetch(currentOffset, oneVectorByteSize);
-            }
-        } else {
+        if (!KNNFeatureFlags.isPrefetchEnabled()) {
             log.debug("KNNVectors Prefetch is disabled");
+            return;
         }
+
+        int groupCount = 1;
+        long groupStartOffset = baseOffset + (long) ordsToPrefetch[0] * oneVectorByteSize;
+        // Block boundaries are anchored at offset 0 (vector 0), so a group flushes whenever the next
+        // record starts in a different absolute 32KB block.
+        long groupBlock = groupStartOffset / BYTES_32;
+        for (int i = 1; i < numOrds; i++) {
+            long currentOffset = baseOffset + (long) ordsToPrefetch[i] * oneVectorByteSize;
+            long currentBlock = currentOffset / BYTES_32;
+            if (currentBlock != groupBlock) {
+                long prevEnd = baseOffset + (long) ordsToPrefetch[i - 1] * oneVectorByteSize + oneVectorByteSize;
+                indexInput.prefetch(groupStartOffset, prevEnd - groupStartOffset);
+                groupCount++;
+                groupStartOffset = currentOffset;
+                groupBlock = currentBlock;
+            }
+        }
+        // Prefetch final group
+        long lastEnd = baseOffset + (long) ordsToPrefetch[numOrds - 1] * oneVectorByteSize + oneVectorByteSize;
+        indexInput.prefetch(groupStartOffset, lastEnd - groupStartOffset);
+
+        log.trace("Prefetching [{}] block-aligned groups from [{}] ordinals, record size: {}", groupCount, numOrds, oneVectorByteSize);
     }
 
     /**
@@ -145,7 +164,7 @@ public class PrefetchHelper {
 
         for (int i = 1; i < numOrds; i++) {
             long currentOffset = baseOffset + (long) ordsToPrefetch[i] * oneVectorByteSize;
-            if ((currentOffset + oneVectorByteSize) - groupStartOffset > BYTES_128) {
+            if ((currentOffset + oneVectorByteSize) - groupStartOffset > BYTES_32) {
                 long prevOffset = baseOffset + (long) ordsToPrefetch[i - 1] * oneVectorByteSize;
                 indexInput.prefetch(groupStartOffset, (prevOffset + oneVectorByteSize) - groupStartOffset);
                 groupCount++;
