@@ -886,7 +886,6 @@ public class OpenSearchIT extends KNNCompressionRestTestCase {
         deleteKNNIndex(indexName);
     }
 
-    @ExpectRemoteBuildValidation
     public void testKNNIndexSearchFieldsParameter() throws Exception {
         createKnnIndex(INDEX_NAME, createKnnIndexMapping(Arrays.asList("vector1", "vector2", "vector3"), Arrays.asList(2, 3, 5)));
         // Add docs with knn_vector fields
@@ -968,7 +967,6 @@ public class OpenSearchIT extends KNNCompressionRestTestCase {
         assertEquals(0, parseSearchResponseFieldsCount(EntityUtils.toString(response4.getEntity()), "vector3"));
     }
 
-    @ExpectRemoteBuildValidation
     public void testKNNIndexSearchFieldsParameterWithOtherFields() throws Exception {
         XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
             .startObject()
@@ -1074,7 +1072,6 @@ public class OpenSearchIT extends KNNCompressionRestTestCase {
         assertEquals(k, parseSearchResponseFieldsCount(EntityUtils.toString(response4.getEntity()), "float2"));
     }
 
-    @ExpectRemoteBuildValidation
     public void testKNNIndexSearchFieldsParameterDocsWithOnlyOtherFields() throws Exception {
         XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
             .startObject()

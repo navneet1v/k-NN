@@ -225,13 +225,16 @@ public class KNNRestTestCase extends ODFERestTestCase {
     }
 
     private boolean hasExpectRemoteBuildValidation() {
-        try {
-            Method method = this.getClass().getMethod(testName.getMethodName());
-            return method.isAnnotationPresent(ExpectRemoteBuildValidation.class);
-        } catch (NoSuchMethodException e) {
-            // Tests parameterized by @ParametersFactory will throw NoSuchMethodException
-            return false;
+        // testName.getMethodName() includes the @ParametersFactory suffix, e.g. "testCbTripped {compression:X1}".
+        // Strip it to resolve the declared method, then check the annotation on any matching overload.
+        final String rawName = testName.getMethodName();
+        final String baseName = rawName.contains(" ") ? rawName.substring(0, rawName.indexOf(' ')) : rawName;
+        for (Method method : this.getClass().getMethods()) {
+            if (method.getName().equals(baseName) && method.isAnnotationPresent(ExpectRemoteBuildValidation.class)) {
+                return true;
+            }
         }
+        return false;
     }
 
     @SneakyThrows
