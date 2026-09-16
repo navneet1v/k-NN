@@ -749,6 +749,32 @@ testClusters.integTest {
     commonIntegTestClusters(it, _numNodes)
     // Forcing optimistic search for testing
     systemProperty 'mem_opt_srch.force_reenter', 'true'
+    // Forward ClusterANN quantizer flow selector (A/B benchmarking) into the node JVM.
+    // Pass on the command line: ./gradlew run -Dclusterann.quantizer=ivfaster
+    if (System.getProperty("clusterann.quantizer") != null) {
+        systemProperty 'clusterann.quantizer', System.getProperty("clusterann.quantizer")
+    }
+    if (System.getProperty("clusterann.thermo.noshortlist") != null) {
+        systemProperty 'clusterann.thermo.noshortlist', System.getProperty("clusterann.thermo.noshortlist")
+    }
+    if (System.getProperty("clusterann.thermo.shortlist") != null) {
+        systemProperty 'clusterann.thermo.shortlist', System.getProperty("clusterann.thermo.shortlist")
+    }
+    if (System.getProperty("clusterann.thermo.rerank") != null) {
+        systemProperty 'clusterann.thermo.rerank', System.getProperty("clusterann.thermo.rerank")
+    }
+    if (System.getProperty("clusterann.thermo.scope") != null) {
+        systemProperty 'clusterann.thermo.scope', System.getProperty("clusterann.thermo.scope")
+    }
+    if (System.getProperty("clusterann.thermo.shardFirstPassK") != null) {
+        systemProperty 'clusterann.thermo.shardFirstPassK', System.getProperty("clusterann.thermo.shardFirstPassK")
+    }
+    if (System.getProperty("clusterann.route.tiered") != null) {
+        systemProperty 'clusterann.route.tiered', System.getProperty("clusterann.route.tiered")
+    }
+    if (System.getProperty("clusterann.route.coarseM") != null) {
+        systemProperty 'clusterann.route.coarseM', System.getProperty("clusterann.route.coarseM")
+    }
 }
 
 testClusters.integTestRemoteIndexBuild {

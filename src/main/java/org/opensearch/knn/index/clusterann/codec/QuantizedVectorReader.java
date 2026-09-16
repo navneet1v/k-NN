@@ -69,7 +69,7 @@ public final class QuantizedVectorReader {
     private final float[] rawDotBuf;
 
     // Cached query quantization state — avoid re-quantizing per block
-    private float[] cachedCentroid;
+    private int cachedCentroidIdx = -1;
     private byte[] currentTransposed;
     private float currentQueryLower;
     private float currentQueryScale;
@@ -134,7 +134,8 @@ public final class QuantizedVectorReader {
         boolean[] validBuf,
         float[] centroid,
         float centroidDp,
-        float centroidNormSq
+        float centroidNormSq,
+        int centroidIdx
     ) throws IOException {
         // Count valid entries without separate loop — check while reading
         boolean anyValid = false;
@@ -150,7 +151,7 @@ public final class QuantizedVectorReader {
             return;
         }
 
-        ensureQueryQuantized(centroid, centroidNormSq);
+        ensureQueryQuantized(centroid, centroidNormSq, centroidIdx);
 
         // Read corrections FIRST (small — 16 bytes per vector)
         readFloatsFromInts(input, blockLower, blockSize);
@@ -291,14 +292,20 @@ public final class QuantizedVectorReader {
             out[i] = Float.intBitsToFloat(intBuf[i]);
     }
 
-    /** Cache query quantization per centroid — skip if same centroid reference. */
-    private void ensureQueryQuantized(float[] centroid, float centroidNormSq) {
-        if (centroid == cachedCentroid) return;
-        cachedCentroid = centroid;
+    /**
+     * Cache query quantization per centroid — keyed on centroidIdx (NOT the array reference, which
+     * is a reused buffer and would always compare equal, wrongly reusing centroid 0's quantization
+     * for every cluster). Re-quantizes whenever the centroid index changes.
+     */
+    private void ensureQueryQuantized(float[] centroid, float centroidNormSq, int centroidIdx) {
+        if (centroidIdx == cachedCentroidIdx) return;
+        cachedCentroidIdx = centroidIdx;
 
+        Arrays.fill(scratch, (byte) 0);
         System.arraycopy(queryVector, 0, queryCopy, 0, queryVector.length);
         OptimizedScalarQuantizer.QuantizationResult qResult = osq.multiScalarQuantize(queryCopy, destinations, bitsArray, centroid)[0];
 
+        Arrays.fill(transposedBuffer, (byte) 0);
         OptimizedScalarQuantizer.transposeHalfByte(scratch, transposedBuffer);
 
         currentTransposed = transposedBuffer;

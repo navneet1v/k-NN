@@ -55,8 +55,19 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
     private OffHeapCentroids.Reader centroidReader;
     private Map<Integer, ClipPruningData> clipDataMap;
 
+    /** Segment name, kept for the shard-int8 stash token (must match the query-side leaf token). */
+    private final String segmentName;
+
+    // PERF instrumentation (opt-in via -Dclusterann.perf=true): accumulate per-phase nanos + query count.
+    private static final boolean PERF = Boolean.getBoolean("clusterann.perf");
+    private static final java.util.concurrent.atomic.AtomicLong PERF_PREP_NS = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong PERF_ROUTE_NS = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong PERF_SCAN_NS = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong PERF_QUERIES = new java.util.concurrent.atomic.AtomicLong();
+
     public ClusterANN1040KnnVectorsReader(FlatVectorsReader flatVectorsReader, SegmentReadState state) throws IOException {
         this.flatVectorsReader = flatVectorsReader;
+        this.segmentName = state.segmentInfo.name;
 
         boolean success = false;
         IndexInput metaIn = null;
@@ -166,6 +177,33 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         VectorSimilarityFunction simFunc = getSimFunc(field);
         boolean useADC = fieldState.docBits > 0 && fieldState.numVectors > MIN_ADC_VECTORS;
 
+        // Flow B ("IVFaster absolute"): build the thermometer scan reader with the Hadamard-rotated
+        // query. The writer used HadamardRotation.create(dim) (deterministic default seed), so the
+        // reader rebuilds the same rotation from (dim). UNVERIFIED (written blind).
+        org.opensearch.knn.index.clusterann.codec.ThermometerVectorReader thermoReader = null;
+        if (fieldState.quantizerId == QUANTIZER_IVFASTER_ABSOLUTE) {
+            thermoReader = new org.opensearch.knn.index.clusterann.codec.ThermometerVectorReader(fieldState);
+            float[] rotatedQuery = new float[fieldState.dimension];
+            org.opensearch.knn.index.clusterann.algorithm.HadamardRotation.create(fieldState.dimension)
+                .transform(target, rotatedQuery);
+            thermoReader.prepareQuery(rotatedQuery);
+            // If int8 rerank is enabled, also prepare the int8 query form.
+            if ("int8".equalsIgnoreCase(System.getProperty("clusterann.thermo.rerank"))) {
+                thermoReader.prepareInt8Query(rotatedQuery);
+            }
+        }
+
+        // Flow C ("ScaNN residual PQ"): load the single global PQ codebook once; the scanner
+        // residualizes the query per probed cell and scores via the AH lookup table.
+        org.opensearch.knn.index.clusterann.codec.PQScanState pqState = null;
+        if (fieldState.quantizerId == QUANTIZER_SCANN_RESIDUAL_PQ && fieldState.pqCodebookLength > 0) {
+            IndexInput cbIn = postingsClone.clone();
+            cbIn.seek(fieldState.pqCodebookOffset);
+            org.opensearch.knn.index.clusterann.codec.PQCodebook codebook =
+                org.opensearch.knn.index.clusterann.codec.PQCodebook.read(cbIn);
+            pqState = new org.opensearch.knn.index.clusterann.codec.PQScanState(codebook, target, simFunc);
+        }
+
         // Transform query for ADC scoring (randomRotation redistributes variance for better quantization)
         float[] adcTarget = target;
         if (useADC && centroidReader.hasRotation() && simFunc == VectorSimilarityFunction.EUCLIDEAN) {
@@ -177,6 +215,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         // Tier 1: Strict filter — exact score all matching docs (skip IVF)
         // Tier 2: Moderate filter — density-weighted centroid probing
         // Tier 3: Loose/no filter — normal adaptive nprobe
+        long tPrep = System.nanoTime();  // PERF: end of query-prep (rotate/quantize/scorer build)
         if (acceptBits != null && filterCost < fieldState.numVectors) {
             long filterDimProduct = filterCost * (long) fieldState.dimension;
             if (filterDimProduct <= EXACT_FILTER_THRESHOLD) {
@@ -206,8 +245,9 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
 
             BitSet visited = new BitSet(fieldState.numVectors);
             ClusterANNCentroidScanner scanner = new ClusterANNCentroidScanner(
-                postingsClone, fieldState, exactScorer, adcReader, target, acceptBits, visited, true, centroidReader
+                postingsClone, fieldState, exactScorer, adcReader, target, acceptBits, visited, true, centroidReader, thermoReader
             );
+            scanner.setSegmentToken(segmentName.hashCode());
             NearestProbeScheduler nearest = new NearestProbeScheduler(target, fieldState, 100, scanner, centroidReader);
             OptimizedProbeScheduler pipeline = new OptimizedProbeScheduler(
                 nearest, scanner, postingsClone, fieldState.centroidDocCounts, fieldState.numVectors, 100, filterCost
@@ -241,8 +281,12 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             acceptBits,
             visited,
             useADC,
-            centroidReader
+            centroidReader,
+            thermoReader,
+            pqState
         );
+
+        scanner.setSegmentToken(segmentName.hashCode());
 
         NearestProbeScheduler nearest;
         int[] filterMatchCounts = null;
@@ -283,6 +327,22 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         pipeline.execute(knnCollector);
         long t2 = System.nanoTime();
 
+        if (PERF) {
+            PERF_PREP_NS.addAndGet(tPrep - t0);
+            PERF_ROUTE_NS.addAndGet(t1 - tPrep);
+            PERF_SCAN_NS.addAndGet(t2 - t1);
+            long n = PERF_QUERIES.incrementAndGet();
+            // Log a running average every 100 queries so the benchmark's tail is representative.
+            if (n % 100 == 0) {
+                log.info("[ClusterANN-PERF] queries={} avg_us prep={} route={} scan={} (total={})",
+                    n,
+                    PERF_PREP_NS.get() / n / 1000,
+                    PERF_ROUTE_NS.get() / n / 1000,
+                    PERF_SCAN_NS.get() / n / 1000,
+                    (PERF_PREP_NS.get() + PERF_ROUTE_NS.get() + PERF_SCAN_NS.get()) / n / 1000);
+            }
+        }
+
         if (adcReader != null) {
             adcReader.finish(knnCollector);
         }
@@ -291,13 +351,14 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
         // Accumulate actual bytes (not estimated) into query-level counter
         OptimizedProbeScheduler.addActualBytes(actualAdcBytes);
         log.info(
-            "[ClusterANN-SEG] nprobe={} clustersProbed={} vectors={} centroidDist={}ms scan={}ms total={}ms",
+            "[ClusterANN-SEG] nprobe={} clustersProbed={} vectors={} prep_us={} route_us={} scan_us={} total_us={}",
             nearest.nprobe(),
             OptimizedProbeScheduler.lastClustersProbed(),
             fieldState.numVectors,
-            (t1 - t0) / 1_000_000,
-            (t2 - t1) / 1_000_000,
-            (t3 - t0) / 1_000_000
+            (tPrep - t0) / 1000,
+            (t1 - tPrep) / 1000,
+            (t2 - t1) / 1000,
+            (t3 - t0) / 1000
         );
     }
 
@@ -368,6 +429,13 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
     // ========== Helpers ==========
 
     private Map<Integer, ClipPruningData> readClipData(SegmentReadState state) {
+        // CLIP pruning DISABLED: always return an empty map so no field has CLIP data and every
+        // query-path guard (segment-skip in search(), inter-cluster skip in OptimizedProbeScheduler)
+        // sees clipData == null and does not prune. Removes the recall loss from CLIP over-pruning.
+        return new HashMap<>();
+    }
+
+    private Map<Integer, ClipPruningData> readClipDataDISABLED(SegmentReadState state) {
         Map<Integer, ClipPruningData> map = new HashMap<>();
         try {
             String fileName = IndexFileNames.segmentFileName(

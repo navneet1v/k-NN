@@ -34,6 +34,7 @@ import java.util.List;
 import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstants.*;
 import org.opensearch.knn.index.clusterann.codec.*;
 import org.opensearch.knn.index.clusterann.algorithm.RandomRotation;
+import org.opensearch.knn.index.clusterann.algorithm.HadamardRotation;
 
 /**
  * Writer for ClusterANN IVF format v2.
@@ -55,6 +56,21 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     private final SegmentWriteState state;
     private final FlatVectorsWriter flatVectorsWriter;
     private final byte docBits;
+
+    /**
+     * Quantizer flow selector. Flow A (0) = per-centroid OSQ (default, unchanged). Flow B (1) =
+     * IVFaster-style absolute (Hadamard rotation + Nitrox2 2-bit thermometer scan, existing exact
+     * rescore). Overridable at index time via {@code -Dclusterann.quantizer=ivfaster} for A/B
+     * benchmarking without a codec API change.
+     */
+    private final byte quantizerId = resolveQuantizer();
+
+    private static byte resolveQuantizer() {
+        String q = System.getProperty("clusterann.quantizer");
+        if ("ivfaster".equalsIgnoreCase(q)) return ClusterANNFormatConstants.QUANTIZER_IVFASTER_ABSOLUTE;
+        if ("scann".equalsIgnoreCase(q)) return ClusterANNFormatConstants.QUANTIZER_SCANN_RESIDUAL_PQ;
+        return ClusterANNFormatConstants.QUANTIZER_PER_CENTROID_OSQ;
+    }
     private final List<FieldWriterInfo> fields = new ArrayList<>();
 
     private final IndexOutput metaOutput;
@@ -153,12 +169,20 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();
 
-        // 1b. Create random rotation and transform centroids for quantization (L2 only)
-        boolean useRotation = fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
-        RandomRotation randomRotation = RandomRotation.create(dimension);
+        // 1b. Rotation + transformed centroids for quantization.
+        // Flow A (per-centroid OSQ): random rotation, EUCLIDEAN only (existing behavior).
+        // Flow B (IVFaster absolute): Hadamard FWHT, ALWAYS (the absolute thermometer/int8 scheme
+        // requires the 1/sqrt(dim) rotated distribution for every similarity).
+        final boolean flowB = quantizerId == QUANTIZER_IVFASTER_ABSOLUTE;
+        final boolean flowC = quantizerId == QUANTIZER_SCANN_RESIDUAL_PQ;
+        boolean useRotation = flowB || fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
+        RandomRotation randomRotation = flowB ? null : RandomRotation.create(dimension);
+        HadamardRotation hadamard = flowB ? HadamardRotation.create(dimension) : null;
         float[][] transformedCentroids = new float[numCentroids][dimension];
         for (int c = 0; c < numCentroids; c++) {
-            if (useRotation) {
+            if (flowB) {
+                hadamard.transform(centroids[c], transformedCentroids[c]);
+            } else if (useRotation) {
                 randomRotation.transform(centroids[c], transformedCentroids[c]);
             } else {
                 System.arraycopy(centroids[c], 0, transformedCentroids[c], 0, dimension);
@@ -177,30 +201,83 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int[][] primaryPostings = result.primaryPostingLists();
         int[][] soarPostings = result.soarPostingLists();
 
-        try (QuantizedVectorWriter qWriter = new QuantizedVectorWriter(fieldInfo.getVectorSimilarityFunction(), dimension, docBits)) {
+        // Flow C codebook location in the postings file (0/0 for flows A/B).
+        long pqCodebookOffset = 0L;
+        int pqCodebookLength = 0;
+
+        if (flowB) {
+            try (ThermometerVectorWriter tWriter = new ThermometerVectorWriter(dimension)) {
+                for (int si = 0; si < numCentroids; si++) {
+                    int origIdx = spatialOrder[si];
+                    long startPos = postingsOutput.getFilePointer();
+                    centroidOffsets[origIdx] = startPos;
+                    writePostingListThermometer(primaryPostings[origIdx], vectors, tWriter, hadamard);
+                    writePostingListThermometer(soarPostings[origIdx], vectors, tWriter, hadamard);
+                    postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
+                }
+            }
+        } else if (flowC) {
+            // Flow C = Google ScaNN residual Product Quantization with a SINGLE GLOBAL codebook.
+            // Step 1: build residuals (v − its cell centroid) for every vector, mapped by cell.
+            // Step 2: train the global PQ codebook on the residuals (ScaNN defaults: K=256, 2 dims/block).
+            // Step 3: serialize the codebook into the postings region; record offset/length in meta.
+            // Step 4: per posting, encode each vector's residual to PQ codes (numSubspaces bytes).
+            int dim = dimension;
+            // Collect residuals per cell so encode uses the SAME centroid the vector was assigned to.
+            java.util.List<float[]> residualList = new java.util.ArrayList<>(numVectors);
+            for (int c = 0; c < numCentroids; c++) {
+                for (int pass = 0; pass < 2; pass++) {
+                    int[] posting = pass == 0 ? primaryPostings[c] : soarPostings[c];
+                    for (int ord : posting) {
+                        float[] v = vectors.vectorValue(ord);
+                        float[] res = new float[dim];
+                        for (int d = 0; d < dim; d++) res[d] = v[d] - centroids[c][d];
+                        residualList.add(res);
+                    }
+                }
+            }
+            float[][] residuals = residualList.toArray(new float[0][]);
+            org.opensearch.knn.index.clusterann.codec.PQCodebook codebook =
+                org.opensearch.knn.index.clusterann.codec.PQCodebook.trainDefault(residuals, dim, 42L);
+            // Serialize the codebook at the start of the field's posting region.
+            pqCodebookOffset = postingsOutput.getFilePointer();
+            codebook.write(postingsOutput);
+            pqCodebookLength = (int) (postingsOutput.getFilePointer() - pqCodebookOffset);
+            // Now write each posting: [docIds | vInt count | ordinals | pqCodes(count·codeBytes)].
             for (int si = 0; si < numCentroids; si++) {
                 int origIdx = spatialOrder[si];
                 long startPos = postingsOutput.getFilePointer();
                 centroidOffsets[origIdx] = startPos;
-
-                // Primary posting list (quantize with transformed vectors + transformed centroids)
-                writePostingList(
-                    primaryPostings[origIdx],
-                    vectors,
-                    transformedCentroids[origIdx],
-                    qWriter,
-                    useRotation ? randomRotation : null
-                );
-                // SOAR posting list (adjacent)
-                writePostingList(
-                    soarPostings[origIdx],
-                    vectors,
-                    transformedCentroids[origIdx],
-                    qWriter,
-                    useRotation ? randomRotation : null
-                );
-
+                writePostingListPQ(primaryPostings[origIdx], vectors, centroids[origIdx], codebook);
+                writePostingListPQ(soarPostings[origIdx], vectors, centroids[origIdx], codebook);
                 postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
+            }
+        } else {
+            try (QuantizedVectorWriter qWriter = new QuantizedVectorWriter(fieldInfo.getVectorSimilarityFunction(), dimension, docBits)) {
+                for (int si = 0; si < numCentroids; si++) {
+                    int origIdx = spatialOrder[si];
+                    long startPos = postingsOutput.getFilePointer();
+                    centroidOffsets[origIdx] = startPos;
+
+                    // Primary posting list (quantize with transformed vectors + transformed centroids)
+                    writePostingList(
+                        primaryPostings[origIdx],
+                        vectors,
+                        transformedCentroids[origIdx],
+                        qWriter,
+                        useRotation ? randomRotation : null
+                    );
+                    // SOAR posting list (adjacent)
+                    writePostingList(
+                        soarPostings[origIdx],
+                        vectors,
+                        transformedCentroids[origIdx],
+                        qWriter,
+                        useRotation ? randomRotation : null
+                    );
+
+                    postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
+                }
             }
         }
 
@@ -211,6 +288,9 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(numCentroids);
         metaOutput.writeString(metric.name());
         metaOutput.writeByte(docBits);
+        metaOutput.writeByte(quantizerId);
+        metaOutput.writeLong(pqCodebookOffset);   // Flow C: global PQ codebook location (0 otherwise)
+        metaOutput.writeInt(pqCodebookLength);
         metaOutput.writeLong(postingsFieldOffset);
 
         // Centroid doc counts (primary posting list sizes)
@@ -243,8 +323,11 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             metaOutput.writeLong(centroidOffsets[c]);
         }
 
-        // RandomRotation (for query-time transform)
-        randomRotation.write(metaOutput);
+        // Rotation blob (for query-time transform). Flow A: the real RandomRotation. Flow B: the
+        // query rotation is the Hadamard rebuilt reader-side from dim, so this blob is unused there —
+        // write a placeholder RandomRotation only to keep the .clam/.clac byte layout intact.
+        RandomRotation rotationBlob = flowB ? RandomRotation.create(dimension) : randomRotation;
+        rotationBlob.write(metaOutput);
 
         // Transformed centroids (for ADC scoring — quantization is in transformed space)
         for (int c = 0; c < numCentroids; c++) {
@@ -254,7 +337,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         // Write centroids to .clac (off-heap, mmap'd at search time)
-        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, useRotation ? randomRotation : null);
+        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, (useRotation || flowB) ? rotationBlob : null);
 
         // 5. Write .claf: centroid assignment per ordinal (for filter-aware search)
         // Format: [fieldNumber:int][numVectors:int][numCentroids:int][assignments: numVectors × short]
@@ -283,21 +366,78 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             postingsOutput.getFilePointer()
         );
 
-        // 6. Calibrate and write CLIP pruning data (.clid)
-        float[][] allVectors = new float[numVectors][];
-        for (int i = 0; i < numVectors; i++) {
-            allVectors[i] = vectors.vectorValue(i);
+        // 6. CLIP pruning DISABLED. The reader's readClipData() returns an empty map and never opens
+        // the .clid file, so calibration is pure wasted work — and ClipPruningData.calibrate is O(N^2)
+        // at scale (per-cluster sample cap scales with totalVectors), which stalls flush at ~1M docs.
+        // Skip calibrate() and leave .clid empty (created, no content). Re-enable by restoring the
+        // calibrate+write block AND the real reader (readClipDataDISABLED).
+        // ClipPruningData clipData = ClipPruningData.calibrate(centroids, primaryPostings, allVectors, dimension, 42L);
+        // clipOutput.writeInt(fieldInfo.number);
+        // clipData.write(clipOutput);
+        log.info("[ClusterANN-WRITE] field={} CLIP calibration SKIPPED (disabled)", fieldInfo.name);
+    }
+
+    /**
+     * Flow B posting writer: [docIds | ordinals | thermometer+int8 blocks]. Rotates each vector
+     * with the Hadamard rotation (absolute — no centroid). UNVERIFIED (written blind).
+     */
+    private void writePostingListThermometer(
+        int[] ordinals,
+        ClusterANNVectorValues vectors,
+        ThermometerVectorWriter tWriter,
+        HadamardRotation hadamard
+    ) throws IOException {
+        int count = ordinals.length;
+        int[] docIds = new int[count];
+        for (int i = 0; i < count; i++) {
+            docIds[i] = vectors.ordToDoc(ordinals[i]);
         }
-        ClipPruningData clipData = ClipPruningData.calibrate(
-            centroids, primaryPostings, allVectors, dimension, 42L
-        );
-        clipOutput.writeInt(fieldInfo.number);
-        clipData.write(clipOutput);
-        log.info(
-            "[ClusterANN-WRITE] field={} CLIP calibrated: numCentroids={}",
-            fieldInfo.name,
-            numCentroids
-        );
+        sortParallel(docIds, ordinals, count);
+        PostingListCodec.write(docIds, postingsOutput);
+        postingsOutput.writeVInt(count);
+        for (int i = 0; i < count; i++) {
+            postingsOutput.writeInt(ordinals[i]);
+        }
+        int dim = vectors.dimension();
+        float[] rotated = new float[dim];
+        tWriter.writeBlocked(ordinals, count, ord -> {
+            float[] vec = vectors.vectorValue(ord);
+            hadamard.transform(vec, rotated);
+            return rotated;
+        }, postingsOutput);
+    }
+
+    /**
+     * Flow C posting writer: [docIds | vInt count | ordinals | pqCodes(count·codeBytes)].
+     * Each vector's PQ code is over its RESIDUAL (v − this cell's centroid), using the global codebook.
+     */
+    private void writePostingListPQ(
+        int[] ordinals,
+        ClusterANNVectorValues vectors,
+        float[] centroid,
+        org.opensearch.knn.index.clusterann.codec.PQCodebook codebook
+    ) throws IOException {
+        int count = ordinals.length;
+        int[] docIds = new int[count];
+        for (int i = 0; i < count; i++) {
+            docIds[i] = vectors.ordToDoc(ordinals[i]);
+        }
+        sortParallel(docIds, ordinals, count);
+        PostingListCodec.write(docIds, postingsOutput);
+        postingsOutput.writeVInt(count);
+        for (int i = 0; i < count; i++) {
+            postingsOutput.writeInt(ordinals[i]);
+        }
+        int dim = vectors.dimension();
+        int codeBytes = codebook.codeBytes();
+        float[] res = new float[dim];
+        byte[] code = new byte[codeBytes];
+        for (int i = 0; i < count; i++) {
+            float[] vec = vectors.vectorValue(ordinals[i]);
+            for (int d = 0; d < dim; d++) res[d] = vec[d] - centroid[d];
+            codebook.encode(res, code, 0);
+            postingsOutput.writeBytes(code, 0, codeBytes);
+        }
     }
 
     /**
@@ -457,7 +597,10 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         metaOutput.writeInt(0);
         metaOutput.writeString(DistanceMetric.L2.name());
         metaOutput.writeByte(docBits);
-        metaOutput.writeLong(0);
+        metaOutput.writeByte(quantizerId);
+        metaOutput.writeLong(0);   // pqCodebookOffset
+        metaOutput.writeInt(0);    // pqCodebookLength
+        metaOutput.writeLong(0);   // postingsFieldOffset
     }
 
     private IndexOutput createOutput(String extension) throws IOException {

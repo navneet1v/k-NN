@@ -123,7 +123,45 @@ public class NativeEngineKnnVectorQuery extends Query {
         final int finalK = knnQuery.getK();
         org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.resetQueryAdcBytes();
         org.opensearch.knn.index.clusterann.prefetch.OptimizedProbeScheduler.resetSharedThreshold();
-        if (isRescoreRequired(firstPassKFor2PhaseSearch) == false) {
+
+        // POC: shard-level int8 rerank. Phase 1 = per-segment coarse-Hamming top-firstPassK (codec
+        // stashes int8 codes). Then merge to global top-firstPassK, int8-rescore from the stash,
+        // reduce to finalK. Enabled by -Dclusterann.thermo.scope=shard (+ rerank=int8).
+        boolean shardInt8 = org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.SHARD_SCOPE
+            && "int8".equalsIgnoreCase(System.getProperty("clusterann.thermo.rerank"));
+        if (shardInt8) {
+            org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.clear();
+            int firstPassK = Math.max(finalK, Integer.getInteger("clusterann.thermo.shardFirstPassK", finalK * 10));
+            // Phase 1: per-segment coarse-Hamming top-firstPassK; codec stashes int8 codes.
+            perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, firstPassK);
+            // Phase 2: int8-rescore each leaf's candidates from the stash (shard-comparable scores),
+            // then reduceToTopK(finalK) below merges to the global top-k.
+            float[] rq = new float[knnQuery.getQueryVector().length];
+            org.opensearch.knn.index.clusterann.algorithm.HadamardRotation.create(rq.length)
+                .transform(knnQuery.getQueryVector(), rq);
+            org.opensearch.knn.index.clusterann.codec.ShardInt8Query siq =
+                new org.opensearch.knn.index.clusterann.codec.ShardInt8Query(rq, knnQuery.getQueryVector().length);
+            // Zip results with their leaf so we can rebuild the SAME stash key the scanner wrote:
+            // key(segmentToken, localDocId). perLeafResults is parallel to leafReaderContexts.
+            for (int li = 0; li < perLeafResults.size(); li++) {
+                PerLeafResult plr = perLeafResults.get(li);
+                org.apache.lucene.index.LeafReaderContext leaf = leafReaderContexts.get(li);
+                int segToken = segmentTokenFor(leaf);
+                for (org.apache.lucene.search.ScoreDoc sd : plr.getResult().scoreDocs) {
+                    // sd.doc here is the per-leaf (segment-local) id the scanner stashed under.
+                    long stashKey = org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.key(segToken, sd.doc);
+                    byte[] code = org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.code(stashKey);
+                    if (code != null) {
+                        sd.score = siq.score(
+                            code,
+                            org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.scale(stashKey),
+                            org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.sum(stashKey),
+                            org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.norm(stashKey)
+                        );
+                    }
+                }
+            }
+        } else if (isRescoreRequired(firstPassKFor2PhaseSearch) == false) {
             perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, finalK);
         } else {
             perLeafResults = doSearch(indexSearcher, leafReaderContexts, knnWeight, firstPassKFor2PhaseSearch);
@@ -552,5 +590,18 @@ public class NativeEngineKnnVectorQuery extends Query {
     @Override
     public int hashCode() {
         return Objects.hash(classHash(), knnQuery.hashCode());
+    }
+
+    /**
+     * The per-segment token the shard-int8 stash was keyed with — must equal what the scanner used
+     * ({@code segmentReadState.segmentInfo.name.hashCode()}). Unwraps the leaf to its SegmentReader
+     * to read the segment name; falls back to the leaf's identity hash if it is not a SegmentReader.
+     */
+    private static int segmentTokenFor(org.apache.lucene.index.LeafReaderContext leaf) {
+        org.apache.lucene.index.LeafReader r = org.apache.lucene.index.FilterLeafReader.unwrap(leaf.reader());
+        if (r instanceof org.apache.lucene.index.SegmentReader sr) {
+            return sr.getSegmentName().hashCode();
+        }
+        return System.identityHashCode(r);
     }
 }

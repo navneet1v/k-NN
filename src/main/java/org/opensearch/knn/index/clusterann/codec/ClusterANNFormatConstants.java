@@ -34,6 +34,14 @@ public final class ClusterANNFormatConstants {
     public static final int TARGET_CLUSTER_SIZE = 512;
     public static final float SOAR_LAMBDA = 1.0f;
 
+    // Quantizer selection (persisted per field in .clam, right after docBits).
+    // Flow A: per-centroid OSQ (leaf-relative). Flow B: IVFaster-style absolute
+    // (Hadamard rotation + Nitrox2 2-bit thermometer scan, existing exact rescore).
+    public static final byte QUANTIZER_PER_CENTROID_OSQ = 0;
+    public static final byte QUANTIZER_IVFASTER_ABSOLUTE = 1;
+    /** Flow C: Google ScaNN-style residual Product Quantization (single global codebook). */
+    public static final byte QUANTIZER_SCANN_RESIDUAL_PQ = 2;
+
     // Filtering: max filterCost * dimension to use exact scoring (Tier 1)
     // At 768d: threshold / 768 ≈ 2666 docs per segment triggers exact path
     public static final long EXACT_FILTER_THRESHOLD = 2_048_000L;

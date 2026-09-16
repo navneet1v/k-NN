@@ -218,11 +218,9 @@ public final class OptimizedProbeScheduler implements ProbeScheduler {
                 scanner.setForceExact(matches < k);
             }
 
-            // CLIP inter-cluster pruning: provably skip clusters whose upper bound
-            // on max IP (or lower bound on min L2²) cannot beat the current threshold.
-            // Falls back to distance-budget heuristic when CLIP data is unavailable.
-            // Only apply after scoring at least one cluster in this segment.
-            if (clustersActuallyProbed >= 1 && docsScored >= k
+            // PRUNING DISABLED: neither CLIP nor the distance-budget fallback skips clusters.
+            // Scan every scheduled probe to its full nprobe. (Was: CLIP inter-cluster + 4x fallback.)
+            if (false && clustersActuallyProbed >= 1 && docsScored >= k
                 && collector.minCompetitiveSimilarity() > Float.NEGATIVE_INFINITY) {
                 float threshold = collector.minCompetitiveSimilarity();
                 // Also consider shared threshold from other segments

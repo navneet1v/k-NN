@@ -31,6 +31,11 @@ import java.util.Arrays;
  */
 public final class NearestProbeScheduler implements ProbeScheduler {
 
+    /** POC: tiered centroid routing (2-bit Hamming shortlist -> int8 rerank). -Dclusterann.route.tiered=true */
+    private static final boolean TIERED_ROUTE = Boolean.getBoolean("clusterann.route.tiered");
+    /** Coarse shortlist size for tiered routing before int8 rerank. */
+    private static final int ROUTE_COARSE_M = Integer.getInteger("clusterann.route.coarseM", 256);
+
     private final ProbeTarget[] probes;
     private final int nprobe;
     private final ClusterANNCentroidScanner scanner;
@@ -50,7 +55,11 @@ public final class NearestProbeScheduler implements ProbeScheduler {
 
         // Compute distances directly from flat buffer — no per-centroid copy
         float[] dists = new float[numCentroids];
-        if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
+        if (TIERED_ROUTE) {
+            // POC tiered centroid routing: 2-bit thermometer Hamming shortlist -> int8 rerank.
+            // Codes computed on the fly from full-precision centroids (few centroids, no format change).
+            computeTieredDists(query, flatCentroids, numCentroids, dimension, k, dists);
+        } else if (metric == DistanceMetric.L2 && fieldState.centroidNorms != null) {
             float queryNormSq = VectorUtil.dotProduct(query, query);
             for (int c = 0; c < numCentroids; c++) {
                 int offset = c * dimension;
@@ -229,6 +238,85 @@ public final class NearestProbeScheduler implements ProbeScheduler {
         float sum = 0f;
         for (int d = 0; d < dim; d++) {
             sum += query[d] * flat[offset + d];
+        }
+        return sum;
+    }
+
+    /**
+     * POC tiered centroid routing. Rotate query + centroids (Hadamard), 2-bit thermometer Hamming
+     * shortlist top-{@link #ROUTE_COARSE_M}, then int8 rerank the shortlist. Fills {@code dists}
+     * with negative int8 score for shortlisted centroids (lower = nearer) and +INF for the rest,
+     * so the existing sort/nprobe logic downstream works unchanged.
+     */
+    private static void computeTieredDists(float[] query, float[] flatCentroids, int numCentroids, int dim, int k, float[] dists) {
+        final int OFFSET = 128;
+        java.util.Arrays.fill(dists, Float.MAX_VALUE);
+
+        org.opensearch.knn.index.clusterann.algorithm.HadamardRotation rot =
+            org.opensearch.knn.index.clusterann.algorithm.HadamardRotation.create(dim);
+
+        // Rotate + code the query (2-bit coarse + int8).
+        float[] rq = new float[dim];
+        rot.transform(query, rq);
+        int cb = org.opensearch.knn.index.clusterann.codec.Nitrox2.bytesPerVector(dim);
+        byte[] qCoarse = new byte[cb];
+        org.opensearch.knn.index.clusterann.codec.Nitrox2.packPlanes(rq, dim, qCoarse, 0);
+        byte[] qI8 = new byte[dim];
+        int qSum = int8Encode(rq, dim, qI8);
+        float qScale = int8Scale(rq, dim);
+
+        // Coarse pass: Hamming(query, each centroid) -> keep top-M.
+        int[] ham = new int[numCentroids];
+        float[] cIn = new float[dim];
+        float[] cRot = new float[dim];
+        byte[] cCoarse = new byte[cb];
+        for (int c = 0; c < numCentroids; c++) {
+            System.arraycopy(flatCentroids, c * dim, cIn, 0, dim);
+            rot.transform(cIn, cRot);
+            org.opensearch.knn.index.clusterann.codec.Nitrox2.packPlanes(cRot, dim, cCoarse, 0);
+            ham[c] = org.opensearch.knn.index.clusterann.codec.Nitrox2.hamming(qCoarse, 0, cCoarse, 0, cb);
+        }
+        int M = Math.min(Math.max(ROUTE_COARSE_M, k), numCentroids);
+        int[] hamCopy = ham.clone();
+        java.util.Arrays.sort(hamCopy);
+        int hThresh = hamCopy[M - 1];
+
+        // int8 rerank the shortlist.
+        byte[] cI8 = new byte[dim];
+        int kept = 0;
+        for (int c = 0; c < numCentroids && kept < M; c++) {
+            if (ham[c] <= hThresh) {
+                System.arraycopy(flatCentroids, c * dim, cIn, 0, dim);
+                rot.transform(cIn, cRot);
+                int cSum = int8Encode(cRot, dim, cI8);
+                float cScale = int8Scale(cRot, dim);
+                long unsignedDot = 0;
+                for (int d = 0; d < dim; d++) unsignedDot += (long) (qI8[d] & 0xFF) * (cI8[d] & 0xFF);
+                long signedDot = unsignedDot - ((long) OFFSET * qSum + 16384L * dim) - (long) OFFSET * cSum;
+                double dot = (double) signedDot * qScale * cScale;
+                dists[c] = -(float) dot; // lower = nearer (IP)
+                kept++;
+            }
+        }
+    }
+
+    private static float int8Scale(float[] v, int dim) {
+        float maxAbs = 0f;
+        for (int d = 0; d < dim; d++) { float a = Math.abs(v[d]); if (a > maxAbs) maxAbs = a; }
+        return maxAbs == 0f ? 1f : maxAbs / 127f;
+    }
+
+    private static int int8Encode(float[] v, int dim, byte[] out) {
+        float maxAbs = 0f;
+        for (int d = 0; d < dim; d++) { float a = Math.abs(v[d]); if (a > maxAbs) maxAbs = a; }
+        if (maxAbs == 0f) { java.util.Arrays.fill(out, (byte) 128); return 0; }
+        float inv = 127f / maxAbs;
+        int sum = 0;
+        for (int d = 0; d < dim; d++) {
+            int q = Math.round(v[d] * inv);
+            if (q > 127) q = 127; else if (q < -127) q = -127;
+            sum += q;
+            out[d] = (byte) (q + 128);
         }
         return sum;
     }

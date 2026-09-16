@@ -42,6 +42,11 @@ public final class ClusterANNFieldState {
     public final int numCentroids;
     public final DistanceMetric metric;
     public final byte docBits;
+    /** Quantizer flow: 0 = per-centroid OSQ (A), 1 = IVFaster absolute (B). See ClusterANNFormatConstants. */
+    public final byte quantizerId;
+    /** Flow C: global PQ codebook location in the postings file (0 for flows A/B). */
+    public final long pqCodebookOffset;
+    public final int pqCodebookLength;
     public final long postingsOffset;
 
     // Eager-loaded (small: per centroid)
@@ -61,6 +66,9 @@ public final class ClusterANNFieldState {
         int numCentroids,
         DistanceMetric metric,
         byte docBits,
+        byte quantizerId,
+        long pqCodebookOffset,
+        int pqCodebookLength,
         long postingsOffset,
         int[] centroidDocCounts,
         float[] centroidNorms,
@@ -73,6 +81,9 @@ public final class ClusterANNFieldState {
         this.numCentroids = numCentroids;
         this.metric = metric;
         this.docBits = docBits;
+        this.quantizerId = quantizerId;
+        this.pqCodebookOffset = pqCodebookOffset;
+        this.pqCodebookLength = pqCodebookLength;
         this.postingsOffset = postingsOffset;
         this.centroidDocCounts = centroidDocCounts;
         this.centroidNorms = centroidNorms;
@@ -126,6 +137,9 @@ public final class ClusterANNFieldState {
             int numCentroids = metaInput.readInt();
             String metricName = metaInput.readString();
             byte docBits = metaInput.readByte();
+            byte quantizerId = metaInput.readByte();
+            long pqCodebookOffset = metaInput.readLong();
+            int pqCodebookLength = metaInput.readInt();
             long postingsOffset = metaInput.readLong();
 
             DistanceMetric metric;
@@ -178,6 +192,9 @@ public final class ClusterANNFieldState {
                 numCentroids,
                 metric,
                 docBits,
+                quantizerId,
+                pqCodebookOffset,
+                pqCodebookLength,
                 postingsOffset,
                 docCounts,
                 norms,
