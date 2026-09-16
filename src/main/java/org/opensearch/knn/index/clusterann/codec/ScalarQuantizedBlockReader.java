@@ -20,13 +20,15 @@ import static org.opensearch.knn.index.clusterann.codec.ClusterANNFormatConstant
  * begins at exactly {@code b·BLOCK_SIZE·perVectorBytes} and {@link #seekToBlock(int)} is pure
  * arithmetic plus one seek. Blocks that are never seeked to cost nothing: not their codes, not even
  * their corrections. Having landed on a block the caller reads the corrections it needs and then
- * either calls {@link #readCodes()} to score it or seeks past it. No scoring, no doc mapping — those
- * belong to the {@link ScalarQuantizedBlockScorer} and {@link PostingScorer} respectively.
+ * either calls {@link #readBlockVectors()} to load it or seeks past it. No scoring, no doc mapping — those
+ * belong to the {@link BlockScorer} and {@link PostingScorer} respectively.
  *
- * <p>Backed by a clone of the bounded quantized-section slice; not thread-safe. Implements the generic
- * {@link BlockReader} cursor ({@link #seekToBlock(int)}/{@link #blockStart()}/{@link #blockLength()});
- * the columnar accessors below ({@code lower/upper/add/sum/readCodes}) are the scalar-quant specifics
- * its {@link ADCBlockScorer} and {@link AdcCorrectionsPruner} read.
+ * <p>The block's position range is computed here only to reach its bytes, and is not published: which
+ * positions a block holds is the caller's arithmetic, since it must know that before deciding to seek.
+ *
+ * <p>Backed by a clone of the bounded quantized-section slice; not thread-safe. Beyond the generic
+ * {@link BlockReader} cursor, the columnar accessors below ({@code lower/upper/add/sum/codes}) are the
+ * scalar-quant specifics its {@link ADCBlockScorer} and {@link AdcCorrectionsPruner} read.
  */
 final class ScalarQuantizedBlockReader implements BlockReader {
 
@@ -45,7 +47,7 @@ final class ScalarQuantizedBlockReader implements BlockReader {
     private final int[] sum = new int[BLOCK_SIZE];
     private final byte[] codes;
 
-    private int currentBlock = -1;
+    // Current block's position range — internal, used only to locate bytes and size the column reads.
     private int blockStart;
     private int blockLen;
 
@@ -58,23 +60,14 @@ final class ScalarQuantizedBlockReader implements BlockReader {
         this.codes = new byte[BLOCK_SIZE * packedBytes];
     }
 
-    @Override
-    public int numBlocks() {
-        return numBlocks;
-    }
-
     /**
-     * Position on {@code block} and read its corrections columns ({@code lower/upper/add/sum});
-     * returns {@code false} when out of range. The section is fixed-stride, so this is one absolute
-     * seek — blocks jumped over are never touched. After returning, the file pointer sits exactly at
-     * the block's codes, ready for {@link #readCodes()}.
+     * Position on {@code block} and read its corrections columns ({@code lower/upper/add/sum}). The
+     * section is fixed-stride, so this is one absolute seek — blocks jumped over are never touched. After
+     * returning, the file pointer sits exactly at the block's codes, ready for {@link #readBlockVectors()}.
      */
     @Override
-    public boolean seekToBlock(int block) throws IOException {
-        currentBlock = block;
-        if (block < 0 || block >= numBlocks) {
-            return false;
-        }
+    public void seekToBlock(int block) throws IOException {
+        assert block >= 0 && block < numBlocks : "block " + block + " out of range [0, " + numBlocks + ")";
         blockStart = block * BLOCK_SIZE;
         blockLen = Math.min(BLOCK_SIZE, count - blockStart);
         in.seek((long) blockStart * perVectorBytes);
@@ -82,12 +75,6 @@ final class ScalarQuantizedBlockReader implements BlockReader {
         readFloatsFromInts(upper, blockLen);
         readFloatsFromInts(add, blockLen);
         in.readInts(sum, 0, blockLen);
-        return true;
-    }
-
-    @Override
-    public boolean nextBlock() throws IOException {
-        return seekToBlock(currentBlock + 1);
     }
 
     /**
@@ -108,18 +95,6 @@ final class ScalarQuantizedBlockReader implements BlockReader {
     }
 
 
-    /** Posting-local index of the first vector in the current block. */
-    @Override
-    public int blockStart() {
-        return blockStart;
-    }
-
-    /** Number of vectors in the current block. */
-    @Override
-    public int blockLength() {
-        return blockLen;
-    }
-
     float[] lower() {
         return lower;
     }
@@ -137,11 +112,17 @@ final class ScalarQuantizedBlockReader implements BlockReader {
     }
 
     /**
-     * Read the current block's packed codes; valid until the next {@link #seekToBlock(int)}. Call at
-     * most once per block — the pointer was left at the codes by the seek, and this consumes them.
+     * Read the current block's packed codes into {@link #codes}; valid until the next
+     * {@link #seekToBlock(int)}. Call at most once per block — the pointer was left at the codes by the
+     * seek, and this consumes them.
      */
-    byte[] readCodes() throws IOException {
+    @Override
+    public void readBlockVectors() throws IOException {
         in.readBytes(codes, 0, blockLen * packedBytes);
+    }
+
+    /** The codes loaded by the last {@link #readBlockVectors()}. */
+    byte[] codes() {
         return codes;
     }
 

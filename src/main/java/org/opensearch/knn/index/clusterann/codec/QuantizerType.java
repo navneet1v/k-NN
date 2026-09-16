@@ -7,7 +7,7 @@ package org.opensearch.knn.index.clusterann.codec;
 
 /**
  * Identifies which quantization family a field's postings were written with — the key (together with
- * {@code docBits}) for choosing the {@link Cluster} implementation and its scorer at read time.
+ * {@code docBits}) for choosing the {@link ClusterScan} implementation and its scorer at read time.
  *
  * <p>Serialized as a single byte in the {@code .clam} per-field header. Today only {@link #SCALAR}
  * exists (every field is written with {@code OptimizedScalarQuantizer}); the type is stored anyway so

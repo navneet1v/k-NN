@@ -73,6 +73,10 @@ public final class ClusterSearcher {
             }
         };
 
+        // One scan for this query over this field: the per-query work many postings share (projecting and
+        // quantizing the query against a reference centroid) happens once behind it.
+        ClusterScan scan = clusters.scan(params);
+
         float selectivity = params.filterSelectivity();
         boolean filterActive = selectivity > 0f && selectivity < SELECTIVE_FILTER_THRESHOLD;
         int scanned = 0;
@@ -85,11 +89,11 @@ public final class ClusterSearcher {
             // probe, then one per step.
             int target = Math.min(i + PREFETCH_WINDOW, probes.length - 1);
             if (hintedUpTo < target) {
-                int[] batch = new int[target - hintedUpTo];
+                Cluster[] batch = new Cluster[target - hintedUpTo];
                 int n = 0;
                 while (hintedUpTo < target) {
-                    int ahead = probes[++hintedUpTo];
-                    if (worthScanning(clusters, ahead, filterActive, selectivity)) {
+                    Cluster ahead = clusters.cluster(probes[++hintedUpTo]);
+                    if (worthScanning(ahead, filterActive, selectivity)) {
                         batch[n++] = ahead;
                     }
                 }
@@ -98,33 +102,37 @@ public final class ClusterSearcher {
                 }
             }
 
-            int centroidIdx = probes[i];
-            if (!worthScanning(clusters, centroidIdx, filterActive, selectivity)) {
+            Cluster cluster = clusters.cluster(probes[i]);
+            if (!worthScanning(cluster, filterActive, selectivity)) {
                 continue;
             }
-            scanCluster(clusters.get(centroidIdx), params, wanted, visited, collector);
+            scanCluster(scan, cluster, wanted, visited, collector);
             scanned++;
         }
         return scanned;
     }
 
-    /** Under a selective filter, a cluster whose expected match count is negligible isn't worth touching. */
-    private static boolean worthScanning(Clusters clusters, int centroidIdx, boolean filterActive, float selectivity) {
-        return !filterActive || clusters.clusterSize(centroidIdx) * selectivity >= MIN_EXPECTED_MATCHES;
+    /**
+     * Whether a cluster is worth touching at all: never if it is empty, and under a selective filter not if
+     * its expected match count is negligible. Decided from the {@link Cluster} alone, so it costs no I/O and
+     * the same test gates both scanning and hinting.
+     */
+    private static boolean worthScanning(Cluster cluster, boolean filterActive, float selectivity) {
+        if (cluster.size() == 0) {
+            return false;
+        }
+        return !filterActive || cluster.size() * selectivity >= MIN_EXPECTED_MATCHES;
     }
 
     /** Scan one cluster's postings into the collector; collects by ordinal (collector maps ord→doc). */
     private static void scanCluster(
+        ClusterScan scan,
         Cluster cluster,
-        ScanParams params,
         Bits wanted,
         BitSet visited,
         KnnCollector collector
     ) throws IOException {
-        if (cluster.size() == 0) {
-            return;
-        }
-        PostingScorer scorer = cluster.scorer(params, wanted);
+        PostingScorer scorer = scan.scorer(cluster, wanted);
         while (scorer.advance(collector.minCompetitiveSimilarity())) {
             int ord = scorer.ord();          // wanted: passed the filter and unvisited (checked pre-scoring)
             visited.set(ord);

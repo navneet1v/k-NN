@@ -10,9 +10,9 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 /**
  * Optional, pluggable per-block pruning for a posting scan. Given the current block's position range
  * and the competitive threshold, decides whether to score the block, skip it, or terminate the whole
- * posting. Pruners run after {@link ScalarQuantizedBlockReader#nextBlock()} (which has read the
- * block's corrections) but before its codes are read, so a skip avoids the codes — the bulk of a
- * block — never the (tiny, already-read) corrections.
+ * posting. Pruners run after {@link BlockReader#seekToBlock(int)} (which has read the block's cheap
+ * per-block metadata) but before {@link BlockReader#readBlockVectors()}, so a skip avoids the codes — the
+ * bulk of a block — never the (tiny, already-read) corrections.
  *
  * <p>Several independent pruners can be chained; each works off cheap data it was given at
  * construction: the posting's sorted {@code ‖c−v‖} column (geometry, {@link ClipPostingPruner}) or the

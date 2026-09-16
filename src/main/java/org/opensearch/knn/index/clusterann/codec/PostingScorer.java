@@ -8,13 +8,13 @@ package org.opensearch.knn.index.clusterann.codec;
 import java.io.IOException;
 
 /**
- * A scored iterator over one {@link Cluster}'s postings, bound to a query — "iterate the postings,
+ * A scored iterator over one cluster's postings, bound to a query — "iterate the postings,
  * scoring while iterating" (the same iterate-and-score fusion as Lucene's {@code Scorer}).
  *
  * <p>{@link #advance} moves to the next competitive posting; {@link #ord()}/{@link #score()} expose
  * the current one. All storage detail is hidden behind it: whether vectors are laid out block-columnar
  * or row-major, and whether scoring is bulk (a whole block at once) or per-vector, is the
- * implementation's business — so a different {@link Cluster} storage produces a different iterator and
+ * implementation's business — so a different {@link ClusterScan} storage produces a different iterator and
  * the search path is unchanged. Iteration is by posting-local position; {@link #ord()} maps that to
  * the global vector ordinal. It stops at the ordinal — the {@code ord → doc} hop, dedup, filtering and
  * collection are the searcher's job.

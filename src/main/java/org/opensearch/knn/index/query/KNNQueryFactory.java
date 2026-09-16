@@ -19,6 +19,9 @@ import org.opensearch.knn.index.query.lucenelib.OSKnnFloatVectorQuery;
 import org.opensearch.knn.index.query.lucenelib.NestedKnnVectorQueryFactory;
 import org.opensearch.knn.index.query.lucene.LuceneEngineKnnVectorQuery;
 import org.opensearch.knn.index.query.nativelib.NativeEngineKnnVectorQuery;
+import org.opensearch.knn.index.query.clusterann.ClusterANNExpandQuery;
+import org.opensearch.knn.index.query.clusterann.ClusterANNQuery;
+import org.opensearch.knn.index.query.clusterann.ClusterANNRescoreQuery;
 import org.opensearch.knn.index.query.rescore.RescoreContext;
 import org.opensearch.knn.index.util.IndexHyperParametersUtil;
 
@@ -67,6 +70,20 @@ public class KNNQueryFactory extends BaseQueryFactory {
                     EXPAND_NESTED,
                     EXPAND_NESTED
                 )
+            );
+        }
+
+        if (knnVectorFieldType.isClusterANN()) {
+            return createClusterANNQuery(
+                fieldName,
+                vector,
+                vectorDataType,
+                k,
+                filterQuery,
+                parentFilter,
+                expandNested,
+                knnVectorFieldType.resolveRescoreContext(rescoreContext),
+                shardId
             );
         }
 
@@ -160,6 +177,67 @@ public class KNNQueryFactory extends BaseQueryFactory {
         }
         return needsRescore ? new RescoreKNNVectorQuery(luceneKnnQuery, fieldName, k, vector, shardId) : luceneKnnQuery;
 
+    }
+
+    /**
+     * Builds the ClusterANN query, and whichever stages the request asks for on top of it.
+     *
+     * <p>One class per stage, each collecting its predecessor and handing back a scorer of its own:
+     *
+     * <pre>
+     * ClusterANNQuery          approximate scan, one best child per parent when nested
+     * ClusterANNRescoreQuery   exact scores for the oversampled candidates
+     * ClusterANNExpandQuery    every child of the parents that survived
+     * </pre>
+     *
+     * <p>Only the outermost stage hands a scorer to the caller, so Lucene's collector reduces the result and — because it
+     * does — feeds its competitive score back down, letting the exact passes skip batches they cannot beat.
+     *
+     * <p>None of them are wrapped in a {@code LuceneEngineKnnVectorQuery}: each already answers {@code rewrite} with
+     * itself and does its work when a weight is created, so OpenSearch rewriting again for the fetch phase costs nothing.
+     * The {@code ef_search} floor that the Lucene path applies is left off too — there is no graph here for it to mean
+     * anything about, and it would silently enlarge the candidate set.
+     */
+    private static Query createClusterANNQuery(
+        final String fieldName,
+        final float[] vector,
+        final VectorDataType vectorDataType,
+        final int k,
+        final Query filterQuery,
+        final BitSetProducer parentFilter,
+        final boolean expandNested,
+        final RescoreContext rescoreContext,
+        final int shardId
+    ) {
+        if (vectorDataType != VectorDataType.FLOAT) {
+            throw new IllegalArgumentException(
+                String.format(Locale.ROOT, "ClusterANN supports only float vectors, got [%s]", vectorDataType)
+            );
+        }
+
+        final boolean needsRescore = shouldRescore(rescoreContext);
+        // Oversample only when something will reduce it again. Without a rescore the extra candidates are scanned and then
+        // dropped by the collector, which is work for nothing.
+        final int candidateK = needsRescore ? rescoreContext.getFirstPassK(k, false, vector.length) : k;
+
+        log.debug(
+            "Creating ClusterANN query for field:{}, k:{}, candidateK:{}, rescore:{}, expandNested:{}",
+            fieldName,
+            k,
+            candidateK,
+            needsRescore,
+            expandNested
+        );
+
+        Query query = new ClusterANNQuery(fieldName, vector, candidateK, filterQuery, parentFilter, shardId);
+        if (needsRescore) {
+            query = new ClusterANNRescoreQuery(query, fieldName, candidateK, k, vector, parentFilter);
+        }
+        if (expandNested) {
+            // Last, and only here: expanding needs to know which parents won, so it has to follow whatever decided that.
+            query = new ClusterANNExpandQuery(query, fieldName, k, vector, parentFilter, filterQuery);
+        }
+        return query;
     }
 
     private static int getDimension(float[] floatQueryVector, byte[] byteQueryVector) {

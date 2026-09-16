@@ -49,7 +49,7 @@ public class ClusterANNADCReconstructionTests extends KNNTestCase {
             byte[] dPacked = new byte[packedBytes];
             OptimizedScalarQuantizer.transposeHalfByte(dScratch, dPacked);
 
-            // Query side (mirrors AdcQueryContext.quantize).
+            // Query side (mirrors ADCBlockScorer's constructor-time quantization).
             byte[] qScratch = new byte[DIM];
             OptimizedScalarQuantizer.QuantizationResult qr =
                 osq.multiScalarQuantize(q.clone(), new byte[][] { qScratch }, new byte[] { (byte) QUERY_BITS }, c)[0];

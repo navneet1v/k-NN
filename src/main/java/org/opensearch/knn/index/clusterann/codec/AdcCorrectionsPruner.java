@@ -5,14 +5,14 @@
 
 package org.opensearch.knn.index.clusterann.codec;
 
-import org.apache.lucene.index.VectorSimilarityFunction;
-
 /**
  * ADC {@link PostingPruner}: bounds a block's best achievable similarity from the
  * {@link org.apache.lucene.util.quantization.OptimizedScalarQuantizer} correction columns (which the
- * {@link ScalarQuantizedBlockReader} has already read for the current block) plus the shared
- * {@link AdcQueryContext}, and skips the block when that bound cannot beat the threshold — no codes
- * read.
+ * {@link ScalarQuantizedBlockReader} has already read for the current block) plus the query's quantization
+ * factors, and skips the block when that bound cannot beat the threshold — no codes read.
+ *
+ * <p>Built by {@link ADCBlockScorer#correctionsBound()}, never directly: the bound must be computed from
+ * the same quantized query as the scores it is compared against, and the scorer is what owns that.
  *
  * <p>The bound is a per-vector maximum over the block using absolute terms (a conservative
  * over-estimate of the dot product), converted to a MIP-style similarity that upper-bounds the
@@ -32,27 +32,31 @@ final class AdcCorrectionsPruner implements PostingPruner {
     private final float queryComponentSum;
     private final float dpMinusNorm; // ⟨q,c⟩ − ‖c‖²
 
-    // The reader's reused per-block correction buffers, filled by nextBlock() before each inspect().
+    // The reader's reused per-block correction buffers, filled by seekToBlock() before each inspect().
     private final float[] lower;
     private final float[] upper;
     private final float[] add;
     private final int[] sum;
 
     AdcCorrectionsPruner(
-        AdcQueryContext ctx,
-        ScalarBitEncoding encoding,
-        VectorSimilarityFunction sim,
+        ScalarQuantizedBlockReader reader,
+        boolean euclidean,
         int dimension,
-        ScalarQuantizedBlockReader reader
+        int packedBytes,
+        float docBitScale,
+        float queryLower,
+        float queryScale,
+        float queryComponentSum,
+        float dpMinusNorm
     ) {
-        this.euclidean = sim == VectorSimilarityFunction.EUCLIDEAN;
+        this.euclidean = euclidean;
         this.dimension = dimension;
-        this.packedBytes = encoding.docPackedBytes(dimension);
-        this.docBitScale = encoding.docBitScale();
-        this.queryLower = ctx.queryLower;
-        this.queryScale = ctx.queryScale;
-        this.queryComponentSum = ctx.queryComponentSum;
-        this.dpMinusNorm = ctx.centroidDp - ctx.centroidNormSq;
+        this.packedBytes = packedBytes;
+        this.docBitScale = docBitScale;
+        this.queryLower = queryLower;
+        this.queryScale = queryScale;
+        this.queryComponentSum = queryComponentSum;
+        this.dpMinusNorm = dpMinusNorm;
         this.lower = reader.lower();
         this.upper = reader.upper();
         this.add = reader.add();

@@ -6,7 +6,6 @@
 package org.opensearch.knn.index.clusterann.codec;
 
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.IOSupplier;
 import org.opensearch.knn.index.clusterann.DistanceMetric;
 import org.opensearch.knn.index.clusterann.algorithm.RandomRotation;
 
@@ -16,20 +15,21 @@ import java.io.IOException;
  * The clusters of one field — the structure a {@code ClusterSearcher} searches over (the ClusterANN
  * analogue of an {@code HnswGraph}: a persistent, query-independent handle, so it lives on the reader,
  * built once per field and reused). Random access by ordinal: the planner sweeps geometry over all
- * clusters to rank them, the search touches only the {@code nprobe} probed ones via {@link #get};
- * iterating {@code 0..numClusters()-1} covers the whole field (an exhaustive/exact scan).
+ * clusters to rank them, and a query's {@link #scan} touches only the {@code nprobe} probed ones;
+ * covering {@code 0..numClusters()-1} is the whole field (an exhaustive/exact scan).
  *
  * <p>Immutable and thread-safe: it holds a {@code .clap} slice bounded to this field's posting region
  * (only ever cloned/sliced from, never read with a moving cursor), the immutable {@link
  * ClusterANNFieldState}, the stateless {@link ClusterFactory} (impl recipe + dispatch), and a
  * <em>base</em> transformed-centroid reader ({@code .clac}). The transformed centroids are field-level
  * data (their offset is fixed layout), but reading them needs a mutable cursor, so the base is never
- * read directly — {@link #get} clones a fresh single-use cursor from it per call. This keeps "how this
- * field's centroids are read" here rather than in the caller, while staying shareable across concurrent
- * searches.
+ * read directly — a fresh single-use cursor is cloned from it per read. This keeps "how this field's
+ * centroids are read" here rather than in the caller, while staying shareable across concurrent searches.
  *
- * <p>Building a cluster is cheap (one centroid seek); the posting is parsed lazily inside
- * {@link Cluster#scorer}.
+ * <p>Because it is shared, nothing here may vary per query. A query's own state — the projected and
+ * quantized query, and anything derived from it — lives in the {@link ClusterScan} that {@link #scan}
+ * hands out. This is only reachable through that: {@link #prefetch} is the one thing a caller can do
+ * without a query, because a hint needs no query to be useful.
  */
 public final class Clusters {
 
@@ -37,7 +37,7 @@ public final class Clusters {
     private final IndexInput rotationInput;                    // .clar (shared; cloned per rotation read)
     private final ClusterANNFieldState fieldState;
     private final ClusterFactory factory;
-    private final CentroidVectorValues transformedCentroidsBase; // .clac ADC-space; copy() per get()
+    private final CentroidVectorValues transformedCentroidsBase; // .clac ADC-space; copy() per centroid read
 
     public Clusters(
         IndexInput postingsInput,
@@ -47,8 +47,8 @@ public final class Clusters {
         ClusterFactory factory
     ) throws IOException {
         // Slice .clap to this field's posting region using the length stored in .clam (postings are
-        // contiguous from postingsOffset). Cluster offsets rebase to slice-relative in get(). The slice
-        // is only cloned/sliced from (in Cluster#scorer), so a single shared instance is thread-safe.
+        // contiguous from postingsOffset). Cluster offsets rebase to slice-relative per posting. The slice
+        // is only cloned/sliced from (in ClusterScan#scorer), so a single shared instance is thread-safe.
         this.fieldPostings = postingsInput.slice(
             "clap-field-" + fieldState.fieldNumber, fieldState.postingsOffset, fieldState.postingsLength);
         this.rotationInput = rotationInput;
@@ -64,9 +64,18 @@ public final class Clusters {
     }
 
     /**
-     * Number of clusters in this field. Iterating {@code 0..numClusters()-1} with {@link #get} visits
-     * every cluster — the basis for an exhaustive/exact scan (recall ceiling, or future full-precision
-     * rescoring) as opposed to the {@code nprobe}-limited search path.
+     * One query's pass over this field. Reads nothing itself, but it is where per-query work that many
+     * postings share gets done once — projecting and quantizing the query against a reference centroid.
+     * Not thread-safe: one per query per field, per search thread.
+     */
+    public ClusterScan scan(ScanParams params) {
+        return factory.scan(params, fieldPostings.clone(), transformedCentroidsBase);
+    }
+
+    /**
+     * Number of clusters in this field. Scanning {@code 0..numClusters()-1} covers every cluster — the basis
+     * for an exhaustive/exact scan (recall ceiling, or future full-precision rescoring) as opposed to the
+     * {@code nprobe}-limited search path.
      */
     public int numClusters() {
         return fieldState.numCentroids;
@@ -99,22 +108,18 @@ public final class Clusters {
     }
 
     /**
-     * Number of vectors in the cluster with the given centroid ordinal (primary + SOAR). Available
-     * without building the cluster, so the walk can decide whether a cluster is worth touching at all.
+     * What the cluster at the given centroid ordinal <em>is</em> — size, posting extent, quantization
+     * reference. <b>Reads nothing:</b> every field comes from this field's {@code .clam} state, which is why
+     * the walk can decide whether a cluster is worth touching, or hint it, without any I/O.
      */
-    public int clusterSize(int ordinal) {
-        return fieldState.centroidDocCounts[ordinal];
-    }
-
-    /**
-     * Hint the posting of centroid {@code ordinal} into the buffer pool, before a scan reaches it. See
-     * {@link Cluster#prefetch} for what {@code partial} covers.
-     *
-     * <p>Safe to call on this shared structure: like {@link #get}, it reads nothing through any shared
-     * cursor — the cluster it goes through owns a private clone, so the hint is issued on that.
-     */
-    public void prefetch(int ordinal, boolean partial) throws IOException {
-        get(ordinal).prefetch(partial);
+    public Cluster cluster(int ordinal) {
+        return new Cluster(
+            ordinal,
+            fieldState.centroidDocCounts[ordinal],
+            ordinal, // reference == own centroid, until several clusters share one
+            fieldState.centroidOffsets[ordinal] - fieldState.postingsOffset, // rebase to this field's slice
+            fieldState.postingSizes[ordinal]
+        );
     }
 
     /**
@@ -126,55 +131,39 @@ public final class Clusters {
      * where readahead and request coalescing can act on them. The walk still visits clusters closest-first,
      * which pruning and the competitive threshold depend on.
      *
-     * <p>This is the batch form because ordering only exists across a set: given the ordinals it is about
-     * to scan, this can put them in a sensible sequence, which per-ordinal calls cannot. A future step is
-     * to merge adjacent ranges into single, larger hints — worth doing only if probe sets turn out to be
+     * <p>This is the batch form because ordering only exists across a set: given the clusters it is about to
+     * scan, this can put them in a sensible sequence, which per-cluster calls cannot. A future step is to
+     * merge adjacent ranges into single, larger hints — worth doing only if probe sets turn out to be
      * file-local enough to have adjacent ranges at all (see §5.4).
+     *
+     * <p>Takes {@link Cluster}s rather than ordinals because a cluster already carries its own extent, which
+     * is all a hint needs. No query, and no {@link ClusterScan}: warming a cluster the filter is about to
+     * skip should not require setting one up.
      */
-    public void prefetch(int[] ordinals, boolean partial) throws IOException {
+    public void prefetch(Cluster[] clusters, boolean partial) throws IOException {
         // Insertion sort on a copy — n is the prefetch window (single digits), and this keeps the caller's
         // array (the probe order) untouched.
-        int[] byOffset = ordinals.clone();
+        Cluster[] byOffset = clusters.clone();
         for (int i = 1; i < byOffset.length; i++) {
-            int ord = byOffset[i];
-            long offset = fieldState.centroidOffsets[ord];
+            Cluster c = byOffset[i];
             int j = i - 1;
-            while (j >= 0 && fieldState.centroidOffsets[byOffset[j]] > offset) {
+            while (j >= 0 && byOffset[j].postingOffset() > c.postingOffset()) {
                 byOffset[j + 1] = byOffset[j];
                 j--;
             }
-            byOffset[j + 1] = ord;
+            byOffset[j + 1] = c;
         }
-        for (int ord : byOffset) {
-            prefetch(ord, partial);
+        // One clone for the batch: the hints are offset-addressed, so they move no cursor.
+        IndexInput cursor = fieldPostings.clone();
+        for (Cluster c : byOffset) {
+            if (c.size() == 0) {
+                continue;
+            }
+            long length = partial ? Math.min(factory.guaranteedBytes(c.size()), c.postingBytes()) : c.postingBytes();
+            if (length <= 0 || c.postingOffset() < 0 || c.postingOffset() + length > cursor.length()) {
+                continue; // never let a hint reach past the field's slice
+            }
+            cursor.prefetch(c.postingOffset(), length);
         }
-    }
-
-    /**
-     * The cluster with the given centroid ordinal. <b>Reads nothing</b> — it only looks up this field's
-     * layout facts and hands the cluster private cursors ({@code .clap} and {@code .clac} clones) to read
-     * through when it needs to. Both the posting and the cluster's own centroid are read lazily inside
-     * {@link Cluster#scorer}.
-     *
-     * <p>That laziness is deliberate: it makes {@link Cluster#prefetch} and the walk's skip checks free, so
-     * a cluster that is merely warmed ahead — or fetched and then skipped by the filter — costs no I/O.
-     * The cursors must be private because concurrent searches share this structure and both an
-     * {@link IndexInput} and a centroid cursor carry a moving pointer (and, for the latter, a reused
-     * buffer); cloning allocates objects but reads nothing.
-     */
-    public Cluster get(int ordinal) throws IOException {
-        int count = fieldState.centroidDocCounts[ordinal];
-        // Rebase the absolute .clap offset to this field's slice (see ctor).
-        long relativeOffset = fieldState.centroidOffsets[ordinal] - fieldState.postingsOffset;
-        long postingBytes = fieldState.postingSizes[ordinal];
-        // The cluster gets a capability to read its OWN centroid, not a view over the field's centroids —
-        // it must not be able to address another cluster's geometry, or know centroids live in a file.
-        // The cursor is minted inside the supplier, so a cluster that is only prefetched allocates none.
-        IOSupplier<Centroid> centroid = () -> {
-            CentroidVectorValues cursor = (CentroidVectorValues) transformedCentroidsBase.copy();
-            float[] vector = cursor.vectorValue(ordinal); // reused buffer; read once, consumed immediately
-            return new Centroid(vector, cursor.norm());
-        };
-        return factory.create(ordinal, count, fieldPostings.clone(), relativeOffset, postingBytes, centroid);
     }
 }

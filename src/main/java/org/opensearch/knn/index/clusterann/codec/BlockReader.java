@@ -8,39 +8,46 @@ package org.opensearch.knn.index.clusterann.codec;
 import java.io.IOException;
 
 /**
- * Generic block cursor over one posting's block storage — the "block vs row" boundary. It positions
- * itself on a block and exposes that block's position range; <em>how</em> a block is laid out on disk
+ * Generic block cursor over one posting's block storage — the "block vs row" boundary. It does one thing:
+ * move to a block and, on demand, load that block's vectors. <em>How</em> a block is laid out on disk
  * (and what per-block metadata it carries) is the concrete reader's business, shared with its matching
- * {@link BlockScorer} and pruners rather than exposed here. {@link BlockPostingScorer} drives it
- * and needs nothing storage-specific — which is what lets one iterator serve any block storage family.
+ * {@link BlockScorer} and pruners rather than exposed here. {@link BlockPostingScorer} drives it and needs
+ * nothing storage-specific — which is what lets one iterator serve any block storage family.
  *
- * <p><b>Random access is the point.</b> {@link #numBlocks()} + {@link #seekToBlock(int)} let the caller
- * decide which blocks to visit and jump straight to them, so a block that is provably hopeless (pruning)
- * or entirely unwanted (filter / SOAR dedup) costs <em>no I/O at all</em> — not even its per-block
- * metadata. Seeks are expected to move forward only, keeping file offsets monotonic and the access
- * pattern sequential-friendly.
+ * <p><b>No geometry.</b> Which positions live in block {@code b} is not asked of the reader, because the
+ * caller has to know it <em>before</em> seeking: deciding a block holds nothing wanted is what makes that
+ * block cost zero I/O, and that decision cannot involve the cursor. So position arithmetic is the caller's
+ * throughout, derived from the posting's vector count and {@link ClusterANNFormatConstants#BLOCK_SIZE}. A
+ * reader still computes the same ranges internally to find its byte offsets; it simply does not publish
+ * them, so there is no pair of numbers that has to agree.
+ *
+ * <p><b>Random access is the point.</b> {@link #seekToBlock(int)} lets the caller jump straight to the
+ * blocks it wants, so a block that is provably hopeless (pruning) or entirely unwanted (filter / SOAR
+ * dedup) is never touched — not even its per-block metadata. Seeks are expected to move forward only,
+ * keeping file offsets monotonic and the access pattern sequential-friendly.
  */
 public interface BlockReader {
 
-    /** Number of blocks in this posting. Block {@code b} covers positions {@code [b·BS, min((b+1)·BS, count))}. */
-    int numBlocks();
-
     /**
      * Position on {@code block} and read whatever cheap per-block metadata the pruners inspect (and the
-     * scorer reuses); returns {@code false} when {@code block} is out of range. Blocks not seeked to are
-     * never read. Callers should advance monotonically. A storage family without random access may
-     * implement this by skipping forward sequentially.
+     * scorer reuses). Blocks not seeked to are never read. Callers advance monotonically and stay in
+     * range — the block count is theirs to derive. A storage family without random access may implement
+     * this by skipping forward sequentially.
      */
-    boolean seekToBlock(int block) throws IOException;
+    void seekToBlock(int block) throws IOException;
 
-    /** Convenience: position on the block after the current one. Equivalent to seeking to {@code cur + 1}. */
-    boolean nextBlock() throws IOException;
-
-    /** Posting-local index of the first vector in the current block. */
-    int blockStart();
-
-    /** Number of vectors in the current block. */
-    int blockLength();
+    /**
+     * Read the current block's vector payload into this reader, so its matching {@link BlockScorer} can
+     * score from it. This is the expensive step, and the only one a skipped block never pays for — a block
+     * that is pruned, or holds nothing wanted, is never passed here.
+     *
+     * <p>Deliberately returns nothing: what the payload looks like — packed codes, codebook ids, raw bits —
+     * is the concrete reader's business, shared with its scorer rather than exposed. Declaring it on this
+     * interface puts the cheap/expensive boundary where the caller can see and control it.
+     *
+     * <p>Call at most once per block, after {@link #seekToBlock}. Valid until the next seek.
+     */
+    void readBlockVectors() throws IOException;
 
     /**
      * Advisory hint that {@code block} will be read soon, issued while the current block is being

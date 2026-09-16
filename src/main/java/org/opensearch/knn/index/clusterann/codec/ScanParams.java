@@ -9,7 +9,7 @@ package org.opensearch.knn.index.clusterann.codec;
  * What a query asks of a posting scan: the prepared query and the per-query facts that shape how it is
  * scanned.
  *
- * <p>Deliberately plain data. It is what the walk carries and forwards to {@link Cluster#scorer}, so a
+ * <p>Deliberately plain data. It is what the walk carries and forwards to {@link ClusterScan#scorer}, so a
  * query can influence scoring without the search path naming — or being able to reach — anything about
  * how a posting is stored. How these are honoured is entirely the cluster's business.
  *
@@ -21,16 +21,18 @@ package org.opensearch.knn.index.clusterann.codec;
  *   <li>{@code queryBits == docBits} — symmetric (SDC): cheapest kernel (e.g. 1-bit query against 1-bit
  *       docs reduces to popcount), at coarser scores.</li>
  * </ul>
- * Lowering it also degrades the pruning bounds — see {@code ScalarQuantizedCluster}, which picks pruners
+ * Lowering it also degrades the pruning bounds — see {@code ScalarQuantizedScan}, which picks pruners
  * knowing this width.
  *
  * <p>{@code filterSelectivity} is the fraction of the field's vectors the query's filter accepts
  * ({@code 1.0} when unfiltered). The walk uses it to skip clusters unlikely to hold a single match.
  *
- * <p>Note on byte vectors: the query is held as {@code float[]} because scoring quantizes it relative to
- * a centroid, and that residual arithmetic is float. A {@code byte[]}-valued field would therefore widen
- * its query when preparing it, keeping the byte form a boundary concern. If a storage family ever scores
- * stored bytes directly against a byte query, this record is where that second form would live.
+ * <p>The query is a {@code float[]} because that is the form the score is computed against: the stored
+ * codes encode a float residual against a float centroid, so a byte-valued field widens losslessly at the
+ * boundary and nothing downstream sees bytes. Binary is the case that cannot widen — its bytes hold eight
+ * dimensions each — and a binary family would take its query through its own overload rather than through
+ * this record, the way {@code KnnVectorsReader} keeps {@code search(float[])} and {@code search(byte[])}
+ * separate.
  */
 public record ScanParams(float[] query, int queryBits, float filterSelectivity) {
 
