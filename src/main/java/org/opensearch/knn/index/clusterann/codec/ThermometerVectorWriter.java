@@ -38,6 +38,16 @@ public final class ThermometerVectorWriter implements Closeable {
 
     private static final byte INT8_OFFSET = (byte) 128;
 
+    /**
+     * Write-time toggle: when false, the inert int8 fine tier (code + scale + sum + norm) is NOT
+     * written, leaving only the coarse thermometer planes on disk. Set via
+     * {@code -Dclusterann.thermo.storeInt8=false}. MUST match the reader's flag for the index that
+     * is queried — the block layout differs, so an index written with one setting can only be read
+     * with the same setting. Default true (unchanged legacy layout).
+     */
+    static final boolean STORE_INT8 =
+        Boolean.parseBoolean(System.getProperty("clusterann.thermo.storeInt8", "true"));
+
     private final int dimension;
     private final int coarseBytes;
 
@@ -60,11 +70,14 @@ public final class ThermometerVectorWriter implements Closeable {
 
     /** Bytes one block of {@code blockSize} vectors occupies on disk. */
     public long blockBytes(int blockSize) {
-        return (long) blockSize * coarseBytes                 // coarse planes
-            + (long) blockSize * dimension                     // int8 codes
-            + (long) blockSize * Float.BYTES                   // scale
-            + (long) blockSize * Integer.BYTES                 // signed sum
-            + (long) blockSize * Float.BYTES;                  // squared norm
+        long bytes = (long) blockSize * coarseBytes;          // coarse planes
+        if (STORE_INT8) {
+            bytes += (long) blockSize * dimension             // int8 codes
+                + (long) blockSize * Float.BYTES              // scale
+                + (long) blockSize * Integer.BYTES            // signed sum
+                + (long) blockSize * Float.BYTES;             // squared norm
+        }
+        return bytes;
     }
 
     /**
@@ -82,11 +95,13 @@ public final class ThermometerVectorWriter implements Closeable {
             }
             // Coarse planes first (scan tier).
             output.writeBytes(coarseBlock, 0, blockSize * coarseBytes);
-            // Inert int8 codes + corrections.
-            output.writeBytes(int8Block, 0, blockSize * dimension);
-            for (int j = 0; j < blockSize; j++) output.writeInt(Float.floatToIntBits(scaleBlock[j]));
-            for (int j = 0; j < blockSize; j++) output.writeInt(sumBlock[j]);
-            for (int j = 0; j < blockSize; j++) output.writeInt(Float.floatToIntBits(normBlock[j]));
+            if (STORE_INT8) {
+                // Inert int8 codes + corrections.
+                output.writeBytes(int8Block, 0, blockSize * dimension);
+                for (int j = 0; j < blockSize; j++) output.writeInt(Float.floatToIntBits(scaleBlock[j]));
+                for (int j = 0; j < blockSize; j++) output.writeInt(sumBlock[j]);
+                for (int j = 0; j < blockSize; j++) output.writeInt(Float.floatToIntBits(normBlock[j]));
+            }
             pos += blockSize;
         }
     }
@@ -94,6 +109,9 @@ public final class ThermometerVectorWriter implements Closeable {
     private void encodeOne(float[] rotated, int idx) {
         // Coarse 2-bit thermometer (absolute, data-blind grid).
         Nitrox2.packPlanes(rotated, dimension, coarseBlock, idx * coarseBytes);
+
+        // Skip the inert int8 tier entirely when not storing it.
+        if (!STORE_INT8) return;
 
         // Inert 8-bit int8 (per-vector max-abs scale, unsigned-offset). Faithful to Int8Quantizer.
         float maxAbs = 0f;

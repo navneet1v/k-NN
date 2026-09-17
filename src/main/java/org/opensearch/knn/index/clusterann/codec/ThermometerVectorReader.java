@@ -52,13 +52,24 @@ public final class ThermometerVectorReader {
         Nitrox2.packPlanes(rotatedQuery, dimension, queryCoarse, 0);
     }
 
+    /**
+     * Write-time layout toggle, MUST match {@link ThermometerVectorWriter#STORE_INT8} for the index
+     * being read. When false, blocks contain only the coarse planes (no int8 code/corrections).
+     * Set via {@code -Dclusterann.thermo.storeInt8=false}. Default true (legacy layout).
+     */
+    static final boolean STORE_INT8 =
+        Boolean.parseBoolean(System.getProperty("clusterann.thermo.storeInt8", "true"));
+
     /** Bytes one block of {@code blockSize} vectors occupies on disk (must match the writer). */
     public long blockBytes(int blockSize) {
-        return (long) blockSize * coarseBytes
-            + (long) blockSize * dimension
-            + (long) blockSize * Float.BYTES
-            + (long) blockSize * Integer.BYTES
-            + (long) blockSize * Float.BYTES;
+        long bytes = (long) blockSize * coarseBytes;
+        if (STORE_INT8) {
+            bytes += (long) blockSize * dimension
+                + (long) blockSize * Float.BYTES
+                + (long) blockSize * Integer.BYTES
+                + (long) blockSize * Float.BYTES;
+        }
+        return bytes;
     }
 
     /**
@@ -73,12 +84,15 @@ public final class ThermometerVectorReader {
         for (int j = 0; j < blockSize; j++) {
             hammingOut[j] = Nitrox2.hamming(queryCoarse, 0, coarseBlock, j * coarseBytes, coarseBytes);
         }
-        // Skip the inert int8 block + corrections; final ranking uses the exact rescorer.
-        long skip = (long) blockSize * dimension
-            + (long) blockSize * Float.BYTES
-            + (long) blockSize * Integer.BYTES
-            + (long) blockSize * Float.BYTES;
-        input.skipBytes(skip);
+        // Skip the inert int8 block + corrections (only present when STORE_INT8);
+        // final ranking uses the exact rescorer.
+        long skip = STORE_INT8
+            ? (long) blockSize * dimension
+                + (long) blockSize * Float.BYTES
+                + (long) blockSize * Integer.BYTES
+                + (long) blockSize * Float.BYTES
+            : 0L;
+        if (skip > 0) input.skipBytes(skip);
         return (long) blockSize * coarseBytes + skip;
     }
 
@@ -91,6 +105,11 @@ public final class ThermometerVectorReader {
         IndexInput input, int blockSize, int posBase, int[] hammingOut,
         byte[] int8Out, float[] scaleOut, int[] sumOut, float[] normOut
     ) throws IOException {
+        if (!STORE_INT8) {
+            throw new IllegalStateException(
+                "int8 rerank requested but index was written with clusterann.thermo.storeInt8=false; "
+                + "the int8 tier is absent. Reindex with storeInt8=true or disable int8 rerank.");
+        }
         input.readBytes(coarseBlock, 0, blockSize * coarseBytes);
         for (int j = 0; j < blockSize; j++) {
             hammingOut[j] = Nitrox2.hamming(queryCoarse, 0, coarseBlock, j * coarseBytes, coarseBytes);

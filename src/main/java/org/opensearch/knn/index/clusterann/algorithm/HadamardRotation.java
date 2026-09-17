@@ -33,6 +33,21 @@ public final class HadamardRotation {
     /** Default seed, matching {@link RandomRotation}'s deterministic build. */
     private static final long DEFAULT_SEED = 42L;
 
+    /**
+     * Cache of built rotations, keyed by (dim, seed). The rotation is a pure function of
+     * (dim, seed) and this class is immutable and thread-safe, so one instance is shared across
+     * every segment and query. This avoids rebuilding the sign flips, permutation, and block
+     * decomposition on every per-segment query — the rotation is identical for all segments of a
+     * given dimension, so it is built once (shard/process level) and reused.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Long, HadamardRotation> CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static long cacheKey(int dimension, long seed) {
+        // seed is fixed (DEFAULT_SEED) in practice; fold both into one key defensively.
+        return (((long) dimension) << 20) ^ (seed * 0x9E3779B97F4A7C15L);
+    }
+
     private final int dim;
     private final long seed;
 
@@ -64,9 +79,16 @@ public final class HadamardRotation {
 
     /**
      * Build the rotation for {@code dimension}, deterministically seeded. The same {@code (dim, seed)}
-     * always produces the same rotation.
+     * always produces the same rotation. Cached and shared across segments/queries: the rotation is
+     * identical for every segment of a given dimension, so it is built once and reused rather than
+     * reconstructed on each per-segment query.
      */
     public static HadamardRotation create(int dimension, long seed) {
+        return CACHE.computeIfAbsent(cacheKey(dimension, seed), k -> build(dimension, seed));
+    }
+
+    /** Builds a fresh rotation (uncached). See {@link #create(int, long)} for the cached entry point. */
+    private static HadamardRotation build(int dimension, long seed) {
         if (dimension < 1) {
             throw new IllegalArgumentException("dim must be >= 1, got " + dimension);
         }
