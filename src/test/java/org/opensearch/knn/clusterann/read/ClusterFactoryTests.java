@@ -283,14 +283,14 @@ class ClusterFactoryTests {
             0L,                                     // clacOffset
             4096L,                                  // clacLength
             RAW_CENTROIDS_OFFSET,                   // clacCentroidsOffset
-            rotated ? ROTATED_CENTROIDS_OFFSET : ClusterANNFormatConstants.NO_ROTATION,
+            rotated ? ROTATED_CENTROIDS_OFFSET : -1L,
             CLAP_OFFSET,
             3000L,                                  // clapLength
             CLAP_CENTROID_OFFSETS,
             centroidLengths,
             CLUSTER_SIZES,
-            rotated ? 0L : ClusterANNFormatConstants.NO_ROTATION,   // clarOffset
-            rotated ? 64L : ClusterANNFormatConstants.NO_ROTATION,   // clarLength
+            rotated ? 0L : -1L,   // clarOffset
+            rotated ? 64L : -1L,   // clarLength
             null
         );
     }

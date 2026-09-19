@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.NO_ROTATION;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
 
@@ -39,6 +38,8 @@ import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROT
 class ClusterANNFieldMetaWriteTest {
 
     private static final int BLOCK_SIZE = 32;
+    /** Sentinel for a rotation offset/length that is absent on an unrotated field. */
+    private static final long NO_ROTATION = -1L;
 
     /** The fixed dense ord&rarr;doc config trailing a dense field: offset(-1) | length(0) | jumpTable(-1) | rankPower(-1). */
     private static final int DENSE_ORD_TO_DOC_BYTES = Long.BYTES + Long.BYTES + Short.BYTES + Byte.BYTES;

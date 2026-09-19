@@ -12,8 +12,8 @@ import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.apache.lucene.util.LongValues;
 import org.opensearch.knn.clusterann.read.orchestration.ClusterScan;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
-import org.opensearch.knn.clusterann.read.rotation.Rotation;
-import org.opensearch.knn.clusterann.read.rotation.RotationFactory;
+import org.opensearch.knn.clusterann.format.rotation.Rotation;
+import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
 
 import org.opensearch.common.Nullable;
 import java.io.IOException;
@@ -49,7 +49,7 @@ public final class Clusters {
         this.fieldMeta = fieldMeta;
         this.ordToDoc = ordToDoc(fieldMeta.ordToDoc(), postings);
         this.clusterFactory = new ClusterFactory(fieldMeta, postings, centroids, rotation);
-        this.rotation = RotationFactory.create(fieldMeta, rotation);
+        this.rotation = RotationFormats.read(fieldMeta.rotationId(), rotation, fieldMeta.dimension());
 
         // Only a EUCLIDEAN field stores ‖c‖² alongside each centroid, so a caller that needs it for another metric
         // measures it from the vector instead.

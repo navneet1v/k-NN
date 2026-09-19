@@ -272,14 +272,14 @@ class ClustersTests {
             0L,                                     // clacOffset
             4096L,                                  // clacLength
             64L,                                    // clacCentroidsOffset
-            ClusterANNFormatConstants.NO_ROTATION,        // clacRotatedCentroidsOffset
+            -1L,        // clacRotatedCentroidsOffset
             CLAP_OFFSET,
             3000L,                                  // clapLength
             CLAP_CENTROID_OFFSETS,
             CENTROID_LENGTHS,
             CLUSTER_SIZES,
-            ClusterANNFormatConstants.NO_ROTATION,         // clarLength
-            ClusterANNFormatConstants.NO_ROTATION,
+            -1L,         // clarLength
+            -1L,
             // Dense: the fields under test have a vector per document, so the ordinal is the document id.
             ClusterANNFieldMetaEncoder.denseOrdToDoc(VECTOR_COUNT)
         );

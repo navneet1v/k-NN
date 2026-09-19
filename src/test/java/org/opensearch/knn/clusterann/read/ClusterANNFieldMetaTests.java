@@ -497,7 +497,7 @@ class ClusterANNFieldMetaTests {
     // ---------------------------------------------------------------- helpers
 
     private static final String ENTRY = "entry";
-    private static final long NO_ROTATION = ClusterANNFormatConstants.NO_ROTATION;
+    private static final long NO_ROTATION = -1L;
     private static final long[] EMPTY_OFFSETS = new long[0];
     private static final int[] EMPTY_COUNTS = new int[0];
 

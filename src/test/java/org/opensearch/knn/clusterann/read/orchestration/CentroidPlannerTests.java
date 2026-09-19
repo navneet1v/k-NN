@@ -308,14 +308,14 @@ class CentroidPlannerTests {
             0L,                                     // clacOffset
             0L,                                     // clacLength
             0L,                                     // clacCentroidsOffset
-            ClusterANNFormatConstants.NO_ROTATION,        // clacRotatedCentroidsOffset
+            -1L,        // clacRotatedCentroidsOffset
             0L,                                     // clapOffset
             0L,                                     // clapLength
             new long[centroidCount],                // clapCentroidOffsets
             new int[centroidCount],                 // centroidLengths
             clusterSizes,
-            ClusterANNFormatConstants.NO_ROTATION,        // clarOffset
-            ClusterANNFormatConstants.NO_ROTATION,        // clarLength
+            -1L,        // clarOffset
+            -1L,        // clarLength
             null                                    // ordToDoc, never consulted by a plan
         );
     }

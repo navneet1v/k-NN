@@ -20,9 +20,6 @@ public final class ClusterANNFormatConstants {
     /** {@code .clam} rotation code for a dense random Gaussian rotation held in {@code .clar}. */
     public static final int ROTATION_RANDOM_GAUSSIAN = 1;
 
-    /** {@code .clam} quantizer code for optimized scalar quantization — the only scheme in v1. */
+    /** {@code .clam} quantizer code for optimized scalar quantization. */
     public static final int QUANTIZER_OPTIMIZED_SQ = 0;
-
-    /** Sentinel for a rotation offset/length that is absent on an unrotated field. */
-    public static final long NO_ROTATION = -1L;
 }

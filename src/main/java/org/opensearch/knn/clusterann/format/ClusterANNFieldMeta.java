@@ -17,7 +17,6 @@ import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
 
-import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.NO_ROTATION;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
 
@@ -72,6 +71,8 @@ public final class ClusterANNFieldMeta {
 
     /** Block shift for the {@code ordToDoc} monotonic addresses; matches Lucene's flat/HNSW formats. */
     private static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
+    /** Sentinel for a rotation offset/length that is absent on an unrotated field. */
+    private static final long NO_ROTATION = -1L;
 
     private final int blockSize;
     private final int dimension;
