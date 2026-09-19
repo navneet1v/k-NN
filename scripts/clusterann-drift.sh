@@ -41,8 +41,8 @@ fmt_list() { # $1 = main|test
 
 # Strip a leading OpenSearch SPDX license block: k-NN requires it on every file, formats carries it only on
 # some, and it is not part of the format implementation being compared.
-strip_header() {
-  awk 'NR==1 && /^\/\*$/ {skip=1} skip { if (/^ \*\/$/) {skip=0; blank=1}; next } blank && /^$/ {blank=0; next} {blank=0; print}'
+strip_header() { # also squeezes runs of blank lines: k-NN spotless collapses them, formats has no formatter
+  awk 'NR==1 && /^\/\*$/ {skip=1} skip { if (/^ \*\/$/) {skip=0; blank=1}; next } blank && /^$/ {blank=0; next} {blank=0; print}' | cat -s
 }
 
 fmt_cat() { # $1 = main|test, $2 = relative path; prints the formats file with the k-NN package prefix
