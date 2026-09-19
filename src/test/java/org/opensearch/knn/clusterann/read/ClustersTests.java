@@ -5,8 +5,6 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMetaEncoder;
-
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 
 import org.apache.lucene.index.VectorSimilarityFunction;

@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.clusterann.format;
+package org.opensearch.knn.clusterann.read;
+
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.VectorSimilarityFunction;
