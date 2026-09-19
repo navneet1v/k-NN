@@ -27,8 +27,8 @@ import java.io.IOException;
  *
  * <pre>
  *   region 1  @ clacOffset             ordToCentroid: numVectors x int
- *   region 2  @ clacVectorOffset       per centroid: vector[dim] floats | normSq float
- *   region 3  @ clacTransformedOffset  per centroid: rotatedVector[dim] floats | normSq float   (rotated only)
+ *   region 2  @ clacCentroidsOffset       per centroid: vector[dim] floats | normSq float
+ *   region 3  @ clacRotatedCentroidsOffset  per centroid: rotatedVector[dim] floats | normSq float   (rotated only)
  * </pre>
  *
  * <p>Every value is a 4-byte int/float. Floats are written as {@code Float.floatToIntBits}. An empty field
@@ -38,7 +38,7 @@ import java.io.IOException;
  */
 public final class CentroidsWriter {
 
-    /** {@link CentroidOffsets#clacTransformedOffset()} of a field with no region 3 (an unrotated field). */
+    /** {@link CentroidOffsets#clacRotatedCentroidsOffset()} of a field with no region 3 (an unrotated field). */
     private static final long NO_TRANSFORMED_REGION = -1L;
 
     private CentroidsWriter() {}
@@ -56,9 +56,10 @@ public final class CentroidsWriter {
      */
     public static CentroidOffsets write(final IndexOutput out, final CentroidData centroids, final Rotation rotation) throws IOException {
         final long clacOffset = writeOrdToCentroid(out, centroids.ordToCentroid());
-        final long clacVectorOffset = writeCentroids(out, centroids);
-        final long clacTransformedOffset = maybeWriteRotatedCentroids(out, centroids, rotation);
-        return new CentroidOffsets(clacOffset, clacVectorOffset, clacTransformedOffset);
+        final long clacCentroidOffset = writeCentroids(out, centroids) - clacOffset;
+        final long roatated = maybeWriteRotatedCentroids(out, centroids, rotation);
+        final long clacRotatedOffset = roatated == NO_TRANSFORMED_REGION ? NO_TRANSFORMED_REGION : roatated - clacOffset;
+        return new CentroidOffsets(clacOffset, clacCentroidOffset, clacRotatedOffset);
     }
 
     /** Region 1: the primary centroid id per vector ordinal ({@code ordToCentroid}). Returns the region's start offset. */
@@ -119,14 +120,15 @@ public final class CentroidsWriter {
     }
 
     /**
-     * The {@code .clac} region offsets, returned so {@code .clam} can record them. Each is an absolute file
-     * offset (past the CodecUtil header).
+     * The {@code .clac} region offsets, returned so {@code .clam} can record them.
      *
-     * @param clacOffset            start of region 1 (per-ordinal {@code ordToCentroid})
-     * @param clacVectorOffset      start of region 2 (raw centroids: vector, normSq)
-     * @param clacTransformedOffset start of region 3 (rotated centroids: vector, normSq), or
-     *     {@link #NO_TRANSFORMED_REGION} for an unrotated field with no region 3
+     * @param clacOffset            absolute start of this field's {@code .clac} region, which begins with region 1
+     *     (per-ordinal {@code ordToCentroid}) — the offset the reader cuts the field's region at
+     * @param clacCentroidsOffset      start of region 2 (raw centroids: vector, normSq), <em>relative to</em>
+     *     {@code clacOffset}
+     * @param clacRotatedCentroidsOffset start of region 3 (rotated centroids: vector, normSq), relative to
+     *     {@code clacOffset}, or {@link #NO_TRANSFORMED_REGION} for an unrotated field with no region 3
      */
-    public record CentroidOffsets(long clacOffset, long clacVectorOffset, long clacTransformedOffset) {
+    public record CentroidOffsets(long clacOffset, long clacCentroidsOffset, long clacRotatedCentroidsOffset) {
     }
 }

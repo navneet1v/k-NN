@@ -39,23 +39,30 @@ import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROT
  * quantizerParamsLength        int
  * quantizerParams              quantizerParamsLength bytes
  *
- * clacOffset                   long                     // .clac: cluster metadata
+ * clacOffset                   long                     // .clac: cluster metadata (absolute)
  * clacLength                   long
- * clacCentroidsOffset          long                     // .clac: centroids
- * clacRotatedCentroidsOffset   long                     // .clac: centroids in rotated space; rotated fields only
+ * clacCentroidsOffset          long                     // .clac: centroids (relative to clacOffset)
+ * clacRotatedCentroidsOffset   long                     // .clac: centroids in rotated space, relative; rotated fields only
  *
- * clapOffset                   long                     // .clap: postings
+ * clapOffset                   long                     // .clap: postings (absolute)
  * clapLength                   long
- * clapCentroidOffsets          centroidCount longs      // where each centroid's posting starts
+ * clapCentroidOffsets          centroidCount longs      // where each centroid's posting starts, relative to clapOffset
  * centroidLengths              centroidCount ints       // posting byte lengths, for prefetch sizing
  * clusterSizes                 centroidCount ints       // vectors per cluster, primary + SOAR
  *
- * clarOffset                   long                     // .clar: rotation matrix; rotated fields only
+ * clarOffset                   long                     // .clar: rotation matrix, absolute; rotated fields only
  * clarLength                   long                     // rotated fields only
  *
  * ordToDoc                     OrdToDocDISIReaderConfiguration   // ord&rarr;doc config; sparse data stream lives in .clap
  * </pre>
  *
+ * <h2>Absolute and relative offsets</h2>
+ *
+ * <p>One offset per file — {@code clacOffset}, {@code clapOffset}, {@code clarOffset} — is absolute, and everything
+ * that points inside one of those regions is relative to it. That is not a stylistic choice: the reader cuts the
+ * field's region out of the file once and slices the inner regions out of <em>that</em>.
+ *
+ * <p>It also makes the entry checkable: an inner offset has to fall within its region's length
  */
 @Getter
 @Accessors(fluent = true)
@@ -221,7 +228,8 @@ public final class ClusterANNFieldMeta {
             checkNonNegative(meta, clarLength, "clarLength");
         }
 
-        checkOffsets(meta, clacOffset, clacLength, clacCentroidsOffset, clapOffset, clapLength);
+        checkClacOffsets(meta, clacOffset, clacLength, clacCentroidsOffset, clacRotatedCentroidsOffset);
+        checkClapOffsets(meta, clapOffset, clapLength, clapCentroidOffsets);
 
         // The ord->doc config closes the entry; its sparse data stream lives in .clap, read lazily at query time.
         OrdToDocDISIReaderConfiguration ordToDoc = OrdToDocDISIReaderConfiguration.fromStoredMeta(meta, vectorCount);
@@ -393,19 +401,42 @@ public final class ClusterANNFieldMeta {
     }
 
     /** The offsets every field has. The rotation-dependent ones are checked where they are read. */
-    private static void checkOffsets(
+    private static void checkClacOffsets(
         ChecksumIndexInput meta,
         long clacOffset,
         long clacLength,
         long clacCentroidsOffset,
-        long clapOffset,
-        long clapLength
+        long clacRotatedCentroidsOffset
     ) throws IOException {
         checkNonNegative(meta, clacOffset, "clacOffset");
         checkNonNegative(meta, clacLength, "clacLength");
         checkNonNegative(meta, clacCentroidsOffset, "clacCentroidsOffset");
+        checkWithinRegion(meta, clacCentroidsOffset, clacLength, "clacCentroidsOffset", "clac");
+        if (clacRotatedCentroidsOffset != NO_ROTATION) {
+            checkWithinRegion(meta, clacRotatedCentroidsOffset, clacLength, "clacRotatedCentroidsOffset", "clac");
+        }
+    }
+
+    /** As {@link #checkClacOffsets}, for {@code .clap} and its one relative offset per centroid. */
+    private static void checkClapOffsets(ChecksumIndexInput meta, long clapOffset, long clapLength, long[] clapCentroidOffsets)
+        throws IOException {
         checkNonNegative(meta, clapOffset, "clapOffset");
         checkNonNegative(meta, clapLength, "clapLength");
+        for (int centroid = 0; centroid < clapCentroidOffsets.length; centroid++) {
+            final String name = "clapCentroidOffsets[" + centroid + "]";
+            checkNonNegative(meta, clapCentroidOffsets[centroid], name);
+            checkWithinRegion(meta, clapCentroidOffsets[centroid], clapLength, name, "clap");
+        }
+    }
+
+    private static void checkWithinRegion(ChecksumIndexInput meta, long offset, long regionLength, String name, String region)
+        throws IOException {
+        if (offset > regionLength) {
+            throw new CorruptIndexException(
+                name + "=" + offset + " is outside the field's ." + region + " region of " + regionLength + " bytes",
+                meta
+            );
+        }
     }
 
     /**

@@ -52,14 +52,14 @@ class CentroidsWriteReadComponentTest {
 
             if (!rotated) {
                 // Unrotated field: no region 3 — the reader would scan region 2 (input space) directly.
-                assertEquals(-1L, offsets.clacTransformedOffset(), "unrotated field has no region 3 (sentinel offset)");
+                assertEquals(-1L, offsets.clacRotatedCentroidsOffset(), "unrotated field has no region 3 (sentinel offset)");
                 return;
             }
 
             try (IndexInput in = dir.openInput(CLAC_FILE, IOContext.DEFAULT)) {
                 // Region 3 is what the reader scans: (dimension + 1) floats per centroid — vector, then normSq.
                 final long region3Bytes = (long) centroids.length * (DIMENSION + 1) * Float.BYTES;
-                final IndexInput region3 = in.slice("region3", offsets.clacTransformedOffset(), region3Bytes);
+                final IndexInput region3 = in.slice("region3", offsets.clacRotatedCentroidsOffset(), region3Bytes);
                 final CentroidVectorValues reader = new CentroidVectorValues(region3, centroids.length, DIMENSION);
 
                 for (int c = 0; c < centroids.length; c++) {

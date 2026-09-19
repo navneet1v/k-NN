@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.format;
 
+import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ByteBuffersDirectory;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
@@ -34,6 +36,9 @@ import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROT
  * <p>The ord&rarr;doc config closes each entry: its fixed part is written to the {@code .clam} meta output, and a
  * sparse field's {@code IndexedDISI}/{@code DirectMonotonic} data stream is written to the separate {@code .clap}
  * data output. A dense field (every doc has the vector) writes only the config marker and no data stream.
+ *
+ * <p>{@link #read_rejectsInnerOffsetOutsideItsRegion} covers the other direction: an entry whose relative offsets do
+ * not point into their own region is rejected when the segment opens rather than at query time.
  */
 class ClusterANNFieldMetaWriteTest {
 
@@ -195,6 +200,71 @@ class ClusterANNFieldMetaWriteTest {
             null
         );
         assertNotEquals(mismatch, actual);
+    }
+
+    /**
+     * An inner offset pointing past the end of its own region is corruption, and {@code read} must say so.
+     *
+     * <p>This is only checkable because the inner offsets are relative to their region: the check is
+     * {@code offset <= regionLength}, which an absolute offset would fail for every field but the first. Catching it
+     * here means a truncated or scrambled {@code .clam} fails when the segment opens, naming the offset, instead of
+     * surfacing as a slice error from somewhere in the query path.
+     */
+    @Test
+    void read_rejectsInnerOffsetOutsideItsRegion() throws IOException {
+        // clacCentroidsOffset (600) past the end of a 512-byte .clac region.
+        final ClusterANNFieldMeta badClac = new ClusterANNFieldMeta(
+            BLOCK_SIZE,
+            128,
+            100,
+            2,
+            VectorSimilarityFunction.EUCLIDEAN,
+            1,
+            ROTATION_RANDOM_GAUSSIAN,
+            0,
+            new byte[] { 7, 8 },
+            0L,
+            512L,
+            600L,
+            320L,
+            0L,
+            800L,
+            new long[] { 0L, 400L },
+            new int[] { 400, 400 },
+            new int[] { 50, 50 },
+            900L,
+            195L,
+            null
+        );
+        CorruptIndexException clac = assertThrows(CorruptIndexException.class, () -> writeThenRead(badClac, 100, denseDocs(100)));
+        assertTrue(clac.getMessage().contains("clacCentroidsOffset"), clac.getMessage());
+
+        // Same for a per-centroid posting offset (900) past the end of an 800-byte .clap region.
+        final ClusterANNFieldMeta badClap = new ClusterANNFieldMeta(
+            BLOCK_SIZE,
+            128,
+            100,
+            2,
+            VectorSimilarityFunction.EUCLIDEAN,
+            1,
+            ROTATION_RANDOM_GAUSSIAN,
+            0,
+            new byte[] { 7, 8 },
+            0L,
+            512L,
+            64L,
+            320L,
+            0L,
+            800L,
+            new long[] { 0L, 900L },
+            new int[] { 400, 400 },
+            new int[] { 50, 50 },
+            900L,
+            195L,
+            null
+        );
+        CorruptIndexException clap = assertThrows(CorruptIndexException.class, () -> writeThenRead(badClap, 100, denseDocs(100)));
+        assertTrue(clap.getMessage().contains("clapCentroidOffsets[1]"), clap.getMessage());
     }
 
     private static ClusterANNFieldMeta rotatedField() {

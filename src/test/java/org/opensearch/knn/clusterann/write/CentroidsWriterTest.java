@@ -10,6 +10,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.opensearch.knn.clusterann.format.rotation.Rotation;
@@ -31,6 +32,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * as ints), region 2 ({@code vector | normSq}), and — only when the field is rotated — region 3
  * ({@code vector | normSq}). Region offsets and the total length are derived from the dimensions/counts rather
  * than hard-coded, and {@code normSq} is recomputed independently to confirm the writer derives it correctly.
+ *
+ * <p>Those cases all write at position 0, so they say nothing about whether the inner offsets are relative to the
+ * field's region or absolute in the file — at 0 the two coincide.
+ * {@link #write_innerOffsetsAreRelativeToTheFieldsRegion} covers the difference.
  */
 class CentroidsWriterTest {
 
@@ -76,11 +81,11 @@ class CentroidsWriterTest {
             final long region1Bytes = (long) testCase.ordToCentroid().length * Integer.BYTES;
             final long region2Bytes = (long) numCentroids * (dim + 1) * Float.BYTES;
             assertEquals(0L, offsets.clacOffset(), "region 1 at start");
-            assertEquals(region1Bytes, offsets.clacVectorOffset(), "region 2 after region 1");
+            assertEquals(region1Bytes, offsets.clacCentroidsOffset(), "region 2 after region 1");
             if (rotated) {
-                assertEquals(region1Bytes + region2Bytes, offsets.clacTransformedOffset(), "region 3 after region 2");
+                assertEquals(region1Bytes + region2Bytes, offsets.clacRotatedCentroidsOffset(), "region 3 after region 2");
             } else {
-                assertEquals(-1L, offsets.clacTransformedOffset(), "no region 3 (sentinel offset)");
+                assertEquals(-1L, offsets.clacRotatedCentroidsOffset(), "no region 3 (sentinel offset)");
             }
 
             try (IndexInput in = dir.openInput(CLAC_FILE, IOContext.DEFAULT)) {
@@ -89,7 +94,7 @@ class CentroidsWriterTest {
                 assertArrayEquals(testCase.ordToCentroid(), readInts(in, testCase.ordToCentroid().length), "region 1 ordToCentroid");
 
                 // Region 2: vector | normSq.
-                in.seek(offsets.clacVectorOffset());
+                in.seek(offsets.clacCentroidsOffset());
                 for (int c = 0; c < numCentroids; c++) {
                     assertArrayEquals(testCase.centroids()[c], readFloats(in, dim), 0f, "centroid " + c);
                     assertEquals(normSq(testCase.centroids()[c]), Float.intBitsToFloat(in.readInt()), 0f, "normSq " + c);
@@ -107,6 +112,71 @@ class CentroidsWriterTest {
                 }
                 assertEquals(length, in.length(), "reported length matches file");
                 assertEquals(in.length(), in.getFilePointer(), "read every byte");
+            }
+        }
+    }
+
+    /**
+     * The same layout written at a non-zero position, which is where every field but the first one lives.
+     *
+     * <p>{@link #write_laysOutRegionsPerSpec} cannot catch a confusion between absolute and relative offsets: it writes
+     * at position 0, where the two are equal. Here a preamble stands in for an earlier field, and the regions are read
+     * back the way {@code KNN1030ClusterANNVectorsReader} reads them — slice the field's region at {@code clacOffset},
+     * then slice regions 2 and 3 out of <em>that</em>. An absolute inner offset is applied twice under that scheme and
+     * lands at {@code clacOffset + offset}, so it fails here rather than at query time.
+     */
+    @Test
+    void write_innerOffsetsAreRelativeToTheFieldsRegion() throws IOException {
+        final int[] ordToCentroid = { 0, 1, 0, 1, 0 };
+        final float[][] centroids = { { 1f, 2f }, { 3f, 4f } };
+        final int dim = 2;
+        final CentroidData data = new CentroidData(ordToCentroid, centroids);
+        final Rotation rotation = RotationFormats.create(ROTATION_RANDOM_GAUSSIAN, dim);
+
+        // An earlier field's bytes: anything, as long as this field does not begin at 0.
+        final long preambleBytes = 37L;
+
+        try (Directory dir = new ByteBuffersDirectory()) {
+            final CentroidOffsets offsets;
+            final long fieldBytes;
+            try (IndexOutput out = dir.createOutput(CLAC_FILE, IOContext.DEFAULT)) {
+                for (long b = 0; b < preambleBytes; b++) {
+                    out.writeByte((byte) 0xAB);
+                }
+                offsets = CentroidsWriter.write(out, data, rotation);
+                fieldBytes = out.getFilePointer() - offsets.clacOffset();
+            }
+
+            final long region1Bytes = (long) ordToCentroid.length * Integer.BYTES;
+            final long region2Bytes = (long) centroids.length * (dim + 1) * Float.BYTES;
+            assertEquals(preambleBytes, offsets.clacOffset(), "the field's region is absolute: it starts past the preamble");
+            assertEquals(region1Bytes, offsets.clacCentroidsOffset(), "region 2 is relative to the field's region, not to the file");
+            assertEquals(
+                region1Bytes + region2Bytes,
+                offsets.clacRotatedCentroidsOffset(),
+                "region 3 is relative to the field's region, not to the file"
+            );
+
+            try (IndexInput file = dir.openInput(CLAC_FILE, IOContext.DEFAULT)) {
+                // The reader's two-step slicing, which is what makes the inner offsets relative.
+                final IndexInput field = file.slice("field", offsets.clacOffset(), fieldBytes);
+
+                final IndexInput region1 = field.slice("ordToCentroid", 0L, region1Bytes);
+                assertArrayEquals(ordToCentroid, readInts(region1, ordToCentroid.length), "region 1 ordToCentroid");
+
+                final IndexInput region2 = field.slice("centroids", offsets.clacCentroidsOffset(), region2Bytes);
+                for (int c = 0; c < centroids.length; c++) {
+                    assertArrayEquals(centroids[c], readFloats(region2, dim), 0f, "centroid " + c);
+                    assertEquals(normSq(centroids[c]), Float.intBitsToFloat(region2.readInt()), 0f, "normSq " + c);
+                }
+
+                final IndexInput region3 = field.slice("centroids-rotated", offsets.clacRotatedCentroidsOffset(), region2Bytes);
+                for (int c = 0; c < centroids.length; c++) {
+                    final float[] expected = new float[dim];
+                    rotation.rotate(centroids[c], expected);
+                    assertArrayEquals(expected, readFloats(region3, dim), 0f, "rotated centroid " + c);
+                    assertEquals(normSq(expected), Float.intBitsToFloat(region3.readInt()), 0f, "rotated normSq " + c);
+                }
             }
         }
     }
