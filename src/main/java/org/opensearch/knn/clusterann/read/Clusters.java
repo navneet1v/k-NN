@@ -6,7 +6,6 @@
 package org.opensearch.knn.clusterann.read;
 
 import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
-import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.apache.lucene.util.LongValues;
@@ -17,6 +16,8 @@ import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
 
 import org.opensearch.common.Nullable;
 import java.io.IOException;
+
+import static org.opensearch.knn.clusterann.read.CentroidVectorValues.floatsPerCentroid;
 
 /**
  * The clusters of one field: a persistent, query-independent handle. Intended to be built once per field and
@@ -51,16 +52,11 @@ public final class Clusters {
         this.clusterFactory = new ClusterFactory(fieldMeta, postings, centroids, rotation);
         this.rotation = RotationFormats.read(fieldMeta.rotationId(), rotation, fieldMeta.dimension());
 
-        // Only a EUCLIDEAN field stores ‖c‖² alongside each centroid, so a caller that needs it for another metric
-        // measures it from the vector instead.
-        boolean hasNorm = fieldMeta.similarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
-
-        long centroidsBytes = (long) fieldMeta.centroidCount() * floatsPerCentroid(fieldMeta.dimension(), hasNorm) * Float.BYTES;
+        long centroidsBytes = (long) fieldMeta.centroidCount() * floatsPerCentroid(fieldMeta.dimension()) * Float.BYTES;
         this.centroidsBase = new CentroidVectorValues(
             centroids.slice("centroids", fieldMeta.clacCentroidsOffset(), centroidsBytes),
             fieldMeta.centroidCount(),
-            fieldMeta.dimension(),
-            hasNorm
+            fieldMeta.dimension()
         );
     }
 
@@ -89,10 +85,6 @@ public final class Clusters {
      */
     public CentroidVectorValues centroids() throws IOException {
         return centroidsBase.copy();
-    }
-
-    private static int floatsPerCentroid(int dimension, boolean hasNorm) {
-        return dimension + (hasNorm ? 1 : 0);
     }
 
     /** Number of clusters in this field. */

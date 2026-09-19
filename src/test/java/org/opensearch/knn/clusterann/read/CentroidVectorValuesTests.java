@@ -57,7 +57,7 @@ class CentroidVectorValuesTests {
     @Test
     void testGeometry_thenReportsWhatItWasBuiltWith() throws IOException {
         // given / when
-        CentroidVectorValues centroids = centroids(0L, true);
+        CentroidVectorValues centroids = centroids(0L);
 
         // then
         assertEquals(DIMENSION, centroids.dimension());
@@ -72,7 +72,7 @@ class CentroidVectorValuesTests {
     @ValueSource(ints = { 0, 1, 4 })
     void testVectorValue_thenReadsThatCentroid(int ordinal) throws IOException {
         // given
-        CentroidVectorValues centroids = centroids(0L, true);
+        CentroidVectorValues centroids = centroids(0L);
 
         // when
         float[] vector = centroids.vectorValue(ordinal);
@@ -86,7 +86,7 @@ class CentroidVectorValuesTests {
     @Test
     void testVectorValue_whenReadOutOfOrder_thenStillReadsEachCentroid() throws IOException {
         // given
-        CentroidVectorValues centroids = centroids(0L, true);
+        CentroidVectorValues centroids = centroids(0L);
 
         // when / then
         for (int ordinal : new int[] { 3, 0, 4, 0, 2 }) {
@@ -102,7 +102,7 @@ class CentroidVectorValuesTests {
     @Test
     void testVectorValue_whenTheRegionIsOffset_thenReadsFromThere() throws IOException {
         // given — the raw region occupies the first RAW_REGION_BYTES, the rotated region follows
-        CentroidVectorValues centroids = centroids(RAW_REGION_BYTES, true);
+        CentroidVectorValues centroids = centroids(RAW_REGION_BYTES);
 
         // when / then — the encoder writes the transformed region with negated values, so a read at the wrong
         // offset would come back positive
@@ -119,7 +119,7 @@ class CentroidVectorValuesTests {
     @Test
     void testVectorValue_thenReusesItsBuffer() throws IOException {
         // given
-        CentroidVectorValues centroids = centroids(0L, true);
+        CentroidVectorValues centroids = centroids(0L);
 
         // when
         float[] first = centroids.vectorValue(0);
@@ -134,30 +134,13 @@ class CentroidVectorValuesTests {
     @ValueSource(ints = { -1, 5, 99 })
     void testVectorValue_whenOrdinalIsOutOfRange_thenThrows(int ordinal) throws IOException {
         // given
-        CentroidVectorValues centroids = centroids(0L, true);
+        CentroidVectorValues centroids = centroids(0L);
 
         // when
         IndexOutOfBoundsException e = assertThrows(IndexOutOfBoundsException.class, () -> centroids.vectorValue(ordinal));
 
         // then
         assertEquals("Centroid ordinal must be in [0, " + NUM_CENTROIDS + "), got: " + ordinal, e.getMessage());
-    }
-
-    // ---------------------------------------------------------------- norms
-
-    /**
-     * A region without norms is narrower per record, so reading one is a different stride — and asking for a norm it
-     * does not carry is a mistake rather than something to compute quietly.
-     */
-    @Test
-    void testNorm_whenTheRegionCarriesNone_thenThrowsAndTheStrideIsNarrower() throws IOException {
-        // given
-        CentroidVectorValues centroids = centroids(0L, false);
-
-        // when / then — 4 floats per record rather than 5, so centroid 1 starts 16 bytes in
-        assertArrayEquals(expectedVector(1), centroids.vectorValue(1), "a normless region reads on a narrower stride");
-        IllegalStateException e = assertThrows(IllegalStateException.class, centroids::norm);
-        assertEquals("This centroid region carries no norm", e.getMessage());
     }
 
     // ---------------------------------------------------------------- copy
@@ -169,7 +152,7 @@ class CentroidVectorValuesTests {
     @Test
     void testCopy_thenIsIndependentOfTheOriginal() throws IOException {
         // given
-        CentroidVectorValues original = centroids(0L, true);
+        CentroidVectorValues original = centroids(0L);
         CentroidVectorValues copy = (CentroidVectorValues) original.copy();
 
         // when
@@ -187,7 +170,7 @@ class CentroidVectorValuesTests {
     @Test
     void testCopy_thenKeepsTheSameGeometry() throws IOException {
         // given
-        CentroidVectorValues original = centroids(0L, true);
+        CentroidVectorValues original = centroids(0L);
 
         // when
         FloatVectorValues copy = original.copy();
@@ -216,29 +199,27 @@ class CentroidVectorValuesTests {
      * A cursor over one region of the two the file holds, sliced out at {@code offset} — which is how a caller hands
      * this class a region rather than a file and an offset to keep straight.
      */
-    private CentroidVectorValues centroids(long offset, boolean hasNorm) throws IOException {
+    private CentroidVectorValues centroids(long offset) throws IOException {
         Directory directory = new ByteBuffersDirectory();
         directories.add(directory);
-        write(directory, hasNorm);
+        write(directory);
         IndexInput input = directory.openInput(FILE, IOContext.DEFAULT);
-        long regionBytes = (long) NUM_CENTROIDS * (DIMENSION + (hasNorm ? 1 : 0)) * Float.BYTES;
-        return new CentroidVectorValues(input.slice("region", offset, regionBytes), NUM_CENTROIDS, DIMENSION, hasNorm);
+        long regionBytes = (long) NUM_CENTROIDS * CentroidVectorValues.floatsPerCentroid(DIMENSION) * Float.BYTES;
+        return new CentroidVectorValues(input.slice("region", offset, regionBytes), NUM_CENTROIDS, DIMENSION);
     }
 
     /**
      * A raw region followed by a transformed one, the latter negated so a read at the wrong offset is obvious. Both
-     * regions carry norms when {@code hasNorm}, which is what makes the two offsets differ.
+     * region carries a norm per record, which is what makes the second region's offset what it is.
      */
-    private static void write(Directory directory, boolean hasNorm) throws IOException {
+    private static void write(Directory directory) throws IOException {
         try (IndexOutput out = directory.createOutput(FILE, IOContext.DEFAULT)) {
             for (int sign : new int[] { 1, -1 }) {
                 for (int ordinal = 0; ordinal < NUM_CENTROIDS; ordinal++) {
                     for (float value : expectedVector(ordinal)) {
                         out.writeInt(Float.floatToIntBits(sign * value));
                     }
-                    if (hasNorm) {
-                        out.writeInt(Float.floatToIntBits(expectedNorm(ordinal)));
-                    }
+                    out.writeInt(Float.floatToIntBits(expectedNorm(ordinal)));
                 }
             }
         }

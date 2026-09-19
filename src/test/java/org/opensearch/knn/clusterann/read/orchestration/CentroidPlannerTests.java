@@ -254,11 +254,11 @@ class CentroidPlannerTests {
     // ---------------------------------------------------------------- helpers
 
     /**
-     * Clusters over real centroid bytes. Only a EUCLIDEAN region carries ‖c‖², matching what the writer stores, so the
-     * other metrics exercise the planner's fallback of measuring the norm from the vector.
+     * Clusters over real centroid bytes. Every region carries ‖c‖², whatever the similarity — cosine and inner product
+     * need it as much as Euclidean, so the planner reads it rather than choosing between stored and measured.
      */
     private Clusters clusters(VectorSimilarityFunction similarity, float[][] centroids, int[] clusterSizes) throws IOException {
-        CentroidVectorValues base = centroidValues(centroids, similarity == VectorSimilarityFunction.EUCLIDEAN);
+        CentroidVectorValues base = centroidValues(centroids);
 
         Clusters clusters = mock(Clusters.class);
         when(clusters.numClusters()).thenReturn(centroids.length);
@@ -271,8 +271,8 @@ class CentroidPlannerTests {
         return clusters;
     }
 
-    /** Writes the centroid region the way the format lays it out: the vector, then ‖c‖² when the region carries one. */
-    private CentroidVectorValues centroidValues(float[][] centroids, boolean withNorm) throws IOException {
+    /** Writes the centroid region the way the format lays it out: the vector, then ‖c‖². */
+    private CentroidVectorValues centroidValues(float[][] centroids) throws IOException {
         Directory directory = new ByteBuffersDirectory();
         directories.add(directory);
         try (IndexOutput out = directory.createOutput(FILE, IOContext.DEFAULT)) {
@@ -280,13 +280,11 @@ class CentroidPlannerTests {
                 for (float value : centroid) {
                     out.writeInt(Float.floatToIntBits(value));
                 }
-                if (withNorm) {
-                    out.writeInt(Float.floatToIntBits(VectorUtil.dotProduct(centroid, centroid)));
-                }
+                out.writeInt(Float.floatToIntBits(VectorUtil.dotProduct(centroid, centroid)));
             }
         }
         IndexInput input = directory.openInput(FILE, IOContext.DEFAULT);
-        return new CentroidVectorValues(input, centroids.length, centroids[0].length, withNorm);
+        return new CentroidVectorValues(input, centroids.length, centroids[0].length);
     }
 
     /** The planner reads only the similarity from the entry; the rest is filled in to make a valid one. */

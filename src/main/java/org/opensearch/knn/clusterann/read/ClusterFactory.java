@@ -15,6 +15,8 @@ import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizers;
 import org.opensearch.common.Nullable;
 import java.io.IOException;
 
+import static org.opensearch.knn.clusterann.read.CentroidVectorValues.floatsPerCentroid;
+
 /**
  * Creates the {@link Cluster} for a centroid in one field.
  *
@@ -45,16 +47,12 @@ public final class ClusterFactory {
         this.centroids = clac;
         this.rotation = clar;
 
-        // The centroids a scan centres on: the rotated ones for a rotated field, since its codes live in that space,
-        // and the only ones there are otherwise. Sliced rather than pointed at, so the cursor cannot reach a
-        // neighbouring region and every read is bounds-checked against this field's centroids alone.
         long centroidsOffset = fieldMeta.hasRotation() ? fieldMeta.clacRotatedCentroidsOffset() : fieldMeta.clacCentroidsOffset();
-        long centroidsBytes = (long) fieldMeta.centroidCount() * (fieldMeta.dimension() + 1) * Float.BYTES;
+        long centroidsBytes = (long) fieldMeta.centroidCount() * floatsPerCentroid(fieldMeta.dimension()) * Float.BYTES;
         this.centroidsBase = new CentroidVectorValues(
-            centroids.slice("centroids", centroidsOffset, centroidsBytes),
+            centroids.slice("centroids-rotated", centroidsOffset, centroidsBytes),
             fieldMeta.centroidCount(),
-            fieldMeta.dimension(),
-            true
+            fieldMeta.dimension()
         );
     }
 

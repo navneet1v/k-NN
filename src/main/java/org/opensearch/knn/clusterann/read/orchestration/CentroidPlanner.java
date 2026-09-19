@@ -80,18 +80,10 @@ public final class CentroidPlanner {
     ) {
         float dot = VectorUtil.dotProduct(query, centroid);
         return switch (similarity) {
-            case EUCLIDEAN -> queryNormSq - 2 * dot + normSq(centroids, centroid);
+            case EUCLIDEAN -> queryNormSq - 2 * dot + centroids.norm();
             case DOT_PRODUCT, MAXIMUM_INNER_PRODUCT -> -dot;
-            case COSINE -> -dot / (float) Math.sqrt(normSq(centroids, centroid));
+            case COSINE -> -dot / (float) Math.sqrt(centroids.norm());
         };
-    }
-
-    /**
-     * {@code ‖c‖²} for the centroid: read from the record when the region stores one, else measured from the vector
-     * (a correctness fallback that costs a second pass, not a cheap path).
-     */
-    private static float normSq(CentroidVectorValues centroids, float[] centroid) {
-        return centroids.hasNorm() ? centroids.norm() : VectorUtil.dotProduct(centroid, centroid);
     }
 
     /** Drain the heap into ordinals, closest-first. {@code pop} yields farthest first, so fill from the back. */

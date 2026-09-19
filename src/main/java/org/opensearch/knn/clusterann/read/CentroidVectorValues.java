@@ -21,9 +21,11 @@ import java.io.IOException;
  * same data. Centroids are not documents, so nothing here is doc-addressed — {@code ord} is a centroid ordinal
  * throughout.
  *
- * <p>Each centroid occupies {@code dimension} floats, followed by one more float when {@code hasNorm} — the
- * value the scorer needs alongside the vector, which it would otherwise have to recompute per cluster. The
- * records are fixed width, so a centroid is one seek away rather than a scan.
+ * <p>Each centroid occupies {@code dimension} floats followed by one more holding ‖c‖² — the value the scorer needs
+ * alongside the vector, which it would otherwise have to recompute per cluster. Every record carries it, whatever the
+ * similarity: the ADC transforms for inner product and cosine need it as much as Euclidean does, and making it
+ * conditional only moved the cost to a caller that had to measure it instead. The records are fixed width, so a
+ * centroid is one seek away rather than a scan.
  *
  * <p><b>Not thread-safe.</b> It carries a moving file pointer and a buffer reused across calls, so a shared
  * instance must be {@link #copy}'d before use and the returned array consumed before the next call.
@@ -33,7 +35,6 @@ public final class CentroidVectorValues extends FloatVectorValues {
     private final IndexInput input;
     private final int numCentroids;
     private final int dimension;
-    private final boolean hasNorm;
 
     /** Fixed width of one record, which is what makes a centroid reachable by arithmetic. */
     private final int bytesPerCentroid;
@@ -46,16 +47,24 @@ public final class CentroidVectorValues extends FloatVectorValues {
     /**
      * @param input the region's own slice of {@code .clac}; this instance reads through it and moves its pointer
      * @param numCentroids centroids in the region
-     * @param dimension the field's vector dimension
-     * @param hasNorm whether each centroid carries a trailing norm
+     * @param dimension the field's vector dimension; each record is this many floats plus one for ‖c‖²
      */
-    public CentroidVectorValues(IndexInput input, int numCentroids, int dimension, boolean hasNorm) {
+    public CentroidVectorValues(IndexInput input, int numCentroids, int dimension) {
         this.input = input;
         this.numCentroids = numCentroids;
         this.dimension = dimension;
-        this.hasNorm = hasNorm;
-        this.bytesPerCentroid = (dimension + (hasNorm ? 1 : 0)) * Float.BYTES;
+        this.bytesPerCentroid = floatsPerCentroid(dimension) * Float.BYTES;
         this.vector = new float[dimension];
+    }
+
+    /**
+     * Floats one centroid record occupies: the vector, plus the trailing ‖c‖² every record carries.
+     *
+     * <p>Stated here because this is the class that reads the record, and a caller slicing the region has to size it
+     * with the same width — two statements of one layout is how a stride drifts.
+     */
+    public static int floatsPerCentroid(int dimension) {
+        return dimension + 1;
     }
 
     @Override
@@ -79,18 +88,8 @@ public final class CentroidVectorValues extends FloatVectorValues {
         }
         input.seek((long) ord * bytesPerCentroid);
         input.readFloats(vector, 0, dimension);
-        if (hasNorm) {
-            norm = Float.intBitsToFloat(input.readInt());
-        }
+        norm = Float.intBitsToFloat(input.readInt());
         return vector;
-    }
-
-    /**
-     * Whether each record carries a trailing ‖c‖², which is what makes {@link #norm()} answerable. Exposed because a
-     * caller that needs the norm can measure it from the vector instead, and so has to know which it is doing.
-     */
-    public boolean hasNorm() {
-        return hasNorm;
     }
 
     /**
@@ -99,9 +98,6 @@ public final class CentroidVectorValues extends FloatVectorValues {
      * type it is handed to rather than the name here.
      */
     public float norm() {
-        if (!hasNorm) {
-            throw new IllegalStateException("This centroid region carries no norm");
-        }
         return norm;
     }
 
@@ -114,6 +110,6 @@ public final class CentroidVectorValues extends FloatVectorValues {
      */
     @Override
     public CentroidVectorValues copy() throws IOException {
-        return new CentroidVectorValues(input.clone(), numCentroids, dimension, hasNorm);
+        return new CentroidVectorValues(input.clone(), numCentroids, dimension);
     }
 }
