@@ -96,7 +96,7 @@ for set in main test; do
     if ! diff -q <(fmt_cat "$set" "$f") <(knn_cat "$set" "$f") >/dev/null; then
       drift=1
       echo "== $set: content differs: $f =="
-      diff -u --label "formats/$f" --label "k-NN/$f" <(fmt_cat "$set" "$f") <(knn_cat "$set" "$f") | sed -n "1,${DRIFT_DIFF_LINES:-40}p"
+      diff -u --label "formats/$f" --label "k-NN/$f" <(fmt_cat "$set" "$f") <(knn_cat "$set" "$f") | sed -n "1,${DRIFT_DIFF_LINES:-40}p" || true
     fi
   done <<< "$both"
 done
