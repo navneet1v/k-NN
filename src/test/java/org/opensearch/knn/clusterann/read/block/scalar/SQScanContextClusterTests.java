@@ -489,18 +489,20 @@ class SQScanContextClusterTests {
         );
     }
 
-    /** The posting layout: ordinals, packed SOAR bits, ascending distances, then the unpadded blocks. */
+    /** The posting layout: ordinals, SOAR FixedBitSet words, ascending distances, then the unpadded blocks. */
     private static void writePosting(Directory directory) throws IOException {
         try (IndexOutput out = directory.createOutput(FILE, IOContext.DEFAULT)) {
             for (int ordinal : ORDINALS) {
                 out.writeInt(ordinal);
             }
 
-            byte[] soar = new byte[(CLUSTER_SIZE + 7) / 8];
+            FixedBitSet soar = new FixedBitSet(CLUSTER_SIZE);
             for (int position : SOAR_POSITIONS) {
-                soar[position >> 3] |= (byte) (1 << (position & 7));
+                soar.set(position);
             }
-            out.writeBytes(soar, 0, soar.length);
+            for (long word : soar.getBits()) {
+                out.writeLong(word);
+            }
 
             for (int position = 0; position < CLUSTER_SIZE; position++) {
                 out.writeInt(Float.floatToIntBits(expectedDistance(position)));

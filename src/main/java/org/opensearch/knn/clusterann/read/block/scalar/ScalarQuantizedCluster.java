@@ -8,6 +8,7 @@ package org.opensearch.knn.clusterann.read.block.scalar;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.IOSupplier;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
@@ -27,7 +28,7 @@ import java.io.IOException;
  *
  * <pre>
  * ordinals          clusterSize ints     // ascending ‖c−v‖, primary and SOAR entries mixed together
- * soarBitset        ceil(clusterSize/8)  // one bit per entry, set = this entry is a SOAR copy
+ * soarBitset        bits2words(clusterSize) longs  // FixedBitSet words, bit set = this entry is a SOAR copy
  * sortedDistances   clusterSize floats   // ‖c−v‖ ascending, parallel to ordinals
  * block 0           lower[BS] | upper[BS] | add[BS] | sum[BS] | codes[BS × packedBytes]
  * block 1           …
@@ -99,9 +100,9 @@ public class ScalarQuantizedCluster implements Cluster {
         this.quantizer = quantizer;
         this.similarityFunction = similarityFunction;
 
-        this.headerBytes = (long) clusterSize * Integer.BYTES   // ordinals
-            + (clusterSize + 7) / 8                             // soarBitset
-            + (long) clusterSize * Float.BYTES;                 // sortedDistances
+        this.headerBytes = (long) clusterSize * Integer.BYTES              // ordinals
+            + (long) FixedBitSet.bits2words(clusterSize) * Long.BYTES      // soarBitset
+            + (long) clusterSize * Float.BYTES;                            // sortedDistances
 
         IndexInput blocks = posting.slice("blocks", headerBytes, posting.length() - headerBytes);
         this.reader = new ScalarQuantizedBlockReader(blocks, blockSize, clusterSize, dimension, encoding);
