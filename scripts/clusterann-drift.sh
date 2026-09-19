@@ -23,6 +23,8 @@ KNN_ONLY_ALLOWLIST=(
   # Copy of Lucene 10.4's Lucene104ScalarQuantizedVectorsFormat.ScalarEncoding; formats gets it from its
   # juno-patched Lucene 10.3, k-NN's upstream Lucene 10.3.2 does not have it.
   main/read/block/scalar/ScalarEncoding.java
+  # OptimizedScalarQuantizer.transposeDibit, same story.
+  main/read/block/scalar/Lucene104Backports.java
 )
 
 if [[ ! -d "$FMT" ]]; then

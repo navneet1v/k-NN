@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.format.block;
 
+import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.util.Accountable;
 
 import java.io.IOException;
@@ -82,8 +83,41 @@ public interface BlockVectorFormat {
         default void prefetchBlock(int block) throws IOException {}
     }
 
-    /** Write side of the same layout: divides a sequence into blocks. */
+    /**
+     * Write side of the same layout: divides one sequence of vectors into fixed-size blocks and appends them
+     * to the output, in the same division {@link Reader} walks.
+     *
+     * <p>What a block holds — full-precision floats, or some encoded form — stays with the implementation,
+     * exactly as it does on the read side; this interface fixes only the division and the bounded source it
+     * pulls from.
+     *
+     * <p>Not thread-safe; one instance per sequence being written.
+     */
     interface Writer {
-        // TODO: To be added when writer is being created
+
+        /**
+         * The fixed division this writer emits: every block holds {@code blockSize()} vectors except the last,
+         * which may be partial. Mirrors {@link Reader#blockSize()} so the two sides never disagree on where a
+         * block ends.
+         */
+        int blockSize();
+
+        /**
+         * Write {@code source}'s vectors as a run of fixed-size blocks, in the storage order the source
+         * presents them. {@code source} is a view bounded to exactly this sequence — {@code size()} is the
+         * sequence length and {@code vectorValue(ord)} is defined only for {@code ord} in {@code [0, size())},
+         * in storage order — so the writer reads it by position and needs no separate ordinal list.
+         *
+         * <p>Blocks are full except the last, which carries {@code source.size() % blockSize()} vectors when
+         * the count is not a multiple of the block size.
+         *
+         * <p>An implementation may read and modify in place the array {@code vectorValue(ord)} returns, so the
+         * source must hand out a per-call array that is not shared with any backing store. The bounded views
+         * the cluster writer builds satisfy this.
+         *
+         * @param source the sequence's vectors, as a view bounded to exactly this sequence
+         * @throws IOException if writing to the underlying output fails
+         */
+        void writeBlocks(FloatVectorValues source) throws IOException;
     }
 }

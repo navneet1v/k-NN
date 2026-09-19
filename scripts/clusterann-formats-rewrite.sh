@@ -11,7 +11,8 @@
 #      inside clusterann/read/block/scalar.
 #   3. Formats builds against a juno-patched Lucene 10.3 that has Lucene103ScalarQuantizedVectorsFormat.ScalarEncoding;
 #      upstream Lucene 10.3.2 (what k-NN builds against) does not, so k-NN carries its own copy of that enum
-#      at clusterann/read/block/scalar/ScalarEncoding.
+#      at clusterann/read/block/scalar/ScalarEncoding, and OptimizedScalarQuantizer.transposeDibit (also 10.4) is
+#      redirected to clusterann/read/block/scalar/Lucene104Backports.
 #   4. javax.annotation is not on k-NN's classpath: Nullable becomes org.opensearch.common.Nullable, and the
 #      thread-safety markers are dropped.
 #   5. k-NN requires the OpenSearch SPDX header on every file and runs spotless; formats has neither.
@@ -47,10 +48,21 @@ rewrite_fmt_to_knn() {
     s/\borg\.opensearch\.knn\.vectorformats\.quantization\b/org.opensearch.knn.clusterann.read.block.scalar/g;
     s/^import org\.apache\.lucene\.codecs\.lucene103\.Lucene103ScalarQuantizedVectorsFormat(\.ScalarEncoding)?;$/import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;/;
     s/\bLucene103ScalarQuantizedVectorsFormat\.ScalarEncoding\b/ScalarEncoding/g;
+    s/\bOptimizedScalarQuantizer\.transposeDibit\b/Lucene104Backports.transposeDibit/g;
     s/^import javax\.annotation\.Nullable;$/import org.opensearch.common.Nullable;/;
     $_ = "" if /^import javax\.annotation\.concurrent\.(Not)?ThreadSafe;$/;
     $_ = "" if /^\@(Not)?ThreadSafe$/;
-  ' | awk '!(/^import / && seen[$0]++)'   # drop a duplicate import the rewrite may have produced
+  ' | awk '!(/^import / && seen[$0]++)' | add_backport_import   # drop a duplicate import the rewrite may have produced
+}
+
+# A file that now calls Lucene104Backports but lives outside read.block.scalar needs the import; put it next to
+# the OptimizedScalarQuantizer import so spotless leaves it in the same group.
+add_backport_import() {
+  perl -0pe '
+    if (/\bLucene104Backports\./ && !/^package org\.opensearch\.knn\.clusterann\.read\.block\.scalar;/m
+        && !/^import org\.opensearch\.knn\.clusterann\.read\.block\.scalar\.Lucene104Backports;/m) {
+      s/^(import org\.apache\.lucene\.util\.quantization\.OptimizedScalarQuantizer;\n)/$1import org.opensearch.knn.clusterann.read.block.scalar.Lucene104Backports;\n/m;
+    }'
 }
 
 # Remove a leading SPDX/license comment block and squeeze blank-line runs (stdin -> stdout).
