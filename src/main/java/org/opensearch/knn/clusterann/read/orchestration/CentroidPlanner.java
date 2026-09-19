@@ -39,6 +39,8 @@ public final class CentroidPlanner {
      * @param query the query vector, in the space it arrived in; not modified
      * @param params the bounds to choose within
      * @return centroid ordinals to probe, ordered closest-first; empty if the field has no non-empty cluster
+     *
+     * TODO: return NeighborQueue directly if possible, waiting it out for inter-cluster pruning strategies to be added
      */
     public static int[] plan(Clusters clusters, float[] query, PlanParams params) throws IOException {
         int numClusters = clusters.numClusters();

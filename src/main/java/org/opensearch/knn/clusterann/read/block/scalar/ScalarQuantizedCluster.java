@@ -220,7 +220,7 @@ public class ScalarQuantizedCluster implements Cluster {
         int[] readOrdinals = new int[clusterSize];
         posting.readInts(readOrdinals, 0, clusterSize);
 
-        centroid = centroidSupplier.get();
+        centroid = centroid();
 
         // Assigned last: it is the flag that says the rest is ready, so a failed read leaves nothing half-loaded.
         ordinals = readOrdinals;

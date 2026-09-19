@@ -5,18 +5,17 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
-
 import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexInput;
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.apache.lucene.util.LongValues;
-import org.opensearch.common.Nullable;
 import org.opensearch.knn.clusterann.read.orchestration.ClusterScan;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
-import org.opensearch.knn.clusterann.format.rotation.Rotation;
-import org.opensearch.knn.clusterann.format.rotation.RotationFactory;
+import org.opensearch.knn.clusterann.read.rotation.Rotation;
+import org.opensearch.knn.clusterann.read.rotation.RotationFactory;
 
+import org.opensearch.common.Nullable;
 import java.io.IOException;
 
 /**
@@ -116,7 +115,7 @@ public final class Clusters {
     /**
      * Returns a scanner for one query.
      *
-     * <p>Call this once per query. Then call {@link ClusterScan#scan} once for each cluster you want to
+     * <p>Call this once per query. Then call {@link ClusterScan#scorer} once for each cluster you want to
      * search. Each call builds its own {@link ScanContext}, so the scanner holds no state and the calls
      * can run in parallel.
      */

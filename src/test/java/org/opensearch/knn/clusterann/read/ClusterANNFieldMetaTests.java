@@ -6,6 +6,7 @@
 package org.opensearch.knn.clusterann.read;
 
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -144,14 +145,14 @@ class ClusterANNFieldMetaTests {
     void testRead_whenRotationIsPresent_thenReadsBothOfItsOffsets() throws IOException {
         // given / when
         ClusterANNFieldMeta meta = read(
-            new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN)
+            new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN)
                 .clacRotatedCentroidsOffset(128L)
                 .clarOffset(256L)
                 .clarLength(64L)
         );
 
         // then
-        assertEquals(ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, meta.rotationId());
+        assertEquals(ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN, meta.rotationId());
         assertEquals(128L, meta.clacRotatedCentroidsOffset());
         assertEquals(256L, meta.clarOffset());
         assertEquals(64L, meta.clarLength());
@@ -177,7 +178,7 @@ class ClusterANNFieldMetaTests {
         // given — a sentinel straight after the entry stands in for whatever follows it in the file
         int sentinel = 0x5EED;
         try (Directory directory = new ByteBuffersDirectory()) {
-            write(directory, new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFieldMeta.ROTATION_NONE), sentinel);
+            write(directory, new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFormatConstants.ROTATION_NONE), sentinel);
 
             // when
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
@@ -211,7 +212,9 @@ class ClusterANNFieldMetaTests {
         // given / when
         CorruptIndexException e = assertThrows(
             CorruptIndexException.class,
-            () -> read(new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN).clarOffset(-8L))
+            () -> read(
+                new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN).clarOffset(-8L)
+            )
         );
 
         // then
@@ -223,7 +226,9 @@ class ClusterANNFieldMetaTests {
         // given / when
         CorruptIndexException e = assertThrows(
             CorruptIndexException.class,
-            () -> read(new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN).clarLength(-8L))
+            () -> read(
+                new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN).clarLength(-8L)
+            )
         );
 
         // then
@@ -364,7 +369,7 @@ class ClusterANNFieldMetaTests {
         CorruptIndexException e = assertThrows(
             CorruptIndexException.class,
             () -> read(
-                new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN)
+                new ClusterANNFieldMetaEncoder().rotationId((byte) ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN)
                     .clacRotatedCentroidsOffset(-1L)
             )
         );
@@ -391,7 +396,7 @@ class ClusterANNFieldMetaTests {
         // when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> meta(3, offsets, lengths, sizes, ClusterANNFieldMeta.ROTATION_NONE, NO_ROTATION, NO_ROTATION, NO_ROTATION)
+            () -> meta(3, offsets, lengths, sizes, ClusterANNFormatConstants.ROTATION_NONE, NO_ROTATION, NO_ROTATION, NO_ROTATION)
         );
 
         // then
@@ -403,7 +408,16 @@ class ClusterANNFieldMetaTests {
         // given / when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> meta(0, EMPTY_OFFSETS, EMPTY_COUNTS, EMPTY_COUNTS, ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, 128L, NO_ROTATION, 64L)
+            () -> meta(
+                0,
+                EMPTY_OFFSETS,
+                EMPTY_COUNTS,
+                EMPTY_COUNTS,
+                ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN,
+                128L,
+                NO_ROTATION,
+                64L
+            )
         );
 
         // then
@@ -415,7 +429,16 @@ class ClusterANNFieldMetaTests {
         // given / when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> meta(0, EMPTY_OFFSETS, EMPTY_COUNTS, EMPTY_COUNTS, ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, 128L, 256L, NO_ROTATION)
+            () -> meta(
+                0,
+                EMPTY_OFFSETS,
+                EMPTY_COUNTS,
+                EMPTY_COUNTS,
+                ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN,
+                128L,
+                256L,
+                NO_ROTATION
+            )
         );
 
         // then
@@ -428,7 +451,16 @@ class ClusterANNFieldMetaTests {
         // given / when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> meta(0, EMPTY_OFFSETS, EMPTY_COUNTS, EMPTY_COUNTS, ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, NO_ROTATION, 256L, 64L)
+            () -> meta(
+                0,
+                EMPTY_OFFSETS,
+                EMPTY_COUNTS,
+                EMPTY_COUNTS,
+                ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN,
+                NO_ROTATION,
+                256L,
+                64L
+            )
         );
 
         // then
@@ -451,7 +483,7 @@ class ClusterANNFieldMetaTests {
                 EMPTY_OFFSETS,
                 EMPTY_COUNTS,
                 EMPTY_COUNTS,
-                ClusterANNFieldMeta.ROTATION_NONE,
+                ClusterANNFormatConstants.ROTATION_NONE,
                 clacTransformed,
                 clarOffset,
                 clarLength
@@ -465,7 +497,7 @@ class ClusterANNFieldMetaTests {
     // ---------------------------------------------------------------- helpers
 
     private static final String ENTRY = "entry";
-    private static final long NO_ROTATION = ClusterANNFieldMeta.NO_ROTATION;
+    private static final long NO_ROTATION = ClusterANNFormatConstants.NO_ROTATION;
     private static final long[] EMPTY_OFFSETS = new long[0];
     private static final int[] EMPTY_COUNTS = new int[0];
 
@@ -520,7 +552,7 @@ class ClusterANNFieldMetaTests {
             clusterSizes,
             clarOffset,
             clarLength,
-            null
+            null         // ordToDoc: unused by the compact-constructor invariants under test
         );
     }
 }

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.clusterann.format.rotation;
+package org.opensearch.knn.clusterann.read.rotation;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ByteBuffersDirectory;
@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -56,7 +57,7 @@ class RotationFactoryTests {
     @Test
     void testCreate_whenTheFieldIsNotRotated_thenGivesTheIdentity() throws IOException {
         // given
-        Rotation rotation = RotationFactory.create(fieldMeta(ClusterANNFieldMeta.ROTATION_NONE), null);
+        Rotation rotation = RotationFactory.create(fieldMeta(ClusterANNFormatConstants.ROTATION_NONE), null);
         float[] dest = new float[DIMENSION];
 
         // when
@@ -71,14 +72,14 @@ class RotationFactoryTests {
     /** The identity needs no {@code .clar}, which is what lets the reader pass {@code null} for an unrotated field. */
     @Test
     void testCreate_whenTheFieldIsNotRotated_thenNeedsNoRotationFile() {
-        assertInstanceOf(IdentityRotation.class, RotationFactory.create(fieldMeta(ClusterANNFieldMeta.ROTATION_NONE), null));
+        assertInstanceOf(IdentityRotation.class, RotationFactory.create(fieldMeta(ClusterANNFormatConstants.ROTATION_NONE), null));
     }
 
     /** A random Gaussian field gets the block-diagonal family, applied over the region the caller hands it. */
     @Test
     void testCreate_whenTheFieldIsRandomGaussian_thenGivesTheBlockDiagonalRotation() throws IOException {
         // given
-        ClusterANNFieldMeta fieldMeta = fieldMeta(ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, 0L);
+        ClusterANNFieldMeta fieldMeta = fieldMeta(ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN, 0L);
 
         // when
         Rotation rotation = RotationFactory.create(fieldMeta, clar());
@@ -94,7 +95,7 @@ class RotationFactoryTests {
     @Test
     void testCreate_thenReadsNothing() throws IOException {
         // given / when
-        Rotation rotation = RotationFactory.create(fieldMeta(ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN, 0L), open(0));
+        Rotation rotation = RotationFactory.create(fieldMeta(ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN, 0L), open(0));
 
         // then
         assertEquals(DIMENSION, rotation.dimension());
@@ -117,11 +118,11 @@ class RotationFactoryTests {
     // ---------------------------------------------------------------- helpers
 
     private static ClusterANNFieldMeta fieldMeta(int rotationId) {
-        return fieldMeta(rotationId, ClusterANNFieldMeta.NO_ROTATION);
+        return fieldMeta(rotationId, ClusterANNFormatConstants.NO_ROTATION);
     }
 
     private static ClusterANNFieldMeta fieldMeta(int rotationId, long clarOffset) {
-        boolean rotated = rotationId != ClusterANNFieldMeta.ROTATION_NONE;
+        boolean rotated = rotationId != ClusterANNFormatConstants.ROTATION_NONE;
         return new ClusterANNFieldMeta(
             32,                                     // blockSize
             DIMENSION,
@@ -135,7 +136,7 @@ class RotationFactoryTests {
             0L,                                     // clacOffset
             0L,                                     // clacLength
             0L,                                     // clacCentroidsOffset
-            rotated ? 0L : ClusterANNFieldMeta.NO_ROTATION,
+            rotated ? 0L : ClusterANNFormatConstants.NO_ROTATION,
             0L,                                     // clapOffset
             0L,                                     // clapLength
             new long[1],                            // clapCentroidOffsets
@@ -143,7 +144,7 @@ class RotationFactoryTests {
             new int[] { 1 },                        // clusterSizes
             clarOffset,
             // The entry rejects a length that disagrees with the offset, so it follows whichever the caller chose.
-            clarOffset == ClusterANNFieldMeta.NO_ROTATION ? ClusterANNFieldMeta.NO_ROTATION : 64L,
+            clarOffset == ClusterANNFormatConstants.NO_ROTATION ? ClusterANNFormatConstants.NO_ROTATION : 64L,
             null                                    // ordToDoc, which no rotation consults
         );
     }

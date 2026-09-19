@@ -14,6 +14,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.VectorUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 import org.opensearch.knn.clusterann.read.CentroidVectorValues;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.opensearch.knn.clusterann.read.Clusters;
@@ -301,20 +302,20 @@ class CentroidPlannerTests {
             centroidCount,
             similarity,
             1,                                      // docBits
-            ClusterANNFieldMeta.ROTATION_NONE,
+            ClusterANNFormatConstants.ROTATION_NONE,
             0,                                      // quantizerId
             new byte[0],                            // quantizerParams
             0L,                                     // clacOffset
             0L,                                     // clacLength
             0L,                                     // clacCentroidsOffset
-            ClusterANNFieldMeta.NO_ROTATION,        // clacRotatedCentroidsOffset
+            ClusterANNFormatConstants.NO_ROTATION,        // clacRotatedCentroidsOffset
             0L,                                     // clapOffset
             0L,                                     // clapLength
             new long[centroidCount],                // clapCentroidOffsets
             new int[centroidCount],                 // centroidLengths
             clusterSizes,
-            ClusterANNFieldMeta.NO_ROTATION,        // clarOffset
-            ClusterANNFieldMeta.NO_ROTATION,        // clarLength
+            ClusterANNFormatConstants.NO_ROTATION,        // clarOffset
+            ClusterANNFormatConstants.NO_ROTATION,        // clarLength
             null                                    // ordToDoc, never consulted by a plan
         );
     }

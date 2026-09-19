@@ -17,7 +17,7 @@ import java.io.IOException;
  *
  * <p>A new instance is created per query and serves every cluster in that query, so implementations
  * may hold query-level context and reuse it across clusters rather than re-deriving it per cluster.
- * {@link #scan} may be called concurrently for different clusters, so that context must be
+ * {@link #scorer} may be called concurrently for different clusters, so that context must be
  * thread-safe.
  */
 public interface ClusterScan {
@@ -29,5 +29,5 @@ public interface ClusterScan {
      * <p>The returned scorer holds the per-cluster state, is single-threaded, and is bound to
      * {@code cluster}.
      */
-    PostingScorer scan(Cluster cluster, ScanParams scanParams, Bits acceptedOrds) throws IOException;
+    PostingScorer scorer(Cluster cluster, ScanParams scanParams, Bits acceptedOrds) throws IOException;
 }

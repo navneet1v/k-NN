@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -231,6 +232,68 @@ class ClusterSearcherTests {
         assertEquals(2, scanned, "the second cluster is still counted as scanned — it was visited");
         assertEquals(List.of(10), collector.collected, "the walk stops scoring the moment nothing can compete");
         assertEquals(1, collector.visited);
+    }
+
+    // ---------------------------------------------------------------- arguments
+
+    /**
+     * The three the walk cannot do without are refused rather than dereferenced, so a caller that forgot one is told
+     * which — asserts are off in production, so a null here would otherwise surface as an NPE from somewhere inside.
+     */
+    @Test
+    void testSearch_whenARequiredArgumentIsNull_thenThrows() throws IOException {
+        // given
+        Clusters clusters = clusters(Map.of(0, new int[] { 10 }));
+        RecordingCollector collector = new RecordingCollector();
+        int[] probes = { 0 };
+        ScanParams params = ScanParams.of(QUERY);
+
+        // when / then
+        assertThrows(IllegalArgumentException.class, () -> ClusterSearcher.search(null, probes, params, collector, null));
+        assertThrows(IllegalArgumentException.class, () -> ClusterSearcher.search(clusters, null, params, collector, null));
+        assertThrows(IllegalArgumentException.class, () -> ClusterSearcher.search(clusters, probes, null, collector, null));
+    }
+
+    /**
+     * {@code acceptedOrds} is the one argument that may be null, because null <em>is</em> the filter that accepts
+     * everything — the meaning it carries in {@code AcceptDocs#bits} and {@code LeafReader#getLiveDocs}, and what an
+     * unfiltered query on a segment with no deletions arrives with. Asserted so that tightening the check above can
+     * never quietly take the commonest query shape with it.
+     */
+    @Test
+    void testSearch_whenTheFilterIsNull_thenAcceptsEveryVector() throws IOException {
+        // given
+        Clusters clusters = clusters(Map.of(0, new int[] { 10, 11 }, 1, new int[] { 20 }));
+        RecordingCollector collector = new RecordingCollector();
+
+        // when
+        int scanned = ClusterSearcher.search(clusters, new int[] { 0, 1 }, ScanParams.of(QUERY), collector, null);
+
+        // then
+        assertEquals(2, scanned);
+        assertEquals(List.of(10, 11, 20), collector.collected, "a null filter rejects nothing");
+    }
+
+    /**
+     * The membership test a cluster is handed spans the field's ordinals, so its length is the vector count — not the
+     * filter's, and not an unbounded stand-in. A cluster may size a buffer from it, so an {@code Integer.MAX_VALUE}
+     * would be a lie about a domain that is known.
+     */
+    @Test
+    void testSearch_whenTheFilterIsNull_thenTheMembershipTestStillSpansTheField() throws IOException {
+        // given
+        Clusters clusters = clusters(Map.of(0, new int[] { 10 }));
+        List<Integer> lengths = new ArrayList<>();
+        when(clusters.scan()).thenReturn((cluster, scanParams, acceptedOrds) -> {
+            lengths.add(acceptedOrds.length());
+            return new StubScorer(new int[] { 10 }, acceptedOrds);
+        });
+
+        // when
+        ClusterSearcher.search(clusters, new int[] { 0 }, ScanParams.of(QUERY), new RecordingCollector(), null);
+
+        // then — 1024 is what the stubbed Clusters reports for numVectors()
+        assertEquals(List.of(1024), lengths, "the composed test spans the field's vectors");
     }
 
     // ---------------------------------------------------------------- helpers

@@ -5,8 +5,6 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
-
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
@@ -21,6 +19,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InOrder;
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 import org.opensearch.knn.clusterann.read.orchestration.ClusterScan;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 
@@ -181,7 +181,7 @@ class ClustersTests {
         when(cluster.scorer(context, accepted)).thenReturn(expected);
 
         // when
-        PostingScorer scorer = clusters(VectorSimilarityFunction.EUCLIDEAN).scan().scan(cluster, scanParams, accepted);
+        PostingScorer scorer = clusters(VectorSimilarityFunction.EUCLIDEAN).scan().scorer(cluster, scanParams, accepted);
 
         // then
         assertSame(expected, scorer, "the cluster's own scorer is what a scan returns");
@@ -202,7 +202,7 @@ class ClustersTests {
         when(cluster.scorer(context, null)).thenReturn(expected);
 
         // when / then
-        assertSame(expected, clusters(VectorSimilarityFunction.EUCLIDEAN).scan().scan(cluster, scanParams, null));
+        assertSame(expected, clusters(VectorSimilarityFunction.EUCLIDEAN).scan().scorer(cluster, scanParams, null));
     }
 
     /**
@@ -222,8 +222,8 @@ class ClustersTests {
         ClusterScan scan = clusters(VectorSimilarityFunction.EUCLIDEAN).scan();
 
         // when — the same scanner, as a query reuses it across every cluster it probes
-        scan.scan(first, scanParams, null);
-        scan.scan(second, scanParams, null);
+        scan.scorer(first, scanParams, null);
+        scan.scorer(second, scanParams, null);
 
         // then
         verify(first).scorer(firstContext, null);
@@ -240,7 +240,7 @@ class ClustersTests {
         ClusterScan scan = clusters(VectorSimilarityFunction.EUCLIDEAN).scan();
 
         // when
-        IOException e = assertThrows(IOException.class, () -> scan.scan(cluster, scanParams, null));
+        IOException e = assertThrows(IOException.class, () -> scan.scorer(cluster, scanParams, null));
 
         // then
         assertEquals("centroid unreadable", e.getMessage(), "the failure surfaces as itself, not as a missing scorer");
@@ -266,20 +266,20 @@ class ClustersTests {
             CENTROID_COUNT,
             similarity,
             1,                                      // docBits, one bit per dimension
-            ClusterANNFieldMeta.ROTATION_NONE,
+            ClusterANNFormatConstants.ROTATION_NONE,
             ClusterFactory.QUANTIZER_SQ,
             new byte[0],
             0L,                                     // clacOffset
             4096L,                                  // clacLength
             64L,                                    // clacCentroidsOffset
-            ClusterANNFieldMeta.NO_ROTATION,        // clacRotatedCentroidsOffset
+            ClusterANNFormatConstants.NO_ROTATION,        // clacRotatedCentroidsOffset
             CLAP_OFFSET,
             3000L,                                  // clapLength
             CLAP_CENTROID_OFFSETS,
             CENTROID_LENGTHS,
             CLUSTER_SIZES,
-            ClusterANNFieldMeta.NO_ROTATION,         // clarLength
-            ClusterANNFieldMeta.NO_ROTATION,
+            ClusterANNFormatConstants.NO_ROTATION,         // clarLength
+            ClusterANNFormatConstants.NO_ROTATION,
             // Dense: the fields under test have a vector per document, so the ordinal is the document id.
             ClusterANNFieldMetaEncoder.denseOrdToDoc(VECTOR_COUNT)
         );
@@ -328,6 +328,17 @@ class ClustersTests {
         public void readFloats(float[] floats, int offset, int length) throws IOException {
             reads[0]++;
             in.readFloats(floats, offset, length);
+        }
+
+        /**
+         * Counted through, not around. The centroids are read from a slice of this input, and {@link
+         * org.apache.lucene.store.FilterIndexInput#slice} hands back the underlying input — so without this override a
+         * read through the slice would go uncounted, and a {@code reads() == 0} assertion would hold whether or not
+         * anything was read.
+         */
+        @Override
+        public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+            return new CountingInput(in.slice(sliceDescription, offset, length), reads);
         }
 
         @Override

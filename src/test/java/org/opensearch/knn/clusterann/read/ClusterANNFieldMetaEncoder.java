@@ -5,10 +5,11 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
-
 import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
 import org.apache.lucene.store.ByteBuffersDirectory;
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
+
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
@@ -63,9 +64,9 @@ public final class ClusterANNFieldMetaEncoder {
     private int[] centroidLengths = { 100, 200, 600 };
     private int[] clusterSizes = { 10, 12, 8 };
 
-    private byte rotationId = (byte) ClusterANNFieldMeta.ROTATION_NONE;
+    private byte rotationId = (byte) ClusterANNFormatConstants.ROTATION_NONE;
 
-    /** Written only when {@link #rotationId} is not {@link ClusterANNFieldMeta#ROTATION_NONE}, like {@link #clacRotatedCentroidsOffset}. */
+    /** Written only when {@link #rotationId} is not {@link ClusterANNFormatConstants#ROTATION_NONE}, like {@link #clacRotatedCentroidsOffset}. */
     private long clarOffset = 256L;
 
     /** Written on the same terms as {@link #clarOffset}. */
@@ -183,7 +184,7 @@ public final class ClusterANNFieldMetaEncoder {
      * which is also what decides whether the segment has a {@code .clar} file for a reader to open.
      */
     public boolean hasRotation() {
-        return rotationId != ClusterANNFieldMeta.ROTATION_NONE;
+        return rotationId != ClusterANNFormatConstants.ROTATION_NONE;
     }
 
     public ClusterANNFieldMetaEncoder clarOffset(long clarOffset) {
@@ -211,7 +212,7 @@ public final class ClusterANNFieldMetaEncoder {
         out.writeLong(clacOffset);
         out.writeLong(clacLength);
         out.writeLong(clacCentroidsOffset);
-        if (rotationId != ClusterANNFieldMeta.ROTATION_NONE) {
+        if (rotationId != ClusterANNFormatConstants.ROTATION_NONE) {
             out.writeLong(clacRotatedCentroidsOffset);
         }
 
@@ -227,7 +228,7 @@ public final class ClusterANNFieldMetaEncoder {
             out.writeInt(clusterSizes[i]);
         }
 
-        if (rotationId != ClusterANNFieldMeta.ROTATION_NONE) {
+        if (rotationId != ClusterANNFormatConstants.ROTATION_NONE) {
             out.writeLong(clarOffset);
             out.writeLong(clarLength);
         }

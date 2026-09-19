@@ -42,14 +42,21 @@ public final class ClusterSearcher {
      */
     public static int search(Clusters clusters, int[] probes, ScanParams params, KnnCollector collector, Bits acceptedOrds)
         throws IOException {
-        if (clusters.numClusters() == 0) {
+        // acceptedOrds is deliberately absent: null is the match-all filter, the same meaning it carries in
+        // AcceptDocs#bits and LeafReader#getLiveDocs, and it is what an unfiltered query on an undeleted segment
+        // arrives with. Rejecting it here would fail the most common query shape.
+        if (clusters == null || params == null || probes == null) {
+            throw new IllegalArgumentException("clusters, probes and params must be non-null");
+        }
+
+        if (clusters.numClusters() == 0 || probes.length == 0) {
             return 0;
         }
 
         // Dedup across clusters: SOAR places a boundary vector in two of them, so the same ordinal can be reached
         // twice. Local to this scan, since it means nothing outside one query.
         BitSet visited = new BitSet(clusters.numVectors());
-        Bits wanted = wanted(acceptedOrds, visited);
+        Bits wanted = wanted(acceptedOrds, visited, clusters.numVectors());
 
         ClusterScan scan = clusters.scan();
         int scanned = 0;
@@ -67,7 +74,7 @@ public final class ClusterSearcher {
      * The single membership test a cluster applies before scoring: the caller's filter and this walk's dedup as one
      * {@link Bits}, so a cluster never learns there were two.
      */
-    private static Bits wanted(Bits acceptedOrds, BitSet visited) {
+    private static Bits wanted(Bits acceptedOrds, BitSet visited, int numOfVectors) {
         return new Bits() {
             @Override
             public boolean get(int ord) {
@@ -76,7 +83,7 @@ public final class ClusterSearcher {
 
             @Override
             public int length() {
-                return acceptedOrds != null ? acceptedOrds.length() : Integer.MAX_VALUE;
+                return acceptedOrds != null ? acceptedOrds.length() : numOfVectors;
             }
         };
     }
@@ -90,7 +97,7 @@ public final class ClusterSearcher {
         BitSet visited,
         KnnCollector collector
     ) throws IOException {
-        PostingScorer scorer = scan.scan(cluster, params, wanted);
+        PostingScorer scorer = scan.scorer(cluster, params, wanted);
         while (scorer.advance(collector.minCompetitiveSimilarity())) {
             int ord = scorer.ord();
             visited.set(ord);

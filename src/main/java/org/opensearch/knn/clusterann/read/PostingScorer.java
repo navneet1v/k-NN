@@ -8,14 +8,12 @@ package org.opensearch.knn.clusterann.read;
 import java.io.IOException;
 
 /**
- * A scored iterator over one {@link Cluster}'s postings, bound to a query — "iterate the postings,
- * scoring while iterating" (the same iterate-and-score fusion as Lucene's {@code Scorer}).
+ * A cursor over one {@link Cluster}'s postings, bound to a query, that scores as it advances — the same
+ * iterate-and-score fusion as Lucene's {@code Scorer}.
  *
- * <p>{@link #advance} moves to the next competitive posting; {@link #ord()}/{@link #score()} expose
- * the current one. All storage detail is hidden behind it: whether vectors are laid out block-columnar
- * or row-major, and whether scoring is bulk (a whole block at once) or per-vector, is the
- * implementation's detail — so a different {@link Cluster} storage produces a different iterator and
- * the search path is unchanged.
+ * <p>{@link #advance} moves to the next competitive posting; {@link #ord()} and {@link #score()} expose the
+ * current one. How the vectors are laid out, and whether scoring happens per-vector or a batch at a time,
+ * stays inside — so a different storage family means a different scorer and an unchanged search path.
  *
  * <pre>
  * PostingScorer it = cluster.scorer(params, wanted);

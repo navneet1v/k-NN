@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.clusterann.format.rotation;
+package org.opensearch.knn.clusterann.read.rotation;
 
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 
 /**
  * Builds the {@link Rotation} a field's {@code rotationId} names.
@@ -33,8 +34,8 @@ public final class RotationFactory {
     public static Rotation create(ClusterANNFieldMeta fieldMeta, IndexInput clar) {
         int rotationId = fieldMeta.rotationId();
         return switch (rotationId) {
-            case ClusterANNFieldMeta.ROTATION_NONE -> new IdentityRotation(fieldMeta.dimension());
-            case ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN -> new RandomGaussianRotation(clar, fieldMeta.dimension());
+            case ClusterANNFormatConstants.ROTATION_NONE -> new IdentityRotation(fieldMeta.dimension());
+            case ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN -> new RandomGaussianRotation(clar, fieldMeta.dimension());
             default -> throw new IllegalArgumentException("Unsupported rotationId: " + rotationId);
         };
     }

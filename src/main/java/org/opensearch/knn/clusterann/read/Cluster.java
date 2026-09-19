@@ -12,21 +12,17 @@ import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 import java.io.IOException;
 
 /**
- * One IVF cluster. Everything scoped to it stays behind it: its centroid geometry, its membership, and
- * how its vectors are stored.
- *
- * <p>It hands out a {@link PostingScorer} over its own vectors — a cursor that scores as it advances.
- * Layout and scoring both live inside that scorer because they are not separable: the score is computed
- * from the stored form. So a caller drives any storage family without learning anything about it, and
- * whatever a query may vary arrives as data in {@link ScanParams}.
+ * One IVF cluster, hiding how its vectors are stored and scored. Callers see only ordinals and scores;
+ * the storage and scoring scheme never surface. It hands out a {@link PostingScorer} over its own
+ * vectors, and scoring stays inside that scorer because it is inseparable from how the vectors are
+ * stored. Query-varying inputs arrive as data in {@link ScanParams}.
  *
  * <p>Scanning is two steps: {@link #prepareScan} turns a query into the form this cluster scores against,
  * and {@link #scorer} walks the posting with it. Splitting them lets the prepared form be reused across
  * scorers and lets a scan be abandoned before paying for preparation. Nothing is read until one of the
  * two is called. One instance per query; not thread-safe.
  *
- * <p>{@link Accountable} because a scan holds one of these per cluster it may visit, and what a cluster costs
- * depends on whether it was scanned — so the total is only knowable by asking each one.
+ * <p>{@link Accountable} because cost depends on whether the cluster was scanned.
  */
 public interface Cluster extends Accountable {
 

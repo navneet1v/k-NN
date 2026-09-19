@@ -5,8 +5,6 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
-
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
@@ -19,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 import org.opensearch.knn.clusterann.read.block.scalar.SQScanContext;
 
 import java.io.IOException;
@@ -277,21 +277,21 @@ class ClusterFactoryTests {
             CENTROID_COUNT,
             VectorSimilarityFunction.EUCLIDEAN,
             docBits,
-            rotated ? ClusterANNFieldMeta.ROTATION_RANDOM_GAUSSIAN : ClusterANNFieldMeta.ROTATION_NONE,
+            rotated ? ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN : ClusterANNFormatConstants.ROTATION_NONE,
             quantizerId,
             new byte[0],                            // quantizerParams, unused by a scalar field
             0L,                                     // clacOffset
             4096L,                                  // clacLength
             RAW_CENTROIDS_OFFSET,                   // clacCentroidsOffset
-            rotated ? ROTATED_CENTROIDS_OFFSET : ClusterANNFieldMeta.NO_ROTATION,
+            rotated ? ROTATED_CENTROIDS_OFFSET : ClusterANNFormatConstants.NO_ROTATION,
             CLAP_OFFSET,
             3000L,                                  // clapLength
             CLAP_CENTROID_OFFSETS,
             centroidLengths,
             CLUSTER_SIZES,
-            rotated ? 0L : ClusterANNFieldMeta.NO_ROTATION,   // clarOffset
-            rotated ? 64L : ClusterANNFieldMeta.NO_ROTATION,  // clarLength
-            null                                    // ordToDoc, which the factory never consults
+            rotated ? 0L : ClusterANNFormatConstants.NO_ROTATION,   // clarOffset
+            rotated ? 64L : ClusterANNFormatConstants.NO_ROTATION,   // clarLength
+            null
         );
     }
 

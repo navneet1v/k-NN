@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.clusterann.format.rotation;
+package org.opensearch.knn.clusterann.read.rotation;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.store.IndexInput;

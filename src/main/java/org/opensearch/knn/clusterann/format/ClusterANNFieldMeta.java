@@ -5,12 +5,21 @@
 
 package org.opensearch.knn.clusterann.format;
 
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
 import org.apache.lucene.index.CorruptIndexException;
+import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
+
+import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.NO_ROTATION;
+import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
+import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
 
 /**
  * One field's entry in the {@code .clam} metadata file: the field's shape, how its vectors are encoded, and
@@ -44,29 +53,15 @@ import java.io.IOException;
  *
  * clarOffset                   long                     // .clar: rotation matrix; rotated fields only
  * clarLength                   long                     // rotated fields only
+ *
+ * ordToDoc                     OrdToDocDISIReaderConfiguration   // ord&rarr;doc config; sparse data stream lives in .clap
  * </pre>
  *
  */
-public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount, int centroidCount,
-    VectorSimilarityFunction similarityFunction, int docBits, int rotationId, int quantizerId, byte[] quantizerParams, long clacOffset,
-    long clacLength, long clacCentroidsOffset, long clacRotatedCentroidsOffset, long clapOffset, long clapLength,
-    long[] clapCentroidOffsets, int[] centroidLengths, int[] clusterSizes, long clarOffset, long clarLength,
-    OrdToDocDISIReaderConfiguration ordToDoc) {
-
-    /** {@link #rotationId()} of a field whose vectors were stored unrotated. */
-    public static final int ROTATION_NONE = 0;
-
-    /**
-     * {@link #rotationId()} of a field rotated by a random Gaussian block-diagonal rotation — a permutation of the
-     * dimensions and one small orthogonal block per group, held in {@code .clar}.
-     */
-    public static final int ROTATION_RANDOM_GAUSSIAN = 1;
-
-    /**
-     * {@link #clarOffset()}, {@link #clarLength()} and {@link #clacRotatedCentroidsOffset()} of a field that
-     * carries no rotation.
-     */
-    public static final long NO_ROTATION = -1L;
+@Getter
+@Accessors(fluent = true)
+@EqualsAndHashCode
+public final class ClusterANNFieldMeta {
 
     /** Bytes each cluster contributes to the arrays sized by {@code centroidCount}: one offset and two counts. */
     private static final int BYTES_PER_CENTROID = Long.BYTES + 2 * Integer.BYTES;
@@ -75,7 +70,59 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
     private static final byte SIMILARITY_IP = 1;
     private static final byte SIMILARITY_COSINE = 2;
 
-    public ClusterANNFieldMeta {
+    /** Block shift for the {@code ordToDoc} monotonic addresses; matches Lucene's flat/HNSW formats. */
+    private static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
+
+    private final int blockSize;
+    private final int dimension;
+    private final int vectorCount;
+    private final int centroidCount;
+    private final VectorSimilarityFunction similarityFunction;
+    private final int docBits;
+    private final int rotationId;
+    private final int quantizerId;
+    private final byte[] quantizerParams;
+    private final long clacOffset;
+    private final long clacLength;
+    private final long clacCentroidsOffset;
+    private final long clacRotatedCentroidsOffset;
+    private final long clapOffset;
+    private final long clapLength;
+    private final long[] clapCentroidOffsets;
+    private final int[] centroidLengths;
+    private final int[] clusterSizes;
+    private final long clarOffset;
+    private final long clarLength;
+
+    /** Read-derived config: {@code null} on the write side, and not part of the field's logical identity. */
+    @EqualsAndHashCode.Exclude
+    private final OrdToDocDISIReaderConfiguration ordToDoc;
+
+    // One field entry is a wide, flat record of shape + offsets; the positional all-args constructor mirrors it.
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    public ClusterANNFieldMeta(
+        int blockSize,
+        int dimension,
+        int vectorCount,
+        int centroidCount,
+        VectorSimilarityFunction similarityFunction,
+        int docBits,
+        int rotationId,
+        int quantizerId,
+        byte[] quantizerParams,
+        long clacOffset,
+        long clacLength,
+        long clacCentroidsOffset,
+        long clacRotatedCentroidsOffset,
+        long clapOffset,
+        long clapLength,
+        long[] clapCentroidOffsets,
+        int[] centroidLengths,
+        int[] clusterSizes,
+        long clarOffset,
+        long clarLength,
+        OrdToDocDISIReaderConfiguration ordToDoc
+    ) {
         requireLength(clapCentroidOffsets.length, centroidCount, "clapCentroidOffsets");
         requireLength(centroidLengths.length, centroidCount, "centroidLengths");
         requireLength(clusterSizes.length, centroidCount, "clusterSizes");
@@ -84,6 +131,28 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
         requireRotationAgrees(rotationId, clarOffset, "clarOffset");
         requireRotationAgrees(rotationId, clarLength, "clarLength");
         requireRotationAgrees(rotationId, clacRotatedCentroidsOffset, "clacRotatedCentroidsOffset");
+
+        this.blockSize = blockSize;
+        this.dimension = dimension;
+        this.vectorCount = vectorCount;
+        this.centroidCount = centroidCount;
+        this.similarityFunction = similarityFunction;
+        this.docBits = docBits;
+        this.rotationId = rotationId;
+        this.quantizerId = quantizerId;
+        this.quantizerParams = quantizerParams;
+        this.clacOffset = clacOffset;
+        this.clacLength = clacLength;
+        this.clacCentroidsOffset = clacCentroidsOffset;
+        this.clacRotatedCentroidsOffset = clacRotatedCentroidsOffset;
+        this.clapOffset = clapOffset;
+        this.clapLength = clapLength;
+        this.clapCentroidOffsets = clapCentroidOffsets;
+        this.centroidLengths = centroidLengths;
+        this.clusterSizes = clusterSizes;
+        this.clarOffset = clarOffset;
+        this.clarLength = clarLength;
+        this.ordToDoc = ordToDoc;
     }
 
     /**
@@ -152,6 +221,8 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
         }
 
         checkOffsets(meta, clacOffset, clacLength, clacCentroidsOffset, clapOffset, clapLength);
+
+        // The ord->doc config closes the entry; its sparse data stream lives in .clap, read lazily at query time.
         OrdToDocDISIReaderConfiguration ordToDoc = OrdToDocDISIReaderConfiguration.fromStoredMeta(meta, vectorCount);
 
         return new ClusterANNFieldMeta(
@@ -176,8 +247,73 @@ public record ClusterANNFieldMeta(int blockSize, int dimension, int vectorCount,
             clarOffset,
             clarLength,
             ordToDoc
-
         );
+    }
+
+    /**
+     * Writes this entry to {@code .clam} in the exact byte layout {@link #read} consumes (documented at the
+     * class level), positioned just past the field number (which the caller writes). {@code blockSize} is a
+     * file-header field shared by every entry, so it is not written here.
+     *
+     * <p>The entry closes with the ord&rarr;doc mapping via the stock {@link OrdToDocDISIReaderConfiguration}:
+     * its config is appended here to {@code meta}, and — for a sparse field — its {@code IndexedDISI} +
+     * {@code DirectMonotonic} data stream is written to {@code data} (the {@code .clap} postings output the
+     * config offsets point into). A dense field ({@code docsWithField.cardinality() == maxDoc}) writes only
+     * the config. This is the inverse of the {@link OrdToDocDISIReaderConfiguration#fromStoredMeta} call in
+     * {@link #read}, so the {@code ordToDoc} field is derived on read and is {@code null} here.
+     *
+     * @param meta          the metadata output ({@code .clam}) to append this entry to
+     * @param data          the data output ({@code .clap}) for the sparse ord&rarr;doc stream
+     * @param maxDoc        the segment's document count, used to detect the dense case
+     * @param docsWithField the docs that carry this field, in ordinal order
+     * @throws IOException if writing fails
+     */
+    public void write(IndexOutput meta, IndexOutput data, int maxDoc, DocsWithFieldSet docsWithField) throws IOException {
+        meta.writeVInt(dimension);
+        meta.writeVInt(vectorCount);
+        meta.writeVInt(centroidCount);
+        meta.writeByte(similarityCode(similarityFunction));
+        meta.writeByte((byte) docBits);
+        meta.writeByte((byte) rotationId);
+        meta.writeByte((byte) quantizerId);
+        meta.writeInt(quantizerParams.length);
+        meta.writeBytes(quantizerParams, 0, quantizerParams.length);
+
+        meta.writeLong(clacOffset);
+        meta.writeLong(clacLength);
+        meta.writeLong(clacCentroidsOffset);
+        if (hasRotation()) {
+            meta.writeLong(clacRotatedCentroidsOffset);
+        }
+
+        meta.writeLong(clapOffset);
+        meta.writeLong(clapLength);
+        for (long offset : clapCentroidOffsets) {
+            meta.writeLong(offset);
+        }
+        for (int length : centroidLengths) {
+            meta.writeInt(length);
+        }
+        for (int size : clusterSizes) {
+            meta.writeInt(size);
+        }
+
+        if (hasRotation()) {
+            meta.writeLong(clarOffset);
+            meta.writeLong(clarLength);
+        }
+
+        OrdToDocDISIReaderConfiguration.writeStoredMeta(DIRECT_MONOTONIC_BLOCK_SHIFT, meta, data, vectorCount, maxDoc, docsWithField);
+    }
+
+    /** The on-disk code for a similarity function; the inverse of {@link #similarityFunction}. */
+    private static byte similarityCode(VectorSimilarityFunction similarity) {
+        return switch (similarity) {
+            case EUCLIDEAN -> SIMILARITY_L2;
+            case DOT_PRODUCT -> SIMILARITY_IP;
+            case COSINE -> SIMILARITY_COSINE;
+            default -> throw new IllegalArgumentException("Unsupported similarity function: " + similarity);
+        };
     }
 
     /**

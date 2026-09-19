@@ -5,20 +5,15 @@
 
 package org.opensearch.knn.clusterann.read;
 
-import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
-
-import org.apache.lucene.index.VectorSimilarityFunction;
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.IOSupplier;
-import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.common.Nullable;
-import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
+import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizedCluster;
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizers;
 
+import org.opensearch.common.Nullable;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.Map;
 
 /**
  * Creates the {@link Cluster} for a centroid in one field.
@@ -31,8 +26,6 @@ public final class ClusterFactory {
     /** {@code quantizerId} of a scalar-quantized field. */
     public static final int QUANTIZER_SQ = 0;
 
-    /** One quantizer per similarity, shared by every cluster and query. Immutable, so sharing is safe. */
-    private final Map<VectorSimilarityFunction, OptimizedScalarQuantizer> quantizers;
     private final IndexInput postings;
     private final IndexInput centroids;
     private final IndexInput rotation;
@@ -51,12 +44,6 @@ public final class ClusterFactory {
         this.postings = clap;
         this.centroids = clac;
         this.rotation = clar;
-
-        EnumMap<VectorSimilarityFunction, OptimizedScalarQuantizer> quantizers = new EnumMap<>(VectorSimilarityFunction.class);
-        for (VectorSimilarityFunction similarity : VectorSimilarityFunction.values()) {
-            quantizers.put(similarity, new OptimizedScalarQuantizer(similarity));
-        }
-        this.quantizers = Collections.unmodifiableMap(quantizers);
 
         // The centroids a scan centres on: the rotated ones for a rotated field, since its codes live in that space,
         // and the only ones there are otherwise. Sliced rather than pointed at, so the cursor cannot reach a
@@ -100,7 +87,7 @@ public final class ClusterFactory {
             fieldMeta.blockSize(),
             fieldMeta.dimension(),
             scalarEncoding(fieldMeta.docBits()),
-            this.quantizers.get(fieldMeta.similarityFunction()),
+            ScalarQuantizers.forSimilarity(fieldMeta.similarityFunction()),
             fieldMeta.similarityFunction()
         );
     }
