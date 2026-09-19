@@ -52,7 +52,17 @@ rewrite_fmt_to_knn() {
     s/^import javax\.annotation\.Nullable;$/import org.opensearch.common.Nullable;/;
     $_ = "" if /^import javax\.annotation\.concurrent\.(Not)?ThreadSafe;$/;
     $_ = "" if /^\@(Not)?ThreadSafe$/;
-  ' | awk '!(/^import / && seen[$0]++)' | add_backport_import   # drop a duplicate import the rewrite may have produced
+  ' | awk '!(/^import / && seen[$0]++)' | drop_same_package_imports | add_backport_import
+}
+
+# The rewrite can turn a cross-package import into one naming the file's own package (formats imports
+# ScalarEncoding from Lucene into read.block.scalar; k-NN keeps it there). Spotless would strip it anyway.
+drop_same_package_imports() {
+  perl -0pe '
+    if (/^package ([\w.]+);/m) {
+      my $pkg = quotemeta($1);
+      s/^import $pkg\.\w+;\n//mg;
+    }'
 }
 
 # A file that now calls Lucene104Backports but lives outside read.block.scalar needs the import; put it next to
@@ -70,8 +80,9 @@ strip_header() {
   awk 'NR==1 && /^\/\*$/ {skip=1} skip { if (/^ \*\/$/) {skip=0; blank=1}; next } blank && /^$/ {blank=0; next} {blank=0; print}' | cat -s
 }
 
-# Whitespace-insensitive fingerprint of a Java file (stdin -> stdout): formats has no formatter and k-NN's
-# spotless rewraps long signatures, so byte identity is not the bar; token identity is.
+# Fingerprint of a Java file for comparison (stdin -> stdout). Formats has no formatter and k-NN's spotless
+# rewraps long signatures and drops unused imports, so byte identity is not the bar: tokens outside the import
+# block are. An import that matters shows up as a changed reference in the body.
 fingerprint() {
-  tr -d '[:space:]'
+  grep -v '^import ' | tr -d '[:space:]'
 }
