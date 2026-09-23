@@ -189,7 +189,6 @@ public final class HierarchicalKMeans {
 
         int[] assignments = new int[n];
         int[] finalAssignments = assignments;
-        VectorMath.DistanceFunction distanceFn = VectorMath.distanceFunction(config.metric);
 
         // Each worker gets its own vector view (thread-safe over encrypted IndexInput);
         // ParallelVectorProcessor runs inline when the executor is null.
@@ -203,7 +202,7 @@ public final class HierarchicalKMeans {
                 // Coarse step: nearest `probe` top-level centroids via a tiny insertion-sorted list.
                 int filled = 0;
                 for (int t = 0; t < numTop; t++) {
-                    float d = distanceFn.distance(vec, topCentroids[t]);
+                    float d = VectorMath.squareDistance(vec, topCentroids[t]);
                     if (filled < probe) {
                         int p = filled++;
                         while (p > 0 && topDist[p - 1] > d) {
@@ -230,7 +229,7 @@ public final class HierarchicalKMeans {
                 int bestC = -1;
                 for (int j = 0; j < filled; j++) {
                     for (int leaf : leavesByTop.get(topIdx[j])) {
-                        float dist = distanceFn.distance(vec, leafCentroids[leaf]);
+                        float dist = VectorMath.squareDistance(vec, leafCentroids[leaf]);
                         if (dist < bestDist) {
                             bestDist = dist;
                             bestC = leaf;
@@ -241,7 +240,7 @@ public final class HierarchicalKMeans {
                 // top-level cluster contributed none), scan all leaves so every vector is assigned.
                 if (bestC < 0) {
                     for (int leaf = 0; leaf < numLeaves; leaf++) {
-                        float dist = distanceFn.distance(vec, leafCentroids[leaf]);
+                        float dist = VectorMath.squareDistance(vec, leafCentroids[leaf]);
                         if (dist < bestDist) {
                             bestDist = dist;
                             bestC = leaf;

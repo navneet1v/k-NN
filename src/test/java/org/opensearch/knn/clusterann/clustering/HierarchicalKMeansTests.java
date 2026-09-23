@@ -6,6 +6,7 @@
 package org.opensearch.knn.clusterann.clustering;
 
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -256,5 +257,72 @@ class HierarchicalKMeansTests {
             vecs.add(v);
         }
         return FloatVectorValues.fromFloats(vecs, dim);
+    }
+
+    /**
+     * Every emitted centroid must own at least one vector. The posting writer depends on it -
+     * OptimizedScalarQuantizedClusterWriter rejects a zero-member cluster outright - and the split branch of
+     * {@link HierarchicalKMeans#cluster} checks emptiness against the top-level assignment and then replaces that
+     * assignment with a coarse-to-fine one, so nothing verifies the result it actually returns.
+     *
+     * <p>Under an inner-product metric this breaks badly: centroids are means, so their norms differ with the population
+     * that produced them, and inner product rewards a large norm regardless of direction. A handful of high-norm
+     * centroids win nearly every vector and the rest are left with none. Euclidean assignment is consistent with means
+     * and does not show it, which is why only a real inner-product corpus surfaced this.
+     */
+    @Test
+    void testCluster_innerProduct_everyCentroidHasMembers() throws IOException {
+        FloatVectorValues source = skewedPopulations(5000, 128, 20, 5L);
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(512)
+            .metric(VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT)
+            .seed(42L)
+            .build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(source, config, null);
+
+        int[] members = new int[result.numCentroids()];
+        for (int assignment : result.assignments()) {
+            members[assignment]++;
+        }
+        List<Integer> empty = new ArrayList<>();
+        for (int centroid = 0; centroid < members.length; centroid++) {
+            if (members[centroid] == 0) {
+                empty.add(centroid);
+            }
+        }
+        assertTrue(
+            empty.isEmpty(),
+            () -> empty.size()
+                + " of "
+                + result.numCentroids()
+                + " centroids own no vectors "
+                + empty
+                + "; the posting writer rejects a zero-member cluster, so this cannot be written"
+        );
+    }
+
+    /**
+     * Groups of wildly uneven population: 80% of the vectors in one, the rest spread over the others. The imbalance is
+     * what makes centroid norms differ, and one oversized group is what forces the split branch to run.
+     */
+    private static FloatVectorValues skewedPopulations(int size, int dim, int groups, long seed) {
+        Random rng = new Random(seed);
+        float[][] centres = new float[groups][dim];
+        for (int group = 0; group < groups; group++) {
+            for (int d = 0; d < dim; d++) {
+                centres[group][d] = rng.nextFloat() * 2f - 1f;
+            }
+        }
+        List<float[]> vectors = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            int group = rng.nextInt(10) < 8 ? 0 : 1 + rng.nextInt(groups - 1);
+            float[] vector = new float[dim];
+            for (int d = 0; d < dim; d++) {
+                vector[d] = centres[group][d] + (float) rng.nextGaussian() * 0.05f;
+            }
+            vectors.add(vector);
+        }
+        return FloatVectorValues.fromFloats(vectors, dim);
     }
 }
