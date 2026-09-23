@@ -53,7 +53,7 @@ class OptimizedScalarQuantizedClusterWriterTest {
     private static final int CODE_LENGTH = ENCODING.getDocPackedLength(DISCRETE_DIMS);
 
     private static OptimizedScalarQuantizedClusterWriter writer(final int blockSize, final float[] centroid) {
-        return new OptimizedScalarQuantizedClusterWriter(blockSize, DIMENSION, METRIC, (byte) DOC_BITS, centroid);
+        return new OptimizedScalarQuantizedClusterWriter(blockSize, DIMENSION, METRIC, DOC_BITS, centroid);
     }
 
     @ParameterizedTest(name = "count={0}, blockSize={1}")

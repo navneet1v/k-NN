@@ -54,7 +54,7 @@ public final class OptimizedScalarQuantizedClusterWriter implements ClusterWrite
         final int blockSize,
         final int dimension,
         final VectorSimilarityFunction metric,
-        final byte docBits,
+        final int docBits,
         final float[] centroid
     ) {
         this.blockSize = blockSize;

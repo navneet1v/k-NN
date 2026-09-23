@@ -8,7 +8,7 @@ package org.opensearch.knn.clusterann.write.postings;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexOutput;
-import org.opensearch.knn.clusterann.write.QuantizationParams;
+import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterMembers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterRegion;
 import org.opensearch.knn.clusterann.ClusteringResult;
@@ -29,12 +29,12 @@ import java.io.IOException;
 public final class ClusterAnnPostingsWriter implements PostingsWriter {
 
     private final int blockSize;
-    private final QuantizationParams quantization;
+    private final QuantizationParams quantizationParams;
     private final Rotation rotation;
 
-    public ClusterAnnPostingsWriter(final int blockSize, final QuantizationParams quantization, final Rotation rotation) {
+    public ClusterAnnPostingsWriter(final int blockSize, final QuantizationParams quantizationParams, final Rotation rotation) {
         this.blockSize = blockSize;
-        this.quantization = quantization;
+        this.quantizationParams = quantizationParams;
         this.rotation = rotation;
     }
 
@@ -92,7 +92,13 @@ public final class ClusterAnnPostingsWriter implements PostingsWriter {
     ) throws IOException {
         final int dimension = vectors.dimension();
         final float[] preparedCentroid = rotateCentroid(rotation, centroid, dimension);
-        final ClusterWriter clusterWriter = ClusterWriterFactory.newWriter(quantization, blockSize, dimension, metric, preparedCentroid);
+        final ClusterWriter clusterWriter = ClusterWriterFactory.newWriter(
+            quantizationParams,
+            blockSize,
+            dimension,
+            metric,
+            preparedCentroid
+        );
         final FloatVectorValues clusterVectors = new PreparedFloatVectorValues(vectors, members.ordinals(), rotation);
         return clusterWriter.write(out, clusterVectors, members);
     }

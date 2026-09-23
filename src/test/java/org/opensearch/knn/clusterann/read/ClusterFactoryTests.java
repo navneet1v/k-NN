@@ -79,7 +79,7 @@ class ClusterFactoryTests {
     @ValueSource(ints = { 1, 2 })
     void testCreate_whenQuantizerIsScalar_thenBuildsAClusterForThatWidth(int docBits) throws IOException {
         // given / when
-        Cluster cluster = factory(fieldMeta(ClusterFactory.QUANTIZER_SQ, docBits)).create(0);
+        Cluster cluster = factory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, docBits)).create(0);
 
         // then
         assertEquals(CLUSTER_SIZES[0], cluster.size());
@@ -107,7 +107,7 @@ class ClusterFactoryTests {
         // given / when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> factory(fieldMeta(ClusterFactory.QUANTIZER_SQ, docBits)).create(0)
+            () -> factory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, docBits)).create(0)
         );
 
         // then
@@ -124,7 +124,7 @@ class ClusterFactoryTests {
     @CsvSource({ "0, 10", "1, 6", "2, 3" })
     void testCreate_thenTakesTheClusterSizeFromTheFieldMetadata(int ordinal, int expectedSize) throws IOException {
         // given / when
-        Cluster cluster = factory(fieldMeta(ClusterFactory.QUANTIZER_SQ, 1)).create(ordinal);
+        Cluster cluster = factory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1)).create(ordinal);
 
         // then
         assertEquals(expectedSize, cluster.size());
@@ -140,7 +140,12 @@ class ClusterFactoryTests {
     void testCreate_thenReadsNoCentroid() throws IOException {
         // given
         CountingInput centroids = new CountingInput(clac(), new int[1]);
-        ClusterFactory factory = new ClusterFactory(fieldMeta(ClusterFactory.QUANTIZER_SQ, 1), clap(), centroids, null);
+        ClusterFactory factory = new ClusterFactory(
+            fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1),
+            clap(),
+            centroids,
+            null
+        );
 
         // when
         Cluster cluster = factory.create(0);
@@ -162,7 +167,7 @@ class ClusterFactoryTests {
         // when / then
         assertThrows(
             Exception.class,
-            () -> new ClusterFactory(fieldMeta(ClusterFactory.QUANTIZER_SQ, 1), clap(), shortClac, null),
+            () -> new ClusterFactory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1), clap(), shortClac, null),
             "a centroid region running past the end of the file cannot be sliced"
         );
     }
@@ -183,7 +188,7 @@ class ClusterFactoryTests {
         // when / then
         assertThrows(
             Exception.class,
-            () -> new ClusterFactory(fieldMeta(ClusterFactory.QUANTIZER_SQ, 1), shortClap, clac(), null).create(2),
+            () -> new ClusterFactory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1), shortClap, clac(), null).create(2),
             "a posting running past the end of the file cannot be sliced"
         );
     }
@@ -192,7 +197,7 @@ class ClusterFactoryTests {
     @Test
     void testCreate_whenThePostingIsTooShortForItsHeader_thenThrows() throws IOException {
         // given — cluster 0 holds 10 entries, whose header alone needs 82 bytes
-        ClusterANNFieldMeta fieldMeta = fieldMeta(ClusterFactory.QUANTIZER_SQ, 1, new int[] { 8, 1000, 1000 });
+        ClusterANNFieldMeta fieldMeta = fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1, new int[] { 8, 1000, 1000 });
 
         // when / then
         assertThrows(Exception.class, () -> factory(fieldMeta).create(0));
@@ -210,7 +215,7 @@ class ClusterFactoryTests {
     void testCreate_thenReadsCentroidsFromTheRegionTheRotationImplies(boolean rotated) throws IOException {
         // given
         ClusterFactory factory = new ClusterFactory(
-            fieldMeta(ClusterFactory.QUANTIZER_SQ, 1, CENTROID_LENGTHS, rotated),
+            fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1, CENTROID_LENGTHS, rotated),
             clap(),
             centroidsWithBothRegions(),
             rotated ? open("clar", 64) : null

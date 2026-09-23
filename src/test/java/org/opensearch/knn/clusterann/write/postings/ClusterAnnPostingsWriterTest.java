@@ -19,13 +19,13 @@ import org.apache.lucene.util.quantization.OptimizedScalarQuantizer.Quantization
 import org.junit.jupiter.api.Test;
 import org.opensearch.knn.clusterann.format.rotation.Rotation;
 import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
-import org.opensearch.knn.clusterann.write.QuantizationParams;
+import org.opensearch.knn.clusterann.format.ClusterANNEncoding;
+import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.ClusteringResult;
 
 import java.io.IOException;
 import java.util.List;
 
-import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -240,7 +240,7 @@ class ClusterAnnPostingsWriterTest {
     }
 
     private static QuantizationParams quantization() {
-        return new QuantizationParams(QUANTIZER_OPTIMIZED_SQ, (byte) DOC_BITS);
+        return QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, DOC_BITS);
     }
 
     private record Expected(float lower, float upper, float add, int sum, byte[] code) {

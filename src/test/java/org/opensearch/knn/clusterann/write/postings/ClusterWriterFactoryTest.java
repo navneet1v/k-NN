@@ -7,15 +7,18 @@ package org.opensearch.knn.clusterann.write.postings;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.junit.jupiter.api.Test;
+import org.opensearch.knn.clusterann.format.ClusterANNEncoding;
 import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
-import org.opensearch.knn.clusterann.write.QuantizationParams;
+import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.block.scalar.OptimizedScalarQuantizedClusterWriter;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Verifies {@link ClusterWriterFactory} maps a quantizer scheme to its cluster writer and rejects unknown schemes.
+ * Verifies {@link ClusterWriterFactory} maps a quantization backend to its cluster writer and to its stable
+ * {@code .clam} {@code quantizerId}. Unsupported backends can't be constructed — {@link ClusterANNEncoding} is a
+ * closed enum and the factory's switches are exhaustive — so adding one is a compile error, not a runtime check.
  */
 class ClusterWriterFactoryTest {
 
@@ -23,9 +26,9 @@ class ClusterWriterFactoryTest {
     private static final VectorSimilarityFunction METRIC = VectorSimilarityFunction.EUCLIDEAN;
 
     @Test
-    void buildsScalarQuantizedWriterForOptimizedSqScheme() {
+    void buildsScalarQuantizedWriterForOptimizedSqBackend() {
         final ClusterWriter writer = ClusterWriterFactory.newWriter(
-            new QuantizationParams(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, (byte) 1),
+            QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
             8,
             DIMENSION,
             METRIC,
@@ -35,11 +38,10 @@ class ClusterWriterFactoryTest {
     }
 
     @Test
-    void rejectsUnsupportedScheme() {
-        final QuantizationParams unsupported = new QuantizationParams(99, (byte) 1);
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> ClusterWriterFactory.newWriter(unsupported, 8, DIMENSION, METRIC, new float[DIMENSION])
+    void mapsOptimizedSqBackendToItsOnDiskQuantizerId() {
+        assertEquals(
+            ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ,
+            ClusterWriterFactory.quantizerId(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION)
         );
     }
 }

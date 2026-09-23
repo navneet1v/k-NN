@@ -267,7 +267,7 @@ class ClustersTests {
             similarity,
             1,                                      // docBits, one bit per dimension
             ClusterANNFormatConstants.ROTATION_NONE,
-            ClusterFactory.QUANTIZER_SQ,
+            ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ,
             new byte[0],
             0L,                                     // clacOffset
             4096L,                                  // clacLength

@@ -9,6 +9,7 @@ import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.IOSupplier;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizedCluster;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizers;
 
@@ -24,9 +25,6 @@ import static org.opensearch.knn.clusterann.read.CentroidVectorValues.floatsPerC
  * read path that knows the concrete types. Everything else works through {@link Cluster}.
  */
 public final class ClusterFactory {
-
-    /** {@code quantizerId} of a scalar-quantized field. */
-    public static final int QUANTIZER_SQ = 0;
 
     private final IndexInput postings;
     private final IndexInput centroids;
@@ -67,7 +65,7 @@ public final class ClusterFactory {
      *     reader does not support
      */
     public Cluster create(int ordinal) throws IOException {
-        if (this.fieldMeta.quantizerId() != QUANTIZER_SQ) {
+        if (this.fieldMeta.quantizerId() != ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ) {
             throw new IllegalArgumentException("Unsupported quantizerId: " + fieldMeta.quantizerId());
         }
 

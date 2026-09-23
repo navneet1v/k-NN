@@ -15,7 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
-import org.opensearch.knn.clusterann.write.QuantizationParams;
+import org.opensearch.knn.clusterann.format.ClusterANNEncoding;
+import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterMembers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterRegion;
 import org.opensearch.knn.clusterann.ClusteringResult;
@@ -80,7 +81,7 @@ class ClusterAnnPostingsWriterUnitTest {
                 try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
                     layout = new ClusterAnnPostingsWriter(
                         BLOCK_SIZE,
-                        new QuantizationParams(0, (byte) 1),
+                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
                         RotationFormats.create(ROTATION_NONE, DIMENSION)
                     ).write(out, clustering(), source(), METRIC);
                 }
@@ -132,7 +133,7 @@ class ClusterAnnPostingsWriterUnitTest {
                 try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
                     new ClusterAnnPostingsWriter(
                         BLOCK_SIZE,
-                        new QuantizationParams(0, (byte) 1),
+                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
                         RotationFormats.create(ROTATION_NONE, DIMENSION)
                     ).write(out, clustering(), source(), VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
                 }
@@ -164,7 +165,7 @@ class ClusterAnnPostingsWriterUnitTest {
                     out.writeBytes(new byte[prefix], prefix); // advance past a non-zero region start
                     layout = new ClusterAnnPostingsWriter(
                         BLOCK_SIZE,
-                        new QuantizationParams(0, (byte) 1),
+                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
                         RotationFormats.create(ROTATION_NONE, DIMENSION)
                     ).write(out, clustering(), source(), METRIC);
                 }
