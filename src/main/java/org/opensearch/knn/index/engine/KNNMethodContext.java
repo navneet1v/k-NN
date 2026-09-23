@@ -15,6 +15,7 @@ import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.knn.index.SpaceType;
+import org.opensearch.knn.index.engine.engineless.EnginelessMethodRegistry;
 import org.opensearch.core.xcontent.ToXContentFragment;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.mapper.MapperParsingException;
@@ -227,7 +228,14 @@ public class KNNMethodContext implements ToXContentFragment, Writeable {
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.field(KNN_ENGINE, knnEngine.getName());
+        // An engineless method (see EnginelessMethodRegistry) routes on its name and takes no engine: the mapper
+        // rejects any user-supplied engine for it, so emitting the (UNDEFINED) engine here would make the mapping
+        // OpenSearch re-parses from cluster state fail. Omit it unless the source mapping carried one explicitly,
+        // mirroring how upstream handles the engine-agnostic flat method (opensearch-project/k-NN#3544).
+        final boolean isEnginelessMethod = EnginelessMethodRegistry.isEnginelessMethod(methodComponentContext.getName());
+        if (isEnginelessMethod == false || isEngineConfigured) {
+            builder.field(KNN_ENGINE, knnEngine.getName());
+        }
         builder.field(METHOD_PARAMETER_SPACE_TYPE, spaceType.getValue());
         builder = methodComponentContext.toXContent(builder, params);
         return builder;

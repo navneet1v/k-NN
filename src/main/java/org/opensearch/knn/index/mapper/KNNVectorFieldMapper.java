@@ -617,6 +617,11 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
          * top-level) up front — engineless methods route on the method name, not any
          * {@link KNNEngine}. Skips engine resolution, engine-restriction checks, and engine-scoped
          * validation — those are irrelevant when there is no engine.
+         * <p>
+         * The check is safe against the cluster-state re-parse because
+         * {@link KNNMethodContext#toXContent} omits the engine for a registered engineless method
+         * unless the source mapping carried one; an engine key on such a method therefore always
+         * came from the user.
          */
         private void resolveEnginelessMethodComponents(
             KNNVectorFieldMapper.Builder builder,

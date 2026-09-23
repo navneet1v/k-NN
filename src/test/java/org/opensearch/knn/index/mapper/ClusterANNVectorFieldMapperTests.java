@@ -23,6 +23,7 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.xcontent.XContentFactory;
+import org.opensearch.core.xcontent.ToXContent;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.mapper.ContentPath;
 import org.opensearch.index.mapper.Mapper;
@@ -38,6 +39,7 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.MethodComponentContext;
 import org.opensearch.knn.indices.ModelDao;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 
@@ -100,6 +102,42 @@ public class ClusterANNVectorFieldMapperTests extends KNNTestCase {
     public void testEngineRejected() {
         final MapperParsingException e = expectThrows(MapperParsingException.class, () -> buildMapper(SpaceType.L2, "lucene", null));
         assertTrue(e.getMessage(), e.getMessage().contains("engine must not be specified"));
+    }
+
+    /** Even {@code "engine": "undefined"} is a user-supplied engine: an engineless method takes none at all. */
+    public void testExplicitUndefinedEngineRejected() {
+        final MapperParsingException e = expectThrows(
+            MapperParsingException.class,
+            () -> buildMapper(SpaceType.L2, KNNEngine.UNDEFINED.getName(), null)
+        );
+        assertTrue(e.getMessage(), e.getMessage().contains("engine must not be specified"));
+    }
+
+    /**
+     * Index creation parses the user's mapping once, then OpenSearch serializes it into cluster state and parses it
+     * again. An engineless method must serialize without an engine so the second pass sees the same shape the user
+     * wrote and the strict engine check still holds.
+     */
+    @SneakyThrows
+    public void testMappingSurvivesSerializationRoundTrip() {
+        final ClusterANNVectorFieldMapper first = buildMapper(SpaceType.L2, null, 16);
+
+        final XContentBuilder serialized = XContentFactory.jsonBuilder().startObject();
+        first.toXContent(serialized, ToXContent.EMPTY_PARAMS);
+        serialized.endObject();
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> fieldMapping = (Map<String, Object>) xContentBuilderToMap(serialized).get(FIELD);
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> method = (Map<String, Object>) fieldMapping.get(KNN_METHOD);
+        assertFalse("engineless method must serialize without an engine: " + method, method.containsKey(KNN_ENGINE));
+        assertEquals(METHOD_CLUSTER, method.get(NAME));
+
+        final ClusterANNVectorFieldMapper second = parseMapper(fieldMapping);
+        final KNNMappingConfig config = second.fieldType().getKnnMappingConfig();
+        assertEquals(KNNEngine.UNDEFINED, config.getKnnMethodContext().orElseThrow().getKnnEngine());
+        assertEquals(CompressionLevel.x16, config.getCompressionLevel());
+        assertEquals("2", second.luceneFieldType().getAttributes().get(SQ_BITS));
+        assertTrue(perFieldFormat(second).getKnnVectorsFormatForField(FIELD) instanceof KNN1030ClusterANNVectorsFormat);
     }
 
     @SneakyThrows
@@ -172,12 +210,17 @@ public class ClusterANNVectorFieldMapperTests extends KNNTestCase {
             xContentBuilder.field(KNN_ENGINE, engine);
         }
         xContentBuilder.endObject().endObject();
+        return parseMapper(xContentBuilderToMap(xContentBuilder));
+    }
 
+    /** Parses one field's mapping node through the real TypeParser and builds the field mapper. */
+    @SneakyThrows
+    private ClusterANNVectorFieldMapper parseMapper(Map<String, Object> fieldMapping) {
         final Settings settings = Settings.builder().put(settings(CURRENT).build()).put(KNN_INDEX, true).build();
         final KNNVectorFieldMapper.TypeParser typeParser = new KNNVectorFieldMapper.TypeParser(() -> mock(ModelDao.class));
         final KNNVectorFieldMapper.Builder builder = (KNNVectorFieldMapper.Builder) typeParser.parse(
             FIELD,
-            xContentBuilderToMap(xContentBuilder),
+            fieldMapping,
             new KNNVectorFieldMapperTests().buildParserContext("test", settings)
         );
         final KNNVectorFieldMapper mapper = builder.build(new Mapper.BuilderContext(settings, new ContentPath()));

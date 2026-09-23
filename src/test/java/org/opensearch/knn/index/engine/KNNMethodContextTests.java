@@ -23,6 +23,7 @@ import java.util.Map;
 import org.opensearch.core.common.io.stream.StreamInput;
 
 import static org.opensearch.knn.common.KNNConstants.KNN_ENGINE;
+import static org.opensearch.knn.common.KNNConstants.METHOD_CLUSTER;
 import static org.opensearch.knn.common.KNNConstants.NAME;
 import static org.opensearch.knn.common.KNNConstants.PARAMETERS;
 import static org.opensearch.knn.common.KNNConstants.METHOD_PARAMETER_SPACE_TYPE;
@@ -230,6 +231,46 @@ public class KNNMethodContextTests extends KNNTestCase {
         assertEquals(methodName, out.get(NAME));
         assertEquals(spaceType, out.get(METHOD_PARAMETER_SPACE_TYPE));
         assertEquals(knnEngine, out.get(KNN_ENGINE));
+    }
+
+    /**
+     * An engineless method with no engine in the source mapping serializes without one, so the mapping OpenSearch
+     * re-parses from cluster state is not rejected by the mapper's engine check.
+     */
+    public void testToXContent_enginelessMethod_whenEngineNotConfigured_thenEngineOmitted() throws IOException {
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(NAME, METHOD_CLUSTER)
+            .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+            .endObject();
+        KNNMethodContext knnMethodContext = KNNMethodContext.parse(xContentBuilderToMap(xContentBuilder));
+        assertFalse(knnMethodContext.isEngineConfigured());
+
+        XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
+        builder = knnMethodContext.toXContent(builder, ToXContent.EMPTY_PARAMS).endObject();
+
+        Map<String, Object> out = xContentBuilderToMap(builder);
+        assertEquals(METHOD_CLUSTER, out.get(NAME));
+        assertEquals(SpaceType.L2.getValue(), out.get(METHOD_PARAMETER_SPACE_TYPE));
+        assertFalse("engine must be omitted for an engineless method: " + out, out.containsKey(KNN_ENGINE));
+    }
+
+    /** An engine the source mapping did carry is preserved verbatim, even on an engineless method. */
+    public void testToXContent_enginelessMethod_whenEngineConfigured_thenEnginePreserved() throws IOException {
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
+            .startObject()
+            .field(NAME, METHOD_CLUSTER)
+            .field(METHOD_PARAMETER_SPACE_TYPE, SpaceType.L2.getValue())
+            .field(KNN_ENGINE, KNNEngine.UNDEFINED.getName())
+            .endObject();
+        KNNMethodContext knnMethodContext = KNNMethodContext.parse(xContentBuilderToMap(xContentBuilder));
+        assertTrue(knnMethodContext.isEngineConfigured());
+
+        XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
+        builder = knnMethodContext.toXContent(builder, ToXContent.EMPTY_PARAMS).endObject();
+
+        Map<String, Object> out = xContentBuilderToMap(builder);
+        assertEquals(KNNEngine.UNDEFINED.getName(), out.get(KNN_ENGINE));
     }
 
     public void testEquals() {
