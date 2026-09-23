@@ -20,6 +20,8 @@ import org.opensearch.knn.index.codec.params.KNNScalarQuantizedVectorsFormatPara
 import org.opensearch.knn.index.codec.params.KNNVectorsFormatParams;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.KNNMethodContext;
+import org.opensearch.knn.index.engine.engineless.EnginelessCodecFormatResolver;
+import org.opensearch.knn.index.engine.engineless.EnginelessMethodRegistry;
 import org.opensearch.knn.index.mapper.KNNMappingConfig;
 import org.opensearch.knn.index.mapper.KNNVectorFieldType;
 
@@ -105,8 +107,13 @@ public abstract class BasePerFieldKnnVectorsFormat extends PerFieldKnnVectorsFor
         final KNNMethodContext knnMethodContext = knnMappingConfig.getKnnMethodContext()
             .orElseThrow(() -> new IllegalArgumentException("KNN method context cannot be empty"));
         nativeIndexBuildStrategyFactory.setKnnLibraryIndexingContext(knnMappingConfig.getKnnLibraryIndexingContext());
+        final String methodName = knnMethodContext.getMethodComponentContext().getName();
         final KNNEngine engine = knnMethodContext.getKnnEngine();
         final Map<String, Object> params = knnMethodContext.getMethodComponentContext().getParameters();
+
+        if (EnginelessMethodRegistry.isEnginelessMethod(methodName)) {
+            return EnginelessCodecFormatResolver.resolve(field, knnMethodContext, params);
+        }
 
         if (engine == KNNEngine.LUCENE) {
             if (params != null && params.containsKey(METHOD_ENCODER_PARAMETER)) {

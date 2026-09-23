@@ -49,6 +49,8 @@ import org.opensearch.knn.index.VectorField;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.ResolvedMethodContext;
 import org.opensearch.knn.index.engine.SpaceTypeResolver;
+import org.opensearch.knn.index.engine.engineless.EnginelessMethod;
+import org.opensearch.knn.index.engine.engineless.EnginelessMethodRegistry;
 import org.opensearch.knn.index.util.IndexUtil;
 import org.opensearch.knn.indices.ModelDao;
 import static org.opensearch.knn.common.KNNConstants.DEFAULT_VECTOR_DATA_TYPE_FIELD;
@@ -269,6 +271,18 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
             return KNNVectorFieldMapper.Defaults.IGNORE_MALFORMED;
         }
 
+        /**
+         * Look up an engineless method from a resolved {@link KNNMethodContext} by its method
+         * component name. Returns empty when the context is null / has no method component /
+         * component name is not registered as engineless.
+         */
+        private static Optional<EnginelessMethod> lookupEnginelessMethod(KNNMethodContext resolvedMethodContext) {
+            if (resolvedMethodContext == null || resolvedMethodContext.getMethodComponentContext() == null) {
+                return Optional.empty();
+            }
+            return EnginelessMethodRegistry.get(resolvedMethodContext.getMethodComponentContext().getName());
+        }
+
         @Override
         public KNNVectorFieldMapper build(BuilderContext context) {
             if (useFullFieldNameValidation(indexCreatedVersion)) {
@@ -296,6 +310,27 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                     originalParameters,
                     knnMethodConfigContext
                 );
+            }
+
+            // Engineless dispatch: if the resolved method is registered as engineless, hand off to
+            // its own mapper factory. Must come before both FlatVectorFieldMapper (which triggers
+            // on a null resolvedKnnMethodContext) and EngineFieldMapper (which assumes a KNNEngine).
+            Optional<EnginelessMethod> engineless = lookupEnginelessMethod(originalParameters.getResolvedKnnMethodContext());
+            if (engineless.isPresent()) {
+                return engineless.get()
+                    .getMapperFactory()
+                    .createFieldMapper(
+                        buildFullName(context),
+                        name,
+                        metaValue,
+                        knnMethodConfigContext,
+                        multiFieldsBuilder,
+                        copyToBuilder,
+                        ignoreMalformed,
+                        stored.getValue(),
+                        hasDocValues.get(),
+                        originalParameters
+                    );
             }
 
             // return FlatVectorFieldMapper only for indices that are created on or after 2.17.0, for others, use
@@ -433,6 +468,16 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 setSpaceType(builder.originalParameters.getKnnMethodContext(), resolvedSpaceType);
                 validateSpaceType(builder);
 
+                // Engineless short-circuit: if the requested method is registered engineless, run
+                // its own resolver (no engine resolution, no engine-scoped validation) and skip the
+                // rest of the engine-backed pipeline.
+                Optional<EnginelessMethod> engineless = tryEngineless(builder);
+                if (engineless.isPresent()) {
+                    resolveEnginelessMethodComponents(builder, parserContext, resolvedSpaceType, engineless.get());
+                    validateDimensionSet(builder);
+                    return builder;
+                }
+
                 // Resolve method component. For the legacy case where space type can be configured at index level,
                 // it first tries to use the given one then tries to get it from index setting when the space type is UNDEFINED.
                 resolveKNNMethodComponents(builder, parserContext, resolvedSpaceType);
@@ -552,6 +597,62 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                     )
                 );
             }
+        }
+
+        /**
+         * Consult the engineless registry using the parsed method component name. Returns empty if
+         * the user did not supply a method, or the name is not a registered engineless method.
+         */
+        private Optional<EnginelessMethod> tryEngineless(KNNVectorFieldMapper.Builder builder) {
+            KNNMethodContext parsed = builder.originalParameters.getKnnMethodContext();
+            if (parsed == null || parsed.getMethodComponentContext() == null) {
+                return Optional.empty();
+            }
+            return EnginelessMethodRegistry.get(parsed.getMethodComponentContext().getName());
+        }
+
+        /**
+         * Run the engineless method's resolver and populate the builder analogously to
+         * {@link #resolveKNNMethodComponents}. Rejects any user-supplied engine (method-level or
+         * top-level) up front — engineless methods route on the method name, not any
+         * {@link KNNEngine}. Skips engine resolution, engine-restriction checks, and engine-scoped
+         * validation — those are irrelevant when there is no engine.
+         */
+        private void resolveEnginelessMethodComponents(
+            KNNVectorFieldMapper.Builder builder,
+            ParserContext parserContext,
+            SpaceType resolvedSpaceType,
+            EnginelessMethod method
+        ) {
+            KNNMethodContext parsed = builder.originalParameters.getKnnMethodContext();
+            String topLevelEngineName = builder.topLevelEngine.get();
+            boolean topLevelEngineSpecified = topLevelEngineName != null
+                && !KNNEngine.UNDEFINED.getName().equalsIgnoreCase(topLevelEngineName);
+            if (parsed.isEngineConfigured() || topLevelEngineSpecified) {
+                throw new MapperParsingException(
+                    String.format(
+                        Locale.ROOT,
+                        "engine must not be specified for engineless method \"%s\"",
+                        parsed.getMethodComponentContext().getName()
+                    )
+                );
+            }
+
+            builder.setKnnMethodConfigContext(
+                KNNMethodConfigContext.builder()
+                    .vectorDataType(builder.originalParameters.getVectorDataType())
+                    .versionCreated(parserContext.indexVersionCreated())
+                    .dimension(builder.originalParameters.getDimension())
+                    .mode(Mode.fromName(builder.originalParameters.getMode()))
+                    .compressionLevel(CompressionLevel.fromName(builder.originalParameters.getCompressionLevel()))
+                    .build()
+            );
+
+            ResolvedMethodContext resolved = method.getMethodResolver()
+                .resolveMethod(builder.originalParameters.getKnnMethodContext(), builder.knnMethodConfigContext, false, resolvedSpaceType);
+
+            builder.originalParameters.setResolvedKnnMethodContext(resolved.getKnnMethodContext());
+            builder.knnMethodConfigContext.setCompressionLevel(resolved.getCompressionLevel());
         }
 
         private void resolveKNNMethodComponents(

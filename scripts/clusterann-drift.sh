@@ -115,12 +115,13 @@ fmt_res_list() { # prints "<k-NN rel>|<formats path from package root>"
   local p rel
   {
     if [[ -n "$REF" ]]; then
-      git -C "$FMT" ls-tree -r --name-only "$REF" -- src/test/resources src/test/java/META-INF
+      git -C "$FMT" ls-tree -r --name-only "$REF" -- src/test/resources src/test/java/META-INF src/main/java/META-INF
     else
-      (cd "$FMT" && find src/test/resources src/test/java/META-INF -type f 2>/dev/null | sed 's|^\./||') || true
+      (cd "$FMT" && find src/test/resources src/test/java/META-INF src/main/java/META-INF -type f 2>/dev/null | sed 's|^\./||') || true
     fi
   } | while IFS= read -r p; do
     case "$p" in
+      src/main/java/META-INF/*) rel="$(fmt_res_to_knn_res "${p#src/main/java/}")"; [[ -n "$rel" ]] && rel="main:$rel" ;;
       src/test/java/META-INF/*) rel="$(fmt_res_to_knn_res "${p#src/test/java/}")" ;;
       src/test/resources/*) rel="$(fmt_res_to_knn_res "${p#src/test/resources/}")" ;;
       *) rel="" ;;
@@ -137,6 +138,24 @@ fmt_res_cat() { # $1 = formats path from package root
 res_pairs="$(fmt_res_list)"
 while IFS='|' read -r rel p; do
   [[ -z "$rel" ]] && continue
+  if [[ "$rel" == main:* ]]; then
+    # k-NN's main service files also list k-NN's own providers, so the check is "every formats entry is present".
+    rel="${rel#main:}"
+    knn_file="$KNN_ROOT/src/main/resources/$rel"
+    if [[ ! -f "$knn_file" ]]; then
+      drift=1
+      echo "== main resource in formats, missing from k-NN: $rel =="
+      continue
+    fi
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      if ! grep -qxF "$line" "$knn_file"; then
+        drift=1
+        echo "== main resource $rel is missing the formats entry: $line =="
+      fi
+    done < <(fmt_res_cat "$p")
+    continue
+  fi
   knn_file="$KNN_ROOT/src/test/resources/$rel"
   if [[ ! -f "$knn_file" ]]; then
     drift=1

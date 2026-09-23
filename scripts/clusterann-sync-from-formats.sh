@@ -31,11 +31,13 @@ done
 [[ -n "$COMMIT" || -n "$ALL" ]] || usage
 [[ -d "$FMT/.git" || -f "$FMT/.git" ]] || { echo "formats package not found at $FMT" >&2; exit 2; }
 
-# Split "src/<set>/java/<pkgpath>" into set + package-relative path. Formats keeps its test SPI file under
-# src/test/java/META-INF; k-NN wants it under src/test/resources/META-INF, so it is classed as a resource.
+# Split "src/<set>/java/<pkgpath>" into set + package-relative path. HappierTrails copies non-Java files from
+# the java source dirs, so formats keeps its META-INF service files under src/{main,test}/java/META-INF; k-NN
+# wants them under src/{main,test}/resources/META-INF, so they are classed as resources.
 split_path() { # $1 = formats path -> prints "<set> <fmt-rel>" or nothing
   local p="$1" set rest
   case "$p" in
+    src/main/java/META-INF/*) set=main-res; rest="${p#src/main/java/}" ;;
     src/test/java/META-INF/*) set=test-res; rest="${p#src/test/java/}" ;;
     src/main/java/*) set=main; rest="${p#src/main/java/}" ;;
     src/test/java/*) set=test; rest="${p#src/test/java/}" ;;
@@ -49,6 +51,9 @@ split_path() { # $1 = formats path -> prints "<set> <fmt-rel>" or nothing
 knn_path() { # $1 = set, $2 = formats rel
   local rel
   case "$1" in
+    main-res)
+      rel="$(fmt_res_to_knn_res "$2")"
+      [[ -n "$rel" ]] && echo "$KNN_ROOT/src/main/resources/$rel" ;;
     test-res)
       rel="$(fmt_res_to_knn_res "$2")"
       [[ -n "$rel" ]] && echo "$KNN_ROOT/src/test/resources/$rel" ;;
@@ -70,6 +75,12 @@ write_file() { # $1 = ref, $2 = formats path, $3 = destination
     else
       printf '%s\n%s\n' "$SPDX_HEADER" "$content" > "$3"
     fi
+  elif [[ "$2" == src/main/java/META-INF/services/* && -f "$3" ]]; then
+    # k-NN's main service files list its own providers too: merge formats' entries in, keep the rest.
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      grep -qxF "$line" "$3" || printf '%s\n' "$line" >> "$3"
+    done < <(git -C "$FMT" show "$1:$2" | rewrite_fmt_to_knn)
   elif [[ "$2" == */META-INF/services/* ]]; then
     git -C "$FMT" show "$1:$2" | rewrite_fmt_to_knn > "$3"
   else

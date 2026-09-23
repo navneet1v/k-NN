@@ -11,6 +11,7 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter;
 
 import java.io.IOException;
@@ -59,7 +60,7 @@ public final class OptimizedScalarQuantizedClusterWriter implements ClusterWrite
     ) {
         this.blockSize = blockSize;
         this.dimension = dimension;
-        this.quantizer = new OptimizedScalarQuantizer(metric);
+        this.quantizer = ScalarQuantizers.forSimilarity(metric);
         this.encoding = ScalarEncoding.fromNumBits(docBits);
         this.centroid = centroid;
     }

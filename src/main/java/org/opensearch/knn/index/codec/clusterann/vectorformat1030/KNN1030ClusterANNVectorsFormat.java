@@ -81,6 +81,16 @@ public class KNN1030ClusterANNVectorsFormat extends KnnVectorsFormat {
     private final QuantizationParams quantizationParams;
 
     /**
+     * SPI constructor: {@code KnnVectorsFormat.forName(FORMAT_NAME)} needs a public no-arg constructor to
+     * instantiate the format when a segment written through {@code PerFieldKnnVectorsFormat} is read back.
+     * A reader takes every per-field encoding from {@code .clam}, so the default quantization here only
+     * matters if this instance is also used to write.
+     */
+    public KNN1030ClusterANNVectorsFormat() {
+        this(FORMAT_NAME);
+    }
+
+    /**
      * Creates a new format instance with the default encoding
      * ({@link QuantizationParams#DEFAULT} — optimized scalar quantization at 2 bits).
      *
