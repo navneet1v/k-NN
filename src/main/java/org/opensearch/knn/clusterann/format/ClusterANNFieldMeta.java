@@ -17,8 +17,7 @@ import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
 
-import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
-import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
+import org.opensearch.knn.clusterann.format.rotation.RotationScheme;
 
 /**
  * One field's entry in the {@code .clam} metadata file: the field's shape, how its vectors are encoded, and
@@ -168,7 +167,7 @@ public final class ClusterANNFieldMeta {
      * {@code .clac} offset for the centroids in the rotated space.
      */
     public boolean hasRotation() {
-        return rotationId != ROTATION_NONE;
+        return RotationScheme.fromCode(rotationId).rotates();
     }
 
     /**
@@ -177,6 +176,53 @@ public final class ClusterANNFieldMeta {
      */
     public boolean isEmpty() {
         return vectorCount == 0;
+    }
+
+    /**
+     * A zeroed entry for a field with no vectors: zero counts, no rotation, and empty per-centroid arrays, with
+     * the region offsets pointing at the current (empty) positions. It is written like any other entry so the
+     * reader opens it uniformly; {@link #isEmpty()} then short-circuits before any region is consulted.
+     *
+     * @param blockSize          the shared block size
+     * @param dimension          the field's vector dimension
+     * @param similarityFunction the field's similarity function
+     * @param docBits            the doc-side quantization bit width
+     * @param quantizerId        the quantizer code (recorded for consistency; unused for an empty field)
+     * @param clacOffset         the current {@code .clac} position (this field writes no centroids)
+     * @param clapOffset         the current {@code .clap} position (this field writes no postings)
+     */
+    public static ClusterANNFieldMeta empty(
+        int blockSize,
+        int dimension,
+        VectorSimilarityFunction similarityFunction,
+        int docBits,
+        int quantizerId,
+        long clacOffset,
+        long clapOffset
+    ) {
+        return new ClusterANNFieldMeta(
+            blockSize,
+            dimension,
+            0,
+            0,
+            similarityFunction,
+            docBits,
+            RotationScheme.NONE.code(),
+            quantizerId,
+            new byte[0],
+            clacOffset,
+            0L,
+            0L,
+            NO_ROTATION,
+            clapOffset,
+            0L,
+            new long[0],
+            new int[0],
+            new int[0],
+            NO_ROTATION,
+            NO_ROTATION,
+            null
+        );
     }
 
     /**
@@ -193,6 +239,7 @@ public final class ClusterANNFieldMeta {
         VectorSimilarityFunction similarityFunction = similarityFunction(meta.readByte(), meta);
         int docBits = meta.readByte();
         int rotationId = rotationId(meta.readByte(), meta);
+        boolean rotated = RotationScheme.fromCode(rotationId).rotates();
         int quantizerId = meta.readByte();
         byte[] quantizerParams = readQuantizerParams(meta);
 
@@ -205,7 +252,7 @@ public final class ClusterANNFieldMeta {
         long clacLength = meta.readLong();
         long clacCentroidsOffset = meta.readLong();
         long clacRotatedCentroidsOffset = NO_ROTATION;
-        if (rotationId != ROTATION_NONE) {
+        if (rotated) {
             clacRotatedCentroidsOffset = meta.readLong();
             checkNonNegative(meta, clacRotatedCentroidsOffset, "clacRotatedCentroidsOffset");
         }
@@ -221,7 +268,7 @@ public final class ClusterANNFieldMeta {
         // The rotation matrix, on the same terms as the rotated centroids above.
         long clarOffset = NO_ROTATION;
         long clarLength = NO_ROTATION;
-        if (rotationId != ROTATION_NONE) {
+        if (rotated) {
             clarOffset = meta.readLong();
             checkNonNegative(meta, clarOffset, "clarOffset");
             clarLength = meta.readLong();
@@ -326,14 +373,16 @@ public final class ClusterANNFieldMeta {
     }
 
     /**
-     * A rotation this reader knows how to apply. An unrecognised id means the segment was written by a format
-     * that rotates in a way this one cannot reproduce, so scoring it would be silently wrong.
+     * A rotation this reader knows how to apply, its {@code .clam} byte mapped through {@link RotationScheme}. An
+     * unrecognised code means the segment was written by a format that rotates in a way this one cannot reproduce,
+     * so scoring it would be silently wrong.
      */
     private static int rotationId(byte encoded, ChecksumIndexInput meta) throws IOException {
-        return switch (encoded) {
-            case ROTATION_NONE, ROTATION_RANDOM_GAUSSIAN -> encoded;
-            default -> throw new CorruptIndexException("Unknown rotation: " + encoded, meta);
-        };
+        try {
+            return RotationScheme.fromCode(encoded).code();
+        } catch (final IllegalArgumentException e) {
+            throw new CorruptIndexException("Unknown rotation: " + encoded, meta, e);
+        }
     }
 
     private static VectorSimilarityFunction similarityFunction(byte encoded, ChecksumIndexInput meta) throws IOException {
@@ -444,7 +493,8 @@ public final class ClusterANNFieldMeta {
      * record rather than only in {@link #read} so the write side cannot build an entry the read side rejects.
      */
     private static void requireRotationAgrees(int rotationId, long offset, String name) {
-        if ((rotationId == ROTATION_NONE) != (offset == NO_ROTATION)) {
+        final boolean rotates = RotationScheme.fromCode(rotationId).rotates();
+        if (rotates == (offset == NO_ROTATION)) {
             throw new IllegalArgumentException("rotationId=" + rotationId + " disagrees with " + name + "=" + offset);
         }
     }
