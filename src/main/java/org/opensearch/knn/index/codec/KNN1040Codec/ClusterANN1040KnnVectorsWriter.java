@@ -137,12 +137,18 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
 
     // ========== Merge ==========
 
+    /** Merge-phase timing trace: -Dclusterann.mergeTrace=true logs per-phase wall time. */
+    private static final boolean MERGE_TRACE = Boolean.getBoolean("clusterann.mergeTrace");
+
     @Override
     public void mergeOneField(FieldInfo fieldInfo, MergeState mergeState) throws IOException {
+        long tMerge0 = MERGE_TRACE ? System.nanoTime() : 0L;
         flatVectorsWriter.mergeOneField(fieldInfo, mergeState);
+        long tFlat = MERGE_TRACE ? System.nanoTime() : 0L;
 
         float[][] reservoir = new float[4096][];
         ClusterANNVectorValues vectors = ClusterANNVectorValues.fromMergeState(mergeState, fieldInfo, reservoir);
+        long tRead = MERGE_TRACE ? System.nanoTime() : 0L;
 
         if (vectors.size() == 0) {
             writeEmptyMeta(fieldInfo);
@@ -153,18 +159,136 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         int actualReservoir = Math.min(vectors.size(), reservoir.length);
         float[][] initialCentroids = Arrays.copyOf(reservoir, Math.min(numCentroids, actualReservoir));
 
-        writeIVF(fieldInfo, vectors, initialCentroids);
+        // Donor-seed optimization: elect the largest ClusterANN source segment as donor, use its
+        // REAL centroids as the clustering seed, and carry its docs' cell assignments so they are
+        // not re-clustered. Gated by -Dclusterann.mergeOptimize=true.
+        int[] carriedCell = null;
+        if (Boolean.getBoolean("clusterann.mergeOptimize")) {
+            long tD0 = MERGE_TRACE ? System.nanoTime() : 0L;
+            DonorSeed donor = electDonor(fieldInfo, mergeState);
+            if (donor != null) {
+                initialCentroids = donor.centroids;
+                carriedCell = buildCarried(vectors, donor);
+                if (MERGE_TRACE) {
+                    int carried = 0; for (int c : carriedCell) if (c >= 0) carried++;
+                    log.info("[ClusterANN-MERGE-TRACE] donor elected: centroids={} donorDocs={} carried={}/{} ({}ms)",
+                        donor.centroids.length, donor.numVectors, carried, carriedCell.length,
+                        (System.nanoTime() - tD0) / 1_000_000);
+                }
+            }
+        }
+
+        writeIVF(fieldInfo, vectors, initialCentroids, carriedCell);
+
+        if (MERGE_TRACE) {
+            long tEnd = System.nanoTime();
+            log.info(
+                "[ClusterANN-MERGE-TRACE] field={} vectors={} readers={} | flatMerge={}ms fromMergeState={}ms writeIVF={}ms total={}ms",
+                fieldInfo.name, vectors.size(), mergeState.knnVectorsReaders.length,
+                (tFlat - tMerge0) / 1_000_000, (tRead - tFlat) / 1_000_000,
+                (tEnd - tRead) / 1_000_000, (tEnd - tMerge0) / 1_000_000
+            );
+        }
+    }
+
+    // ========== Donor-seed helpers ==========
+
+    /** Donor centroids + a merged-docId -> cell map for the donor's docs. */
+    private static final class DonorSeed {
+        final float[][] centroids;
+        final java.util.Map<Integer, Integer> mergedDocToCell;
+        final int numVectors;
+        DonorSeed(float[][] c, java.util.Map<Integer, Integer> m, int nv) {
+            this.centroids = c; this.mergedDocToCell = m; this.numVectors = nv;
+        }
+    }
+
+    /** Elect the largest ClusterANN source segment as donor; extract its centroids + assignments. */
+    private DonorSeed electDonor(FieldInfo fieldInfo, MergeState mergeState) throws IOException {
+        int best = -1, bestSize = -1;
+        ClusterANN1040KnnVectorsReader bestReader = null;
+        ClusterANN1040KnnVectorsReader.DonorData bestDonor = null;
+        for (int s = 0; s < mergeState.knnVectorsReaders.length; s++) {
+            var r = mergeState.knnVectorsReaders[s];
+            ClusterANN1040KnnVectorsReader cr = unwrapForField(r, fieldInfo.name);
+            if (cr == null) continue;
+            ClusterANN1040KnnVectorsReader.DonorData d;
+            try {
+                d = cr.extractDonor(fieldInfo.name);
+            } catch (Exception e) {
+                log.warn("[ClusterANN] donor extract failed on segment {}, skipping: {}", s, e.toString());
+                continue;   // optimization is best-effort; fall back to normal clustering
+            }
+            if (d != null && d.numVectors > bestSize) {
+                bestSize = d.numVectors; best = s; bestReader = cr; bestDonor = d;
+            }
+        }
+        if (bestDonor == null) return null;
+
+        // Map donor local doc-id -> merged doc-id, then -> cell. Donor local ordinal == its docId
+        // in the flat vector values; ordToCell is keyed by that ordinal.
+        java.util.Map<Integer, Integer> mergedDocToCell = new java.util.HashMap<>(bestDonor.numVectors * 2);
+        var docMap = mergeState.docMaps[best];
+        // Walk the donor segment's live docs in order; ordinal i corresponds to the i-th live doc.
+        var values = mergeState.knnVectorsReaders[best].getFloatVectorValues(fieldInfo.name);
+        if (values != null) {
+            var it = values.iterator();
+            for (int doc = it.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = it.nextDoc()) {
+                int storedOrd = it.index();          // flat-storage ordinal = the ordinal postings reference
+                int mergedDoc = docMap.get(doc);
+                if (mergedDoc == -1) continue;
+                int cell = (storedOrd < bestDonor.ordToCell.length) ? bestDonor.ordToCell[storedOrd] : -1;
+                if (cell >= 0) mergedDocToCell.put(mergedDoc, cell);
+            }
+        }
+        return new DonorSeed(bestDonor.centroids, mergedDocToCell, bestDonor.numVectors);
+    }
+
+    private static ClusterANN1040KnnVectorsReader unwrap(org.apache.lucene.codecs.KnnVectorsReader r) {
+        if (r == null) return null;
+        if (r instanceof ClusterANN1040KnnVectorsReader cr) return cr;
+        return null;
+    }
+
+    /** Unwrap a possibly PerField-wrapped reader down to the ClusterANN reader for {@code field}. */
+    private static ClusterANN1040KnnVectorsReader unwrapForField(org.apache.lucene.codecs.KnnVectorsReader r, String field) {
+        if (r == null) return null;
+        if (r instanceof ClusterANN1040KnnVectorsReader cr) return cr;
+        if (r instanceof org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat.FieldsReader pf) {
+            return unwrapForField(pf.getFieldReader(field), field);
+        }
+        return null;
+    }
+
+    /** Build carriedCell[ord] aligned to clustering ordinals: donor doc -> its cell, else -1. */
+    private int[] buildCarried(ClusterANNVectorValues vectors, DonorSeed donor) {
+        int n = vectors.size();
+        int[] carried = new int[n];
+        for (int ord = 0; ord < n; ord++) {
+            Integer cell = donor.mergedDocToCell.get(vectors.ordToDoc(ord));
+            carried[ord] = (cell != null) ? cell : -1;
+        }
+        return carried;
     }
 
     // ========== Shared write path ==========
 
     private void writeIVF(FieldInfo fieldInfo, ClusterANNVectorValues vectors, float[][] initialCentroids) throws IOException {
+        writeIVF(fieldInfo, vectors, initialCentroids, null);
+    }
+
+    private void writeIVF(FieldInfo fieldInfo, ClusterANNVectorValues vectors, float[][] initialCentroids, int[] carriedCell) throws IOException {
         int numVectors = vectors.size();
         int dimension = fieldInfo.getVectorDimension();
         DistanceMetric metric = toDistanceMetric(fieldInfo.getVectorSimilarityFunction());
 
         // 1. Cluster (on original vectors — clustering doesn't need randomRotation)
-        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, SOAR_LAMBDA, initialCentroids, 42L, true);
+        long tCluster0 = MERGE_TRACE ? System.nanoTime() : 0L;
+        ClusteringResult result = IVFIndexBuilder.build(vectors, TARGET_CLUSTER_SIZE, metric, SOAR_LAMBDA, initialCentroids, 42L, true, carriedCell);
+        if (MERGE_TRACE) {
+            log.info("[ClusterANN-MERGE-TRACE] field={} CLUSTERING={}ms (n={}, centroids={})",
+                fieldInfo.name, (System.nanoTime() - tCluster0) / 1_000_000, numVectors, result.numCentroids());
+        }
 
         int numCentroids = result.numCentroids();
         float[][] centroids = result.centroids();

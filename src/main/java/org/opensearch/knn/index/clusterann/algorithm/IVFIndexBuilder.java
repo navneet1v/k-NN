@@ -45,6 +45,19 @@ public final class IVFIndexBuilder {
         long seed,
         boolean parallel
     ) throws IOException {
+        return build(vectors, targetClusterSize, metric, soarLambda, initialCentroids, seed, parallel, null);
+    }
+
+    public static ClusteringResult build(
+        FloatVectorValues vectors,
+        int targetClusterSize,
+        DistanceMetric metric,
+        float soarLambda,
+        float[][] initialCentroids,
+        long seed,
+        boolean parallel,
+        int[] carriedAssignment
+    ) throws IOException {
         int n = vectors.size();
         if (n == 0) {
             return new ClusteringResult(new float[0][], new int[0], new int[0], 0);
@@ -60,14 +73,21 @@ public final class IVFIndexBuilder {
         }
 
         // Cluster
-        HierarchicalKMeans.Config hConfig = HierarchicalKMeans.Config.builder()
+        // Merge optimization: when seeded from a prior clustering (initialCentroids present at
+        // merge), warm-start needs far fewer Lloyd iterations to settle than a cold build. The
+        // flag lets us measure the force-merge time saving from not re-running full k-means.
+        HierarchicalKMeans.Config.Builder hb = HierarchicalKMeans.Config.builder()
             .targetSize(targetClusterSize)
             .metric(metric)
             .seed(seed)
-            .parallel(parallel)
-            .build();
+            .parallel(parallel);
+        if (initialCentroids != null && Boolean.getBoolean("clusterann.mergeOptimize")) {
+            int mergeIters = Integer.getInteger("clusterann.mergeIters", 1);
+            hb.maxIterations(mergeIters);
+        }
+        HierarchicalKMeans.Config hConfig = hb.build();
 
-        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(clusterVectors, hConfig, initialCentroids);
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(clusterVectors, hConfig, initialCentroids, carriedAssignment);
         float[][] centroids = result.centroids();
         int[] assignments = result.assignments();
         int numCentroids = result.numCentroids();

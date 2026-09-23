@@ -54,6 +54,56 @@ public final class KMeans {
      * @param initialCentroids if non-null, skip k-means++ init and use these directly
      */
     public static Result cluster(ClusterANNVectorValues vectors, int k, Config config, float[][] initialCentroids) throws IOException {
+        return cluster(vectors, k, config, initialCentroids, null);
+    }
+
+    /**
+     * Donor-seed clustering: {@code carriedAssignment[ord] >= 0} pins a donor doc to its existing
+     * cell (not re-clustered); {@code -1} docs are routed to the nearest seed centroid. Then a few
+     * settle iterations move only the routed docs. This is the merge fast path — it avoids
+     * re-clustering the donor's (usually majority) docs from scratch.
+     */
+    public static Result cluster(ClusterANNVectorValues vectors, int k, Config config,
+                                 float[][] initialCentroids, int[] carriedAssignment) throws IOException {
+        if (carriedAssignment == null) {
+            return clusterImpl(vectors, k, config, initialCentroids);
+        }
+        int n = vectors.size();
+        int dim = vectors.dimension();
+        k = initialCentroids.length;
+
+        // TRUE donor-seed: the donor's centroids are already well-fit. Freeze them. Donor docs keep
+        // their carried cell (0 work). Newcomers route to their nearest donor centroid (one pass,
+        // O(k) each). No Lloyd iteration (would move centroids and force re-scan), no split (the
+        // donor's cell granularity is already correct for a properly-clustered donor). This is the
+        // minimal correct merge: work is proportional to the NEWCOMERS only, not N.
+        float[][] centroids = initialCentroids;
+        int[] assignments = new int[n];
+        final float[] flat = flatten(centroids, k, dim);
+        final int metricOrd = config.metric == DistanceMetric.COSINE ? 2 : (config.metric == DistanceMetric.INNER_PRODUCT ? 1 : 0);
+
+        // Route only the newcomers; donor docs keep their carried cell (zero work).
+        for (int ord = 0; ord < n; ord++) {
+            int carried = carriedAssignment[ord];
+            if (carried >= 0 && carried < k) {
+                assignments[ord] = carried;                    // donor doc: keep cell, no distance compute
+            } else {
+                float[] vec = vectors.vectorValue(ord);
+                float[] distBuf = new float[k];
+                assignments[ord] = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flat, k, dim, distBuf, metricOrd);
+            }
+        }
+
+        return new Result(centroids, assignments, k, dim, 0, true);
+    }
+
+    private static float[] flatten(float[][] c, int k, int dim) {
+        float[] flat = new float[k * dim];
+        for (int i = 0; i < k; i++) System.arraycopy(c[i], 0, flat, i * dim, dim);
+        return flat;
+    }
+
+    private static Result clusterImpl(ClusterANNVectorValues vectors, int k, Config config, float[][] initialCentroids) throws IOException {
         int n = vectors.size();
         int dim = vectors.dimension();
         k = Math.max(1, Math.min(k, n));

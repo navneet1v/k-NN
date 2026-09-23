@@ -31,7 +31,7 @@ public final class ClusterANNFormatConstants {
 
     // IVF parameters
     public static final int MIN_ADC_VECTORS = 32;
-    public static final int TARGET_CLUSTER_SIZE = 512;
+    public static final int TARGET_CLUSTER_SIZE = Integer.getInteger("clusterann.targetClusterSize", 512);
     public static final float SOAR_LAMBDA = 1.0f;
 
     // Quantizer selection (persisted per field in .clam, right after docBits).

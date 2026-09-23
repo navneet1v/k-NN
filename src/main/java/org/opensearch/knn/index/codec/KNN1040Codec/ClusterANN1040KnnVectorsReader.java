@@ -109,8 +109,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             }
         }
 
-        log.debug("[ClusterANN] reader created: {} fields with IVF index", fieldStates.size());
-    }
+        log.debug("[ClusterANN] reader created: {} fields with IVF index", fieldStates.size());    }
 
     @Override
     public void checkIntegrity() throws IOException {
@@ -125,6 +124,80 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
     @Override
     public ByteVectorValues getByteVectorValues(String field) throws IOException {
         return flatVectorsReader.getByteVectorValues(field);
+    }
+
+    // ================= Donor-seed merge support =================
+
+    /** Donor data extracted from a source segment for the donor-seed merge optimization. */
+    public static final class DonorData {
+        public final float[][] centroids;      // [numCentroids][dim] raw centroids
+        public final int[] ordToCell;          // per source local-ordinal -> primary cell
+        public final int numVectors;
+        public final int numCentroids;
+        DonorData(float[][] c, int[] o, int nv, int nc) {
+            this.centroids = c; this.ordToCell = o; this.numVectors = nv; this.numCentroids = nc;
+        }
+    }
+
+    /**
+     * Extract this segment's centroids and per-ordinal cell assignments, for use as a merge donor.
+     * Walks each centroid's posting (primary docs only) and records the cell of every ordinal.
+     * Returns null if the field has no ClusterANN state.
+     */
+    public DonorData extractDonor(String field) throws IOException {
+        Integer fieldNumber = fieldNameToNumber.get(field);
+        if (fieldNumber == null) return null;
+        ClusterANNFieldState fs = fieldStates.get(fieldNumber);
+        if (fs == null || fs.numVectors == 0 || fs.numCentroids == 0) return null;
+        fs.ensureLoaded(metaInput);
+
+        int dim = fs.dimension;
+        int nc = fs.numCentroids;
+        // Centroids from the .clac reader.
+        float[] flat = new float[nc * dim];
+        centroidReader.readAllCentroids(flat);
+        float[][] centroids = new float[nc][dim];
+        for (int c = 0; c < nc; c++) {
+            System.arraycopy(flat, c * dim, centroids[c], 0, dim);
+        }
+
+        // Reconstruct ord -> cell by walking each centroid's posting header.
+        int[] ordToCell = new int[fs.numVectors];
+        java.util.Arrays.fill(ordToCell, -1);
+        IndexInput in = postingsInput.clone();
+        long[] offsets = fs.centroidOffsets;
+        int[] scratchDocs = new int[fs.numVectors > 0 ? Math.min(fs.numVectors, 65536) : 1];
+        int[] scratchOrds = new int[scratchDocs.length];
+        int assignedCount = 0, maxOrd = -1, oobOrd = 0;
+        for (int c = 0; c < nc; c++) {
+            in.seek(offsets[c]);   // centroidOffsets are absolute file positions (see scanner)
+            int count = in.readVInt();
+            if (count == 0) { continue; }
+            if (count > scratchDocs.length) { scratchDocs = new int[count]; scratchOrds = new int[count]; }
+            org.opensearch.knn.index.clusterann.codec.PostingListCodec.readBody(in, count, scratchDocs);
+            int ordCount = in.readVInt();
+            if (ordCount > 0) {
+                if (ordCount > scratchOrds.length) scratchOrds = new int[ordCount];
+                in.readInts(scratchOrds, 0, ordCount);
+                for (int i = 0; i < ordCount; i++) {
+                    int ord = scratchOrds[i];
+                    if (ord > maxOrd) maxOrd = ord;
+                    if (ord < 0 || ord >= ordToCell.length) { oobOrd++; continue; }
+                    if (ordToCell[ord] < 0) {
+                        ordToCell[ord] = c;  // primary cell (first occurrence wins)
+                        assignedCount++;
+                    }
+                }
+            }
+            // skip the quantized blocks for this posting (we only need assignments)
+            // handled by seeking per-centroid via offsets, so no explicit skip needed.
+        }
+        if (Boolean.getBoolean("clusterann.mergeTrace")) {
+            org.apache.logging.log4j.LogManager.getLogger(ClusterANN1040KnnVectorsReader.class).info(
+                "[ClusterANN-MERGE-TRACE] extractDonor: nc={} numVectors={} assigned={} maxOrd={} oob={}",
+                nc, fs.numVectors, assignedCount, maxOrd, oobOrd);
+        }
+        return new DonorData(centroids, ordToCell, fs.numVectors, nc);
     }
 
     private static final int MIN_IVF_VECTORS = 100;
