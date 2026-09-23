@@ -7,6 +7,7 @@ package org.opensearch.knn.clusterann.write.postings;
 
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.KnnVectorValues;
+import org.opensearch.knn.clusterann.format.rotation.Rotation;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -16,8 +17,9 @@ import java.util.Objects;
  * source ordinals: position {@code i} is the source vector at {@code ordinals[i]}. Its {@link #size()} is the
  * number of ordinals and its {@link #dimension()} is the source's.
  *
- * <p>Each vector is copied into a single per-view scratch buffer, which is what {@link #vectorValue(int)}
- * returns; successive calls overwrite it, and the source's backing array is never handed out or mutated.
+ * <p>Each vector is rotated into a single per-view scratch buffer, which is what {@link #vectorValue(int)}
+ * returns; successive calls overwrite it, and the source's backing array is never handed out or mutated. An
+ * unrotated field passes {@code IdentityRotation}, whose rotate is a plain copy.
  *
  * <p>The {@code ordinals} array is held by reference, not copied, so reordering it afterwards changes what
  * this view returns.
@@ -26,11 +28,13 @@ final class PreparedFloatVectorValues extends FloatVectorValues {
 
     private final FloatVectorValues source;
     private final int[] ordinals;
+    private final Rotation rotation;
     private final float[] scratch;
 
-    PreparedFloatVectorValues(final FloatVectorValues source, final int[] ordinals) {
+    PreparedFloatVectorValues(final FloatVectorValues source, final int[] ordinals, final Rotation rotation) {
         this.source = source;
         this.ordinals = ordinals;
+        this.rotation = rotation;
         this.scratch = new float[source.dimension()];
     }
 
@@ -47,14 +51,13 @@ final class PreparedFloatVectorValues extends FloatVectorValues {
     @Override
     public float[] vectorValue(final int position) throws IOException {
         Objects.checkIndex(position, ordinals.length);
-        final float[] value = source.vectorValue(ordinals[position]);
-        System.arraycopy(value, 0, scratch, 0, scratch.length);
+        rotation.rotate(source.vectorValue(ordinals[position]), scratch);
         return scratch;
     }
 
     @Override
     public FloatVectorValues copy() throws IOException {
-        return new PreparedFloatVectorValues(source.copy(), ordinals);
+        return new PreparedFloatVectorValues(source.copy(), ordinals, rotation);
     }
 
     @Override

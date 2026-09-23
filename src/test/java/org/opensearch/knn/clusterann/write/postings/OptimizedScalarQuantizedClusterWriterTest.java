@@ -19,6 +19,7 @@ import org.apache.lucene.util.quantization.OptimizedScalarQuantizer.Quantization
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
 import org.opensearch.knn.clusterann.write.block.scalar.OptimizedScalarQuantizedClusterWriter;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterMembers;
 
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
+import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -68,7 +70,7 @@ class OptimizedScalarQuantizedClusterWriterTest {
         Arrays.fill(centroid, 0.5f);
 
         // Members already nearest-first (the orchestrator's job): a shuffled permutation of ordinals with
-        // ascending distances 1..count parallel to it; every 5th ordinal is a spill member.
+        // ascending distances 1..count parallel to it; every 5th ordinal is a secondary member.
         final Integer[] shuffled = new Integer[count];
         for (int i = 0; i < count; i++) {
             shuffled[i] = i;
@@ -86,7 +88,7 @@ class OptimizedScalarQuantizedClusterWriterTest {
 
         final float[] preparedCentroid = centroid.clone();
         final FloatVectorValues source = FloatVectorValues.fromFloats(toList(vectors), DIMENSION);
-        final FloatVectorValues view = new PreparedFloatVectorValues(source, ordinals);
+        final FloatVectorValues view = new PreparedFloatVectorValues(source, ordinals, RotationFormats.create(ROTATION_NONE, DIMENSION));
 
         try (Directory dir = new ByteBuffersDirectory()) {
             final ClusterWriter.ClusterRegion region;
@@ -148,7 +150,11 @@ class OptimizedScalarQuantizedClusterWriterTest {
     @Test
     void rejectsBoundedViewSizeNotMatchingMembers() throws IOException {
         final FloatVectorValues source = FloatVectorValues.fromFloats(List.of(new float[DIMENSION], new float[DIMENSION]), DIMENSION);
-        final FloatVectorValues view = new PreparedFloatVectorValues(source, new int[] { 0, 1 }); // size 2
+        final FloatVectorValues view = new PreparedFloatVectorValues(
+            source,
+            new int[] { 0, 1 },
+            RotationFormats.create(ROTATION_NONE, DIMENSION)
+        ); // size 2
         final ClusterMembers members = new ClusterMembers(
             new int[] { 0, 1, 0 },
             new float[] { 1f, 2f, 3f },
@@ -164,7 +170,11 @@ class OptimizedScalarQuantizedClusterWriterTest {
         // Clustering never emits a zero-member centroid (HierarchicalKMeans drops empties; an empty field
         // yields no centroids), so an empty cluster is a broken invariant and the writer rejects it.
         final ClusterMembers members = new ClusterMembers(new int[0], new float[0], new boolean[0]);
-        final FloatVectorValues view = new PreparedFloatVectorValues(FloatVectorValues.fromFloats(List.of(), DIMENSION), new int[0]);
+        final FloatVectorValues view = new PreparedFloatVectorValues(
+            FloatVectorValues.fromFloats(List.of(), DIMENSION),
+            new int[0],
+            RotationFormats.create(ROTATION_NONE, DIMENSION)
+        );
 
         try (Directory dir = new ByteBuffersDirectory(); IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
             assertThrows(IllegalArgumentException.class, () -> writer(4, new float[DIMENSION]).write(out, view, members));
