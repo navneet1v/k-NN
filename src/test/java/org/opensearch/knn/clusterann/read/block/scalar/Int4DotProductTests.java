@@ -89,7 +89,7 @@ class Int4DotProductTests {
 
     /** Two-bit doc codes: two stripes, so the length is halved into a low plane and a high plane. */
     @ParameterizedTest(name = "len {0}")
-    @ValueSource(ints = { 2, 4, 8, 16 })
+    @ValueSource(ints = { 2, 4, 8, 16, 18, 20, 30, 32, 34, 192 })
     void testDibit_thenWeightsEveryQueryAndDocPlanePair(int len) {
         // given
         Random random = new Random(len * 17L);
@@ -105,10 +105,10 @@ class Int4DotProductTests {
     }
 
     @ParameterizedTest(name = "offset {0}")
-    @ValueSource(ints = { 0, 8, 16 })
+    @ValueSource(ints = { 0, 8, 16, 34, 68 })
     void testDibit_whenDocsAreOffset_thenReadsThatVectorsCodes(int offset) {
         // given
-        int len = 8;
+        int len = 34;
         Random random = new Random(23);
         byte[] query = randomBytes(random, (len / 2) * 4);
         byte[] docs = randomBytes(random, len * 3);
@@ -135,7 +135,7 @@ class Int4DotProductTests {
      * 8 × Σ 2^(i+j) over i in 0..3 and j in 0..1 = 8 × 45 = 360.
      */
     @ParameterizedTest(name = "len {0}")
-    @ValueSource(ints = { 2, 8 })
+    @ValueSource(ints = { 2, 8, 18, 32, 192 })
     void testDibit_whenEveryBitIsSet_thenReachesTheMaximum(int len) {
         // given
         int stripe = len / 2;
