@@ -197,4 +197,55 @@ class Int4DotProductTests {
         java.util.Arrays.fill(bytes, value);
         return bytes;
     }
+
+    // ---------------------------------------------------------------- nibble
+
+    /**
+     * Our nibble kernel must agree with Lucene's, because Lucene's is what the writer's packing was matched to. Random
+     * values across several lengths, since the two differ only in reading an offset versus a whole array — a disagreement
+     * would mean the nibble order drifted, and every 4-bit score with it.
+     */
+    @ParameterizedTest(name = "packed len {0}")
+    @ValueSource(ints = { 1, 2, 8, 16, 17, 96, 384 })
+    void testNibble_thenAgreesWithLucene(int len) {
+        Random random = new Random(len * 31L);
+        byte[] packed = randomBytes(random, len);
+        byte[] query = new byte[len * 2];
+        for (int i = 0; i < query.length; i++) {
+            query[i] = (byte) random.nextInt(16);
+        }
+
+        assertEquals(Lucene104Backports.int4DotProductSinglePacked(query, packed), Int4DotProduct.nibble(query, packed, 0, len));
+    }
+
+    /** Reading at an offset must pick that vector's codes and no others. */
+    @ParameterizedTest(name = "offset {0}")
+    @ValueSource(ints = { 0, 16, 96 })
+    void testNibble_whenDocsAreOffset_thenReadsThatVectorsCodes(int offset) {
+        int len = 16;
+        Random random = new Random(offset + 11L);
+        byte[] docs = randomBytes(random, len * 8);
+        byte[] query = new byte[len * 2];
+        for (int i = 0; i < query.length; i++) {
+            query[i] = (byte) random.nextInt(16);
+        }
+
+        byte[] slice = new byte[len];
+        System.arraycopy(docs, offset, slice, 0, len);
+        assertEquals(
+            Lucene104Backports.int4DotProductSinglePacked(query, slice),
+            Int4DotProduct.nibble(query, docs, offset, len),
+            "reading in place must match reading a copy of the same slice"
+        );
+    }
+
+    /** Every code at its maximum: 15 x 15 per dimension, over 2 x len dimensions. */
+    @Test
+    void testNibble_whenEveryCodeIsMaximal_thenReachesTheMaximum() {
+        int len = 8;
+        byte[] packed = filled(len, (byte) 0xFF);
+        byte[] query = filled(len * 2, (byte) 0x0F);
+
+        assertEquals(15f * 15f * len * 2, Int4DotProduct.nibble(query, packed, 0, len));
+    }
 }

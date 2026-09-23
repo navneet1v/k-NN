@@ -12,28 +12,33 @@ import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 
 /**
- * {@link BlockVectorScorer} that scores a query against scalar-quantized codes without decompressing them
- * (asymmetric distance computation): the query is quantized once at construction, against the cluster's
- * centroid, and each vector's score then falls out of a dot product over the packed codes plus corrections
- * that cost O(1) per vector.
+ * {@link BlockVectorScorer} that scores a query against scalar-quantized codes without decompressing them: the query is
+ * quantized once at construction, against the cluster's centroid, and each vector's score then falls out of a dot
+ * product over the packed codes plus corrections that cost O(1) per vector.
  *
- * <p>Both sides being centered on one centroid is what ties an instance to a single cluster and a single
- * query. The codes are lossy, so every score is an estimate of the similarity the full-precision vectors
- * would give.
+ * <p>Both sides being centered on one centroid is what ties an instance to a single cluster and a single query. The
+ * codes are lossy, so every score is an estimate of the similarity the full-precision vectors would give.
+ *
+ * <p><b>Asymmetric and symmetric encodings alike.</b> The four-term expansion below never depended on how the code dot
+ * product {@code Σᵢaᵢbᵢ} was obtained, so the only thing the encoding changes is {@link #dotProduct}: a 1- or 2-bit
+ * document code is bit-plane transposed and popcounted against the 4-bit query ({@code SINGLE_BIT_QUERY_NIBBLE},
+ * {@code DIBIT_QUERY_NIBBLE}), while 4-bit {@code PACKED_NIBBLE} stores whole codes and takes a plain integer dot
+ * product. This class was once named for the asymmetric case alone, which stopped being true at 4 bits.
  */
-public class ADCScalarQuantizedBlockScorer implements BlockVectorScorer {
+public class ScalarQuantizedBlockScorer implements BlockVectorScorer {
 
     private final ScalarQuantizedBlockReader reader;
     private final VectorSimilarityFunction sim;
     private final int dimension;
     private final int docBits;
+    private final boolean asymmetric;
     private final int packedBytes;
     private final int queryPackedBytes;
     private final float queryNorm;
 
     private final SQScanContext quantizedQuery;
 
-    public ADCScalarQuantizedBlockScorer(
+    public ScalarQuantizedBlockScorer(
         ScalarQuantizedBlockReader reader,
         SQScanContext queryContext,
         ScalarEncoding encoding,
@@ -43,8 +48,19 @@ public class ADCScalarQuantizedBlockScorer implements BlockVectorScorer {
         this.sim = sim;
         this.dimension = queryContext.query().length;
         this.docBits = encoding.getDocBitsPerDim();
-        if (docBits != 1 && docBits != 2) {
-            throw new IllegalArgumentException("Unsupported docBits: " + docBits);
+        this.asymmetric = encoding.isAsymmetric();
+
+        switch (encoding) {
+            case SINGLE_BIT_QUERY_NIBBLE, DIBIT_QUERY_NIBBLE, PACKED_NIBBLE -> {
+            }
+            default -> throw new IllegalArgumentException(
+                "Unsupported encoding "
+                    + encoding
+                    + " ("
+                    + docBits
+                    + " document bits); supported are 1 and 2 bit"
+                    + " transposed codes and 4-bit packed nibbles"
+            );
         }
         this.packedBytes = encoding.getDocPackedLength(dimension);
         this.queryPackedBytes = encoding.getQueryPackedLength(dimension);
@@ -135,15 +151,20 @@ public class ADCScalarQuantizedBlockScorer implements BlockVectorScorer {
         return maxScore;
     }
 
+    /**
+     * {@code Σᵢaᵢbᵢ} over this vector's codes and the query's.
+     *
+     * <p>Every width reads the vector's codes where they lie: the narrow ones popcount 4-bit query planes against the
+     * document planes, the packed nibble multiplies whole codes. All three take an offset, so no candidate's codes are
+     * copied anywhere to be scored.
+     */
     private float dotProduct(byte[] codes, int offset) {
-        switch (docBits) {
-            case 1:
-                return Int4DotProduct.bit(quantizedQuery.transposed(), codes, offset, packedBytes);
-            case 2:
-                return Int4DotProduct.dibit(quantizedQuery.transposed(), codes, offset, packedBytes);
-            default:
-                throw new IllegalArgumentException("Unsupported docBits: " + docBits);
+        if (asymmetric) {
+            return docBits == 1
+                ? Int4DotProduct.bit(quantizedQuery.transposed(), codes, offset, packedBytes)
+                : Int4DotProduct.dibit(quantizedQuery.transposed(), codes, offset, packedBytes);
         }
+        return Int4DotProduct.nibble(quantizedQuery.transposed(), codes, offset, packedBytes);
     }
 
     private float step() {

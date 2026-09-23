@@ -18,6 +18,8 @@ import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.read.Centroid;
 import org.opensearch.knn.clusterann.read.PostingScorer;
@@ -27,6 +29,8 @@ import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -213,6 +217,37 @@ class SQScanContextClusterTests {
     }
 
     /**
+     * A dimension the encoding cannot store as a whole number of codes still has to score.
+     * {@code getDiscreteDimensions} rounds up, so the documents carry padding codes and the query has to be laid out to
+     * the same width: {@code PACKED_NIBBLE} finds a dimension's partner nibble half the <em>padded</em> width away, so a
+     * query sized from the raw dimension read off the end of itself and every odd-dimension 4-bit search threw.
+     */
+    @ParameterizedTest(name = "{0} at dimension {1}")
+    @MethodSource("encodingsAndDimensions")
+    void testPrepareScan_whenTheDimensionIsNotAWholeNumberOfCodes_thenStillScores(ScalarEncoding encoding, int dimension)
+        throws IOException {
+        // given
+        ScalarQuantizedCluster cluster = cluster(dimension, encoding);
+
+        // when
+        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query(dimension))), null);
+
+        // then
+        int scored = 0;
+        while (scorer.advance(Float.NEGATIVE_INFINITY)) {
+            assertFalse(Float.isNaN(scorer.score()), "score must not be NaN");
+            scored++;
+        }
+        assertEquals(CLUSTER_SIZE, scored, "every entry in the posting has to be scored");
+    }
+
+    /** 64 divides evenly under all three encodings; the rest do not, and 7 and 9 straddle a byte. */
+    private static Stream<Arguments> encodingsAndDimensions() {
+        return Stream.of(ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE, ScalarEncoding.DIBIT_QUERY_NIBBLE, ScalarEncoding.PACKED_NIBBLE)
+            .flatMap(encoding -> IntStream.of(7, 9, 31, 64).mapToObj(dimension -> Arguments.of(encoding, dimension)));
+    }
+
+    /**
      * The kernels are written for one query width and the transposition packs for it, so a different width would be
      * scored against a buffer laid out for another. {@link ScanParams} no longer constrains it, which is why this is
      * checked here.
@@ -354,8 +389,12 @@ class SQScanContextClusterTests {
      */
     /** A unit query, which is what the quantizer asks for on the similarities that check. */
     private static float[] query() {
-        float[] query = new float[DIMENSION];
-        for (int i = 0; i < DIMENSION; i++) {
+        return query(DIMENSION);
+    }
+
+    private static float[] query(int dimension) {
+        float[] query = new float[dimension];
+        for (int i = 0; i < dimension; i++) {
             query[i] = (i % 7) * 0.25f - 0.5f;
         }
         normalise(query);
@@ -424,18 +463,28 @@ class SQScanContextClusterTests {
     /** Counts how often the centroid is actually read, so laziness and reuse can be asserted rather than assumed. */
     private static final class CountingCentroid implements IOSupplier<Centroid> {
 
+        private final int dimension;
+
         private int calls;
+
+        private CountingCentroid() {
+            this(DIMENSION);
+        }
+
+        private CountingCentroid(int dimension) {
+            this.dimension = dimension;
+        }
 
         @Override
         public Centroid get() {
             calls++;
-            return new Centroid(centroid(), 1.0f);
+            return new Centroid(centroid(dimension), 1.0f);
         }
     }
 
-    private static float[] centroid() {
-        float[] centroid = new float[DIMENSION];
-        for (int i = 0; i < DIMENSION; i++) {
+    private static float[] centroid(int dimension) {
+        float[] centroid = new float[dimension];
+        for (int i = 0; i < dimension; i++) {
             centroid[i] = (i % 3) * 0.1f + 0.05f;
         }
         normalise(centroid);
@@ -465,14 +514,33 @@ class SQScanContextClusterTests {
     }
 
     private CountingInput countingInput() throws IOException {
+        return countingInput(PACKED_BYTES);
+    }
+
+    private CountingInput countingInput(int packedBytes) throws IOException {
         Directory directory = new ByteBuffersDirectory();
         directories.add(directory);
-        writePosting(directory);
+        writePosting(directory, packedBytes);
         return new CountingInput(directory.openInput(FILE, IOContext.DEFAULT), new int[1]);
     }
 
     private ScalarQuantizedCluster cluster() throws IOException {
         return cluster(countingInput(), new CountingCentroid());
+    }
+
+    /** As {@link #cluster()}, at a dimension and encoding of the caller's choosing rather than the fixture's. */
+    private ScalarQuantizedCluster cluster(int dimension, ScalarEncoding encoding) throws IOException {
+        return new ScalarQuantizedCluster(
+            countingInput(encoding.getDocPackedLength(dimension)),
+            CENTROID_ORDINAL,
+            CLUSTER_SIZE,
+            new CountingCentroid(dimension),
+            BLOCK_SIZE,
+            dimension,
+            encoding,
+            new OptimizedScalarQuantizer(VectorSimilarityFunction.EUCLIDEAN),
+            VectorSimilarityFunction.EUCLIDEAN
+        );
     }
 
     private static ScalarQuantizedCluster cluster(CountingInput posting, CountingCentroid centroidSupplier) throws IOException {
@@ -490,7 +558,7 @@ class SQScanContextClusterTests {
     }
 
     /** The posting layout: ordinals, SOAR FixedBitSet words, ascending distances, then the unpadded blocks. */
-    private static void writePosting(Directory directory) throws IOException {
+    private static void writePosting(Directory directory, int packedBytes) throws IOException {
         try (IndexOutput out = directory.createOutput(FILE, IOContext.DEFAULT)) {
             for (int ordinal : ORDINALS) {
                 out.writeInt(ordinal);
@@ -523,7 +591,7 @@ class SQScanContextClusterTests {
                     out.writeInt(first + i);
                 }
                 for (int i = 0; i < count; i++) {
-                    for (int b = 0; b < PACKED_BYTES; b++) {
+                    for (int b = 0; b < packedBytes; b++) {
                         out.writeByte((byte) (0x5A + first + i + b));
                     }
                 }

@@ -138,7 +138,7 @@ public class ScalarQuantizedCluster implements Cluster {
         }
 
         load();
-        ADCScalarQuantizedBlockScorer scorer = new ADCScalarQuantizedBlockScorer(reader, sqScanContext, encoding, similarityFunction);
+        ScalarQuantizedBlockScorer scorer = new ScalarQuantizedBlockScorer(reader, sqScanContext, encoding, similarityFunction);
         return new BlockPostingScorer(scorer, ordinals, acceptedOrds);
     }
 
@@ -158,7 +158,7 @@ public class ScalarQuantizedCluster implements Cluster {
 
         // multiScalarQuantize centres in place, so it gets a copy
         float[] centred = query.clone();
-        byte[] codes = new byte[query.length];
+        byte[] codes = new byte[encoding.getDiscreteDimensions(query.length)];
         OptimizedScalarQuantizer.QuantizationResult quantized = quantizer.multiScalarQuantize(
             centred,
             new byte[][] { codes },
@@ -166,8 +166,13 @@ public class ScalarQuantizedCluster implements Cluster {
             centroid.vector()
         )[0];
 
-        byte[] transposed = new byte[encoding.getQueryPackedLength(dimension)];
-        OptimizedScalarQuantizer.transposeHalfByte(codes, transposed);
+        final byte[] queryCodes;
+        if (encoding.isAsymmetric()) {
+            queryCodes = new byte[encoding.getQueryPackedLength(dimension)];
+            OptimizedScalarQuantizer.transposeHalfByte(codes, queryCodes);
+        } else {
+            queryCodes = codes;
+        }
 
         float lower = quantized.lowerInterval();
         float scale = (quantized.upperInterval() - lower) / ((1 << queryBits) - 1);
@@ -175,7 +180,7 @@ public class ScalarQuantizedCluster implements Cluster {
             query,
             queryBits,
             centroid.normSq(),
-            transposed,
+            queryCodes,
             lower,
             scale,
             quantized.quantizedComponentSum(),

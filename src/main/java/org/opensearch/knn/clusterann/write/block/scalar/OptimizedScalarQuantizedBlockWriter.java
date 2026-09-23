@@ -26,8 +26,9 @@ import java.io.IOException;
  * per-call copy the writer may mutate (see {@link BlockVectorFormat.Writer#writeBlocks}); the writer does not
  * defensively copy.
  *
- * <p>Only the 1-bit ({@code SINGLE_BIT_QUERY_NIBBLE}) and 2-bit ({@code DIBIT_QUERY_NIBBLE}) encodings are
- * supported; any other encoding is rejected.
+ * <p>Three encodings are supported: the 1-bit ({@code SINGLE_BIT_QUERY_NIBBLE}) and 2-bit
+ * ({@code DIBIT_QUERY_NIBBLE}) asymmetric ones, whose codes are bit-plane transposed for the scorer's popcounts, and
+ * 4-bit {@code PACKED_NIBBLE}, whose whole codes are packed two per byte. Any other encoding is rejected.
  *
  * <p>Each block is written struct-of-arrays, corrective terms first, then the packed codes. Every block holds
  * {@link #blockSize()} vectors except the last, which may be partial. Blocks carry no header; the vector
@@ -93,7 +94,7 @@ public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFor
         this.sum = new int[blockSize];
         this.quantized = new byte[encoding.getDiscreteDimensions(dimension)];
         this.packed = switch (encoding) {
-            case SINGLE_BIT_QUERY_NIBBLE, DIBIT_QUERY_NIBBLE -> new byte[encoding.getDocPackedLength(quantized.length)];
+            case SINGLE_BIT_QUERY_NIBBLE, DIBIT_QUERY_NIBBLE, PACKED_NIBBLE -> new byte[encoding.getDocPackedLength(quantized.length)];
             default -> throw new UnsupportedOperationException(UNSUPPORTED_ENCODING + encoding);
         };
         this.codeLength = packed.length;
@@ -155,6 +156,7 @@ public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFor
         switch (encoding) {
             case SINGLE_BIT_QUERY_NIBBLE -> OptimizedScalarQuantizer.packAsBinary(quantized, packed);
             case DIBIT_QUERY_NIBBLE -> Lucene104Backports.transposeDibit(quantized, packed);
+            case PACKED_NIBBLE -> packNibbles(quantized, packed);
             default -> throw new UnsupportedOperationException(UNSUPPORTED_ENCODING + encoding);
         }
     }
@@ -184,5 +186,12 @@ public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFor
         }
         out.writeBytes(codes, 0, buffered * codeLength);
         resetBuffer();
+    }
+
+    private static void packNibbles(final byte[] codes, final byte[] packed) {
+        final int half = codes.length / 2;
+        for (int i = 0; i < half; i++) {
+            packed[i] = (byte) ((codes[i] << 4) | (codes[i + half] & 0x0F));
+        }
     }
 }

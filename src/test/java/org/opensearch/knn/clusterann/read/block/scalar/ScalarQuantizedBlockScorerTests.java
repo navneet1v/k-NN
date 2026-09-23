@@ -33,9 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Fast, isolated unit tests for {@link ADCScalarQuantizedBlockScorer} (JUnit 5).
+ * Fast, isolated unit tests for {@link ScalarQuantizedBlockScorer} (JUnit 5).
  */
-class ADCSQScanContextBlockScorerTests {
+class ScalarQuantizedBlockScorerTests {
 
     /** 1-bit doc codes: the only width the kernel supports alongside dibit, and the cheapest to lay out. */
     private static final ScalarEncoding ENCODING = ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE;
@@ -279,24 +279,25 @@ class ADCSQScanContextBlockScorerTests {
     }
 
     /**
-     * Nibble-wide doc codes have no kernel yet, and the reader stores them happily — so the scorer refuses the
-     * encoding when it is handed one, rather than when it first tries to score with it.
+     * A width with no kernel is refused when the encoding is handed over, not when scoring first reaches for one: the
+     * reader stores any width happily, so the constructor is the only place that can catch it early. SEVEN_BIT is the
+     * case at hand - 7-bit codes occupy a byte per dimension like 8-bit, but nothing has been verified to score them.
      */
     @Test
     void testConstructor_whenDocWidthHasNoKernel_thenThrows() {
         // given / when
         IllegalArgumentException e = assertThrows(
             IllegalArgumentException.class,
-            () -> scorer(reader(ScalarEncoding.PACKED_NIBBLE), VectorSimilarityFunction.EUCLIDEAN, ScalarEncoding.PACKED_NIBBLE)
+            () -> scorer(reader(ScalarEncoding.SEVEN_BIT), VectorSimilarityFunction.EUCLIDEAN, ScalarEncoding.SEVEN_BIT)
         );
 
         // then
-        assertTrue(e.getMessage().contains("Unsupported docBits: 4"), e.getMessage());
+        assertTrue(e.getMessage().contains("SEVEN_BIT"), e.getMessage());
     }
 
-    /** The two widths that do have kernels are accepted. */
+    /** Every width that does have a kernel is accepted: the two transposed ones and the packed nibble. */
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = ScalarEncoding.class, names = { "SINGLE_BIT_QUERY_NIBBLE", "DIBIT_QUERY_NIBBLE" })
+    @EnumSource(value = ScalarEncoding.class, names = { "SINGLE_BIT_QUERY_NIBBLE", "DIBIT_QUERY_NIBBLE", "PACKED_NIBBLE" })
     void testConstructor_whenDocWidthHasAKernel_thenScores(ScalarEncoding encoding) throws IOException {
         // given
         BlockVectorScorer scorer = scorer(reader(encoding), VectorSimilarityFunction.EUCLIDEAN, encoding);
@@ -340,11 +341,11 @@ class ADCSQScanContextBlockScorerTests {
         return new ScalarQuantizedBlockReader(in, BLOCK_SIZE, VECTOR_COUNT, DIMENSION, encoding);
     }
 
-    private static ADCScalarQuantizedBlockScorer scorer(ScalarQuantizedBlockReader reader, VectorSimilarityFunction sim) {
+    private static ScalarQuantizedBlockScorer scorer(ScalarQuantizedBlockReader reader, VectorSimilarityFunction sim) {
         return scorer(reader, sim, ENCODING);
     }
 
-    private static ADCScalarQuantizedBlockScorer scorer(
+    private static ScalarQuantizedBlockScorer scorer(
         ScalarQuantizedBlockReader reader,
         VectorSimilarityFunction sim,
         ScalarEncoding encoding
@@ -352,13 +353,13 @@ class ADCSQScanContextBlockScorerTests {
         return scorer(reader, sim, encoding, ScanParams.DEFAULT_QUERY_BITS);
     }
 
-    private static ADCScalarQuantizedBlockScorer scorer(
+    private static ScalarQuantizedBlockScorer scorer(
         ScalarQuantizedBlockReader reader,
         VectorSimilarityFunction sim,
         ScalarEncoding encoding,
         int queryBits
     ) {
-        return new ADCScalarQuantizedBlockScorer(reader, scanContext(encoding, queryBits), encoding, sim);
+        return new ScalarQuantizedBlockScorer(reader, scanContext(encoding, queryBits), encoding, sim);
     }
 
     /**
@@ -375,10 +376,11 @@ class ADCSQScanContextBlockScorerTests {
         }
         normalise(query);
 
-        // The kernels read four query stripes per doc byte, so this length is what makes them in-bounds.
-        byte[] transposed = new byte[encoding.getQueryPackedLength(DIMENSION)];
+        // Shape follows the encoding, as it does in ScalarQuantizedCluster: transposed query planes for an asymmetric
+        // encoding, one code per dimension for a symmetric one, which is what Lucene's whole-code kernels require.
+        byte[] transposed = new byte[encoding.isAsymmetric() ? encoding.getQueryPackedLength(DIMENSION) : DIMENSION];
         for (int i = 0; i < transposed.length; i++) {
-            transposed[i] = (byte) (0x33 + i);
+            transposed[i] = (byte) ((0x33 + i) & (encoding.isAsymmetric() ? 0xFF : 0x0F));
         }
 
         return new SQScanContext(

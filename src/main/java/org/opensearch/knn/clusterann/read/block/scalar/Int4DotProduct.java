@@ -84,4 +84,21 @@ public final class Int4DotProduct {
         }
         return q0d0 + (q0d1 + q1d0) * 2L + (q1d1 + q2d0) * 4L + (q2d1 + q3d0) * 8L + q3d1 * 16L;
     }
+
+    /**
+     * 4-bit doc × 4-bit query at a byte {@code offset} into {@code docs}, where {@code len} is the packed byte count.
+     *
+     * <p>{@code docs} holds the arrangement the packer writes and Lucene's kernel reads: byte {@code i} carries dimension
+     * {@code i} in its high nibble and dimension {@code i + len} in its low one. {@code query} is one code per dimension,
+     * so it is twice as long as the packed slice. No popcounts here, unlike {@link #bit} and {@link #dibit}: whole codes
+     * multiply, so this is a plain multiply-accumulate and the JIT can unroll it.
+     */
+    public static float nibble(byte[] query, byte[] docs, int offset, int len) {
+        int sum = 0;
+        for (int i = 0; i < len; i++) {
+            final int packed = docs[offset + i] & 0xFF;
+            sum += (query[i] & 0xFF) * (packed >>> 4) + (query[i + len] & 0xFF) * (packed & 0x0F);
+        }
+        return sum;
+    }
 }
