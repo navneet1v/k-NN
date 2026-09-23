@@ -31,6 +31,9 @@ import org.opensearch.knn.KNNTestCase;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.mapper.KNNVectorFieldType;
+import org.opensearch.knn.index.query.clusterann.ClusterANNQuery;
+import org.opensearch.knn.index.query.clusterann.ClusterANNRescoreQuery;
 import org.opensearch.knn.index.query.lucenelib.ExpandNestedDocsQuery;
 import org.opensearch.knn.index.query.lucene.LuceneEngineKnnVectorQuery;
 import org.opensearch.knn.index.query.lucenelib.OSDiversifyingChildrenByteKnnVectorQuery;
@@ -621,6 +624,52 @@ public class KNNQueryFactoryTests extends KNNTestCase {
                 .fieldName(testFieldName)
                 .methodParameters(methodParams)
                 .vectorDataType(VectorDataType.BYTE)
+                .build()
+        );
+    }
+
+    /**
+     * A ClusterANN field rescores by default, at 1x: the scan's quantized ordering is corrected without the scan reading
+     * a single extra posting. {@code firstPassK == k} is the whole assertion.
+     */
+    public void testClusterANNQueryRescoresAtOneTimesByDefault() {
+        final Query query = buildClusterANNQuery(null);
+        assertTrue("expected a rescore query, got " + query.getClass().getSimpleName(), query instanceof ClusterANNRescoreQuery);
+        assertTrue(query.toString(), query.toString().contains("firstPassK=" + testK + ", k=" + testK));
+    }
+
+    /**
+     * Oversampling is the request's knob, and it must mean what it says — {@code RescoreContext#getFirstPassK} would floor
+     * this at 100 candidates, which for a cluster scan is postings read off disk rather than a few more graph hops.
+     */
+    public void testClusterANNQueryHonoursRequestedOversampleFactor() {
+        final Query query = buildClusterANNQuery(RescoreContext.builder().oversampleFactor(2.0f).userProvided(true).build());
+        assertTrue(query.toString(), query.toString().contains("firstPassK=" + (2 * testK) + ", k=" + testK));
+    }
+
+    /** Rescore off is the plain scan, collecting exactly k. */
+    public void testClusterANNQueryWithoutRescoreIsTheBareScan() {
+        final Query query = buildClusterANNQuery(RescoreContext.EXPLICITLY_DISABLED_RESCORE_CONTEXT);
+        assertTrue("expected the bare scan, got " + query.getClass().getSimpleName(), query instanceof ClusterANNQuery);
+        assertTrue(query.toString(), query.toString().contains("candidateK=" + testK));
+    }
+
+    private Query buildClusterANNQuery(final RescoreContext rescoreContext) {
+        final KNNVectorFieldType clusterANNFieldType = mock(KNNVectorFieldType.class);
+        when(clusterANNFieldType.isClusterANN()).thenReturn(true);
+        final QueryShardContext mockQueryShardContext = mock(QueryShardContext.class);
+        when(mockQueryShardContext.fieldMapper(testFieldName)).thenReturn(clusterANNFieldType);
+
+        return KNNQueryFactory.create(
+            BaseQueryFactory.CreateQueryRequest.builder()
+                .knnEngine(KNNEngine.UNDEFINED)
+                .indexName(testIndexName)
+                .fieldName(testFieldName)
+                .vector(testQueryVector)
+                .k(testK)
+                .vectorDataType(VectorDataType.FLOAT)
+                .rescoreContext(rescoreContext)
+                .context(mockQueryShardContext)
                 .build()
         );
     }

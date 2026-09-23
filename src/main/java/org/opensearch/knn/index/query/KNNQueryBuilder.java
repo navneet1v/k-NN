@@ -454,7 +454,9 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> imple
 
         // This could be null in the case of when a model did not have serialized methodComponent information
         final String method = methodComponentContext != null ? methodComponentContext.getName() : null;
-        if (method != null && !method.isBlank()) {
+        // ClusterANN is engineless, so its engine is UNDEFINED and carries no library to ask for a search context. Its
+        // method parameters are validated by its own resolver at mapping time.
+        if (method != null && !method.isBlank() && knnVectorFieldType.isClusterANN() == false) {
             final KNNLibrarySearchContext engineSpecificMethodContext = knnEngine.getKNNLibrarySearchContext(method);
             QueryContext queryContext = new QueryContext(vectorQueryType);
             ValidationException validationException = validateParameters(

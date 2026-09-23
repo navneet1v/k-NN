@@ -9,9 +9,13 @@ import lombok.NonNull;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.join.BitSetProducer;
+import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.mapper.KNNVectorFieldType;
+import org.opensearch.knn.index.query.clusterann.ClusterANNQuery;
+import org.opensearch.knn.index.query.clusterann.ClusterANNRescoreQuery;
 import org.opensearch.knn.index.query.common.QueryUtils;
 import org.opensearch.knn.index.query.lucenelib.OSKnnByteVectorQuery;
 import org.opensearch.knn.index.query.lucenelib.OSKnnFloatVectorQuery;
@@ -69,6 +73,20 @@ public class KNNQueryFactory extends BaseQueryFactory {
                     EXPAND_NESTED,
                     EXPAND_NESTED
                 )
+            );
+        }
+
+        if (isClusterANNField(createQueryRequest)) {
+            return createClusterANNQuery(
+                fieldName,
+                vector,
+                vectorDataType,
+                k,
+                filterQuery,
+                parentFilter,
+                expandNested,
+                rescoreContext,
+                shardId
             );
         }
 
@@ -142,6 +160,108 @@ public class KNNQueryFactory extends BaseQueryFactory {
         );
         return needsRescore ? new RescoreKNNVectorQuery(luceneKnnQuery, fieldName, k, vector, shardId) : luceneKnnQuery;
 
+    }
+
+    /**
+     * What a ClusterANN query rescores with when the request says nothing: on, at 1x.
+     *
+     * <p><b>On</b>, because the scan ranks by a quantized estimate and the ordering it produces is not the one the user
+     * asked for. <b>1x</b>, because that corrects the ordering without widening the scan: the same candidates, scored
+     * against the vectors as written. Oversampling is the knob for recall and is left to the request, which is the only
+     * place that knows whether the extra postings are worth reading.
+     *
+     * <p>Not {@link KNNVectorFieldType#resolveRescoreContext}, whose defaults come from the compression level and only
+     * apply to {@code mode: on_disk} — a mode ClusterANN rejects, so that path resolves to no rescore at all.
+     */
+    private static final RescoreContext DEFAULT_CLUSTER_ANN_RESCORE_CONTEXT = RescoreContext.builder()
+        .oversampleFactor(RescoreContext.MIN_OVERSAMPLE_FACTOR)
+        .userProvided(false)
+        .build();
+
+    /**
+     * Whether the query is against a ClusterANN field.
+     *
+     * <p>Read from the mapping rather than from the engine, because ClusterANN has none: it is an engineless method, and
+     * the method name is the only thing that identifies it. A missing shard context means there is no mapping to consult,
+     * which only happens in call paths that never reach a ClusterANN field.
+     */
+    private static boolean isClusterANNField(final CreateQueryRequest createQueryRequest) {
+        final MappedFieldType fieldType = createQueryRequest.getContext()
+            .map(context -> context.fieldMapper(createQueryRequest.getFieldName()))
+            .orElse(null);
+        return fieldType instanceof KNNVectorFieldType knnVectorFieldType && knnVectorFieldType.isClusterANN();
+    }
+
+    /**
+     * Builds the ClusterANN query, and the rescore stage on top of it unless the request turns it off.
+     *
+     * <p>One class per stage, the first collecting its result and the second handing back a scorer:
+     *
+     * <pre>
+     * ClusterANNQuery          approximate scan, one best child per parent when nested
+     * ClusterANNRescoreQuery   exact scores for the oversampled candidates
+     * </pre>
+     *
+     * <p>Only the outermost stage hands a scorer to the caller, so Lucene's collector reduces the result.
+     *
+     * <p>Neither is wrapped in a {@code LuceneEngineKnnVectorQuery}: each already answers {@code rewrite} with itself and
+     * does its work when a weight is created, so OpenSearch rewriting again for the fetch phase costs nothing. The
+     * {@code ef_search} floor that the Lucene path applies is left off too — there is no graph here for it to mean
+     * anything about, and it would silently enlarge the candidate set.
+     */
+    private static Query createClusterANNQuery(
+        final String fieldName,
+        final float[] vector,
+        final VectorDataType vectorDataType,
+        final int k,
+        final Query filterQuery,
+        final BitSetProducer parentFilter,
+        final boolean expandNested,
+        final RescoreContext rescoreContext,
+        final int shardId
+    ) {
+        if (vectorDataType != VectorDataType.FLOAT) {
+            throw new IllegalArgumentException(
+                String.format(Locale.ROOT, "ClusterANN supports only float vectors, got [%s]", vectorDataType)
+            );
+        }
+        if (expandNested) {
+            // The expand stage has to know which parents won, so it follows the rescore. Not ported yet; rejected rather
+            // than silently returning one child per parent, which is a different result than the user asked for.
+            throw new IllegalArgumentException(String.format(Locale.ROOT, "[%s] is not supported by ClusterANN yet", EXPAND_NESTED));
+        }
+
+        final RescoreContext resolvedRescoreContext = rescoreContext == null ? DEFAULT_CLUSTER_ANN_RESCORE_CONTEXT : rescoreContext;
+        final boolean needsRescore = shouldRescore(resolvedRescoreContext);
+        // Oversample only when something will reduce it again. Without a rescore the extra candidates are scanned and then
+        // dropped by the collector, which is work for nothing.
+        final int candidateK = needsRescore ? candidateK(k, resolvedRescoreContext) : k;
+
+        log.debug(
+            "Creating ClusterANN query for field:{}, k:{}, candidateK:{}, rescore:{}, oversampleFactor:{}",
+            fieldName,
+            k,
+            candidateK,
+            needsRescore,
+            resolvedRescoreContext.getOversampleFactor()
+        );
+
+        final Query query = new ClusterANNQuery(fieldName, vector, candidateK, filterQuery, parentFilter, shardId);
+        return needsRescore ? new ClusterANNRescoreQuery(query, fieldName, candidateK, k, vector, parentFilter) : query;
+    }
+
+    /**
+     * How many candidates the scan collects for the rescore: {@code k × oversampleFactor}, and nothing more.
+     *
+     * <p>Not {@link RescoreContext#getFirstPassK}, which floors the answer at {@link RescoreContext#MIN_FIRST_PASS_RESULTS}
+     * — a floor sized for a graph walk, where 100 candidates cost little more than 10. Here they are postings read off
+     * disk, and it would turn the 1x default into 10x for a typical {@code k}: the factor has to mean what it says.
+     *
+     * <p>Never below {@code k}, which the cap could otherwise breach for a {@code k} larger than the cap itself.
+     */
+    private static int candidateK(final int k, final RescoreContext rescoreContext) {
+        final int oversampled = (int) Math.ceil(k * rescoreContext.getOversampleFactor());
+        return Math.max(k, Math.min(RescoreContext.MAX_FIRST_PASS_RESULTS, oversampled));
     }
 
     private static int getDimension(float[] floatQueryVector, byte[] byteQueryVector) {

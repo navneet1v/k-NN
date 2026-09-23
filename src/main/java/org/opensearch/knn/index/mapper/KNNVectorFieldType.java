@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
+import static org.opensearch.knn.common.KNNConstants.METHOD_CLUSTER;
 import static org.opensearch.knn.index.mapper.KNNVectorFieldMapperUtil.deserializeStoredVector;
 
 /**
@@ -133,6 +134,18 @@ public class KNNVectorFieldType extends MappedFieldType {
     @Override
     public Object valueForDisplay(Object value) {
         return deserializeStoredVector((BytesRef) value, vectorDataType);
+    }
+
+    /**
+     * Whether this field is indexed by ClusterANN.
+     *
+     * <p>ClusterANN has no engine — it is an engineless method, so it cannot be recognised the way Faiss or Lucene are.
+     * The method name in the mapping is what identifies it, and this is where the mapping is already read.
+     */
+    public boolean isClusterANN() {
+        return getKnnMappingConfig().getKnnMethodContext()
+            .map(context -> METHOD_CLUSTER.equals(context.getMethodComponentContext().getName()))
+            .orElse(false);
     }
 
     /**
