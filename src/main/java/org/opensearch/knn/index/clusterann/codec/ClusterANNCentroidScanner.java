@@ -327,6 +327,21 @@ public final class ClusterANNCentroidScanner {
             return batch;
         }
 
+        // No rescore at all: rank purely by coarse thermometer Hamming (smaller Hamming = higher
+        // similarity). No int8, no FP exact rescore. Measures the raw 2-bit coarse-tier ranking.
+        // Toggle: -Dclusterann.thermo.norescore=true.
+        if (Boolean.getBoolean("clusterann.thermo.norescore")) {
+            for (int i = 0; i < count && batch < keep; i++) {
+                if (validBuf[i] && hamByPos[i] <= threshold) {
+                    float sim = -(float) hamByPos[i];
+                    if (sim > minCompetitive) collector.collect(docIdBuf[i], sim);
+                    batch++;
+                }
+            }
+            collector.incVisitedCount(batch);
+            return batch;
+        }
+
         // Full-precision rerank: gather shortlist ordinals in original order, exact-score.
         int[] shortlistOrds = new int[nCand];
         int[] shortlistDocs = new int[nCand];
