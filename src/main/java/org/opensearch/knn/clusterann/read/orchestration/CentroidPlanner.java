@@ -81,7 +81,8 @@ public final class CentroidPlanner {
         float dot = VectorUtil.dotProduct(query, centroid);
         return switch (similarity) {
             case EUCLIDEAN -> queryNormSq - 2 * dot + centroids.norm();
-            case DOT_PRODUCT, MAXIMUM_INNER_PRODUCT -> -dot;
+            case MAXIMUM_INNER_PRODUCT -> -dot;
+            case DOT_PRODUCT -> throw new IllegalStateException("ClusterANN does not support DOT_PRODUCT; use MAXIMUM_INNER_PRODUCT");
             case COSINE -> -dot / (float) Math.sqrt(centroids.norm());
         };
     }

@@ -38,14 +38,16 @@ public final class VectorMath {
      *
      * <ul>
      *   <li>{@code EUCLIDEAN} &rarr; squared L2 distance</li>
-     *   <li>{@code DOT_PRODUCT}, {@code MAXIMUM_INNER_PRODUCT} &rarr; negated inner product</li>
+     *   <li>{@code MAXIMUM_INNER_PRODUCT} &rarr; negated inner product</li>
      *   <li>{@code COSINE} &rarr; {@code 1 - cosine} similarity</li>
+     *   <li>{@code DOT_PRODUCT} &rarr; unsupported</li>
      * </ul>
      */
     public static DistanceFunction distanceFunction(VectorSimilarityFunction metric) {
         return switch (metric) {
             case EUCLIDEAN -> VectorMath::squareDistance;
-            case DOT_PRODUCT, MAXIMUM_INNER_PRODUCT -> (a, b) -> -dotProduct(a, b);
+            case MAXIMUM_INNER_PRODUCT -> (a, b) -> -dotProduct(a, b);
+            case DOT_PRODUCT -> throw new IllegalArgumentException("ClusterANN does not support DOT_PRODUCT; use MAXIMUM_INNER_PRODUCT");
             case COSINE -> (a, b) -> 1f - cosine(a, b);
         };
     }

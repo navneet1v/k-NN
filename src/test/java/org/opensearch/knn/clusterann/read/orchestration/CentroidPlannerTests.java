@@ -25,6 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -81,25 +82,26 @@ class CentroidPlannerTests {
         assertArrayEquals(new int[] { 1, 2, 3, 0 }, probes);
     }
 
-    /**
-     * DOT_PRODUCT ranks by inner product — 10, 0, 3 and 0.5 — which reverses EUCLIDEAN's verdict on the same centroids:
-     * the far one at (10, 0) is the best inner product and the worst distance.
-     */
+    /** DOT_PRODUCT is not a similarity this format writes, so a segment claiming it cannot be planned. */
     @Test
-    void testPlan_whenDotProduct_thenRanksByInnerProduct() throws IOException {
+    void testPlan_whenDotProduct_thenThrows() throws IOException {
         // given
         Clusters clusters = clusters(VectorSimilarityFunction.DOT_PRODUCT, CENTROIDS, ALL_OCCUPIED);
 
-        // when
-        int[] probes = CentroidPlanner.plan(clusters, QUERY, new PlanParams(1, 4));
-
-        // then
-        assertArrayEquals(new int[] { 0, 2, 3, 1 }, probes);
+        // when / then
+        IllegalStateException e = assertThrows(
+            IllegalStateException.class,
+            () -> CentroidPlanner.plan(clusters, QUERY, new PlanParams(1, 4))
+        );
+        assertTrue(e.getMessage().contains("MAXIMUM_INNER_PRODUCT"), e.getMessage());
     }
 
-    /** Maximum inner product orders centroids the same way as the plain inner product; only the score scaling differs. */
+    /**
+     * Maximum inner product ranks by inner product — 10, 0, 3 and 0.5 — which reverses EUCLIDEAN's verdict on the same
+     * centroids: the far one at (10, 0) is the best inner product and the worst distance.
+     */
     @Test
-    void testPlan_whenMaximumInnerProduct_thenRanksAsDotProductDoes() throws IOException {
+    void testPlan_whenMaximumInnerProduct_thenRanksByInnerProduct() throws IOException {
         // given
         Clusters clusters = clusters(VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT, CENTROIDS, ALL_OCCUPIED);
 
@@ -124,7 +126,7 @@ class CentroidPlannerTests {
         // when
         int[] byCosine = CentroidPlanner.plan(clusters(VectorSimilarityFunction.COSINE, centroids, occupied), QUERY, new PlanParams(1, 2));
         int[] byDot = CentroidPlanner.plan(
-            clusters(VectorSimilarityFunction.DOT_PRODUCT, centroids, occupied),
+            clusters(VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT, centroids, occupied),
             QUERY,
             new PlanParams(1, 2)
         );

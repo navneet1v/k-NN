@@ -27,6 +27,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,7 +117,7 @@ class ADCSQScanContextBlockScorerTests {
      * not of some intermediate quantity behind them.
      */
     @ParameterizedTest(name = "{0}")
-    @EnumSource(VectorSimilarityFunction.class)
+    @EnumSource(value = VectorSimilarityFunction.class, mode = EnumSource.Mode.EXCLUDE, names = "DOT_PRODUCT")
     void testScoreBlock_thenReturnsTheMaximumOfTheScoresItAppended(VectorSimilarityFunction sim) throws IOException {
         // given
         BlockVectorScorer scorer = scorer(reader(), sim);
@@ -180,33 +181,42 @@ class ADCSQScanContextBlockScorerTests {
 
     // ---------------------------------------------------------------- similarity branches
 
-    /**
-     * The switch over the similarity is exhaustive, so every function the enum offers is scored — nothing falls
-     * through to a rejection. Dot product and cosine share a branch deliberately: both sides are unit-norm, so
-     * the cosine is the dot product, and the two must therefore agree score for score.
-     */
+    /** Cosine scores through the same code dot product, and every score it hands out is usable. */
     @Test
-    void testScoreBlock_whenSimilarityIsDotProductOrCosine_thenScoresAgree() throws IOException {
+    void testScoreBlock_whenSimilarityIsCosine_thenEveryScoreIsUsable() throws IOException {
         // given
-        BlockVectorScorer dotProduct = scorer(reader(), VectorSimilarityFunction.DOT_PRODUCT);
         BlockVectorScorer cosine = scorer(reader(), VectorSimilarityFunction.COSINE);
-        positionOn(dotProduct, 0);
         positionOn(cosine, 0);
         FixedBitSet validPos = new FixedBitSet(BLOCK_SIZE);
         validPos.set(0, BLOCK_SIZE);
-        BlockVectorScorer.BlockCandidates dotOut = candidates();
-        BlockVectorScorer.BlockCandidates cosineOut = candidates();
+        BlockVectorScorer.BlockCandidates out = candidates();
 
         // when
-        float dotMax = dotProduct.scoreBlock(validPos, dotOut);
-        float cosineMax = cosine.scoreBlock(validPos, cosineOut);
+        float maxScore = cosine.scoreBlock(validPos, out);
 
         // then
-        assertEquals(BLOCK_SIZE, dotOut.getSize());
-        assertEquals(dotMax, cosineMax);
-        for (int i = 0; i < dotOut.getSize(); i++) {
-            assertEquals(dotOut.getScores()[i], cosineOut.getScores()[i], "position " + i);
+        assertEquals(BLOCK_SIZE, out.getSize());
+        for (int i = 0; i < out.getSize(); i++) {
+            float score = out.getScores()[i];
+            assertFalse(Float.isNaN(score), "position " + i + " scored NaN");
+            assertTrue(score >= 0f, "position " + i + " scored " + score);
+            assertTrue(score <= maxScore, "position " + i + " exceeds the reported maximum");
         }
+    }
+
+    /** DOT_PRODUCT is not a similarity this format writes, so a segment claiming it cannot be scored. */
+    @Test
+    void testScoreBlock_whenSimilarityIsDotProduct_thenThrows() throws IOException {
+        // given
+        BlockVectorScorer scorer = scorer(reader(), VectorSimilarityFunction.DOT_PRODUCT);
+        positionOn(scorer, 0);
+        FixedBitSet validPos = new FixedBitSet(BLOCK_SIZE);
+        validPos.set(0, BLOCK_SIZE);
+        BlockVectorScorer.BlockCandidates out = candidates();
+
+        // when / then
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> scorer.scoreBlock(validPos, out));
+        assertTrue(e.getMessage().contains("MAXIMUM_INNER_PRODUCT"), e.getMessage());
     }
 
     /** Euclidean maps a distance through 1/(1+d), so its similarities are bounded — the others are not. */

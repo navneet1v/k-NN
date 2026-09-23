@@ -262,7 +262,7 @@ class ClusterBuilderTests {
         }
         FloatVectorValues source = FloatVectorValues.fromFloats(vecs, 16);
 
-        ClusteringResult result = ClusterBuilder.build(source, VectorSimilarityFunction.DOT_PRODUCT, TASK_EXECUTOR);
+        ClusteringResult result = ClusterBuilder.build(source, VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT, TASK_EXECUTOR);
 
         assertNotNull(result);
         assertTrue(result.numCentroids() > 0);

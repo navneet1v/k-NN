@@ -112,11 +112,11 @@ public class ADCScalarQuantizedBlockScorer implements BlockVectorScorer {
                     float dot = score + addCor[index] + centroidDotProductMinusNorm;
                     yield dot >= 0 ? dot + 1 : 1f / (1f - dot);
                 }
-                case DOT_PRODUCT, COSINE -> {
-                    // Same dot product; both sides are unit-norm, so cosine is that dot product.
+                case COSINE -> {
                     float dot = score + addCor[index] + centroidDotProductMinusNorm;
                     yield Math.max((1.0f + dot) / 2.0f, 0f);
                 }
+                case DOT_PRODUCT -> throw new IllegalStateException("ClusterANN does not support DOT_PRODUCT; use MAXIMUM_INNER_PRODUCT");
             };
             positions[scored] = index;
             scores[scored] = adc;

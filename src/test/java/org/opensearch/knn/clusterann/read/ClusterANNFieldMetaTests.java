@@ -92,7 +92,7 @@ class ClusterANNFieldMetaTests {
     }
 
     @ParameterizedTest(name = "encoded {0}")
-    @CsvSource({ "0, EUCLIDEAN", "1, DOT_PRODUCT", "2, COSINE" })
+    @CsvSource({ "0, EUCLIDEAN", "1, MAXIMUM_INNER_PRODUCT", "2, COSINE" })
     void testRead_whenSimilarityIsKnown_thenDecodesIt(byte encoded, VectorSimilarityFunction expected) throws IOException {
         // given / when
         ClusterANNFieldMeta meta = read(new ClusterANNFieldMetaEncoder().similarityFunction(encoded));
@@ -238,7 +238,7 @@ class ClusterANNFieldMetaTests {
     // ---------------------------------------------------------------- corrupt entries
 
     @ParameterizedTest(name = "encoded {0}")
-    @ValueSource(ints = { 3, 42, -1 })
+    @ValueSource(ints = { 3, 4, 42, -1 })
     void testRead_whenSimilarityIsUnknown_thenThrows(int encoded) {
         // given / when
         CorruptIndexException e = assertThrows(

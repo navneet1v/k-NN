@@ -72,7 +72,7 @@ public final class ClusterANNFieldMeta {
     private static final int BYTES_PER_CENTROID = Long.BYTES + 2 * Integer.BYTES;
 
     private static final byte SIMILARITY_L2 = 0;
-    private static final byte SIMILARITY_IP = 1;
+    private static final byte SIMILARITY_MIP = 1;
     private static final byte SIMILARITY_COSINE = 2;
 
     /** Block shift for the {@code ordToDoc} monotonic addresses; matches Lucene's flat/HNSW formats. */
@@ -366,9 +366,9 @@ public final class ClusterANNFieldMeta {
     private static byte similarityCode(VectorSimilarityFunction similarity) {
         return switch (similarity) {
             case EUCLIDEAN -> SIMILARITY_L2;
-            case DOT_PRODUCT -> SIMILARITY_IP;
             case COSINE -> SIMILARITY_COSINE;
-            default -> throw new IllegalArgumentException("Unsupported similarity function: " + similarity);
+            case MAXIMUM_INNER_PRODUCT -> SIMILARITY_MIP;
+            case DOT_PRODUCT -> throw new IllegalArgumentException("ClusterANN does not support DOT_PRODUCT; use MAXIMUM_INNER_PRODUCT");
         };
     }
 
@@ -388,8 +388,8 @@ public final class ClusterANNFieldMeta {
     private static VectorSimilarityFunction similarityFunction(byte encoded, ChecksumIndexInput meta) throws IOException {
         return switch (encoded) {
             case SIMILARITY_L2 -> VectorSimilarityFunction.EUCLIDEAN;
-            case SIMILARITY_IP -> VectorSimilarityFunction.DOT_PRODUCT;
             case SIMILARITY_COSINE -> VectorSimilarityFunction.COSINE;
+            case SIMILARITY_MIP -> VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT;
             default -> throw new CorruptIndexException("Unknown similarity function: " + encoded, meta);
         };
     }

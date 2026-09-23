@@ -108,7 +108,7 @@ class ClusterANNFieldMetaWriteTest {
                 assertEquals(64, in.readVInt(), "dimension");
                 assertEquals(40, in.readVInt(), "vectorCount");
                 assertEquals(1, in.readVInt(), "centroidCount");
-                assertEquals((byte) 1, in.readByte(), "similarity code (IP)");
+                assertEquals((byte) 1, in.readByte(), "similarity code (maximum inner product)");
                 assertEquals(1, in.readByte(), "docBits");
                 assertEquals((byte) ROTATION_NONE, in.readByte(), "rotationId");
                 assertEquals(0, in.readByte(), "quantizerId");
@@ -267,6 +267,38 @@ class ClusterANNFieldMetaWriteTest {
         assertTrue(clap.getMessage().contains("clapCentroidOffsets[1]"), clap.getMessage());
     }
 
+    /** Maximum inner product round-trips as itself. */
+    @Test
+    void write_thenRead_roundTripsMaximumInnerProductField() throws IOException {
+        assertEquals(maxInnerProductField(), writeThenRead(maxInnerProductField(), 40, denseDocs(40)));
+    }
+
+    private static ClusterANNFieldMeta maxInnerProductField() {
+        return new ClusterANNFieldMeta(
+            BLOCK_SIZE,
+            64,
+            40,
+            1,
+            VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT,
+            1,
+            ROTATION_NONE,
+            0,
+            new byte[0],
+            0L,
+            256L,
+            0L,
+            NO_ROTATION,
+            0L,
+            300L,
+            new long[] { 0L },
+            new int[] { 300 },
+            new int[] { 40 },
+            NO_ROTATION,
+            NO_ROTATION,
+            null
+        );
+    }
+
     private static ClusterANNFieldMeta rotatedField() {
         return new ClusterANNFieldMeta(
             BLOCK_SIZE,
@@ -299,7 +331,7 @@ class ClusterANNFieldMetaWriteTest {
             64,
             40,
             1,
-            VectorSimilarityFunction.DOT_PRODUCT,
+            VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT,
             1,
             ROTATION_NONE,
             0,
@@ -325,7 +357,7 @@ class ClusterANNFieldMetaWriteTest {
             8,
             3,
             1,
-            VectorSimilarityFunction.DOT_PRODUCT,
+            VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT,
             1,
             ROTATION_NONE,
             0,

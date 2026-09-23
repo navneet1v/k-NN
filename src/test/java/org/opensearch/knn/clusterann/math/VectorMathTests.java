@@ -9,6 +9,7 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VectorMathTests {
@@ -156,16 +157,13 @@ class VectorMathTests {
     }
 
     @Test
-    void testDistanceFunction_dotProduct_negatedInnerProduct() {
-        VectorMath.DistanceFunction fn = VectorMath.distanceFunction(VectorSimilarityFunction.DOT_PRODUCT);
-        float[] a = { 1.0f, 0.0f };
-        float[] parallel = { 1.0f, 0.0f };
-        float[] orthogonal = { 0.0f, 1.0f };
-        float[] opposite = { -1.0f, 0.0f };
-        // -dot: parallel < orthogonal(0) < opposite (lower = more similar)
-        assertTrue(fn.distance(a, parallel) < 0);
-        assertEquals(0.0f, fn.distance(a, orthogonal), 1e-6f);
-        assertTrue(fn.distance(a, opposite) > 0);
+    void testDistanceFunction_whenDotProduct_thenThrows() {
+        IllegalArgumentException e = assertThrows(
+            IllegalArgumentException.class,
+            () -> VectorMath.distanceFunction(VectorSimilarityFunction.DOT_PRODUCT)
+        );
+
+        assertTrue(e.getMessage().contains("MAXIMUM_INNER_PRODUCT"), e.getMessage());
     }
 
     @Test
@@ -200,6 +198,9 @@ class VectorMathTests {
         float[] close = { 0.9f, 0.1f, 0.0f };
         float[] far = { -1.0f, 0.0f, 0.0f };
         for (VectorSimilarityFunction metric : VectorSimilarityFunction.values()) {
+            if (metric == VectorSimilarityFunction.DOT_PRODUCT) {
+                continue;
+            }
             VectorMath.DistanceFunction fn = VectorMath.distanceFunction(metric);
             assertTrue(fn.distance(query, close) < fn.distance(query, far), metric.name() + ": close should be less than far");
         }
