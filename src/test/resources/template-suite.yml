@@ -1,0 +1,121 @@
+# Reference suite: every option KNNVectorFormatsComponentTest accepts, with its default. Copy it and delete what you
+# do not need — every key below is optional, and the values shown ARE the defaults, so this file describes a run
+# identical to omitting it. It is a valid suite and can be run as-is:
+#
+#   brazil-build test -Dtests.extra.jvmargs="-Dknn.suite=src/test/resources/template-suite.yml"
+#
+# FORMAT
+#
+#   defaults:     one block of settings shared by every scenario. Optional.
+#   scenarios:    a list, at least one entry, each needing a unique `name`. Required.
+#
+# A scenario is deep-merged over `defaults`: it may override a single leaf key without restating its section, and
+# nested maps merge rather than replace. Only `name`, `corpus`, `index`, `search` and `codec` may appear in a scenario,
+# and only the keys listed below may appear in each section — anything else fails the run rather than being ignored,
+# so a typo cannot quietly measure something other than what you wrote.
+#
+# Each scenario becomes one JUnit case named after it. Recall and latency are compared against
+# baselines/<this file's name>.csv; a scenario with no recorded row prints the row to add and passes.
+
+defaults:
+
+  corpus:
+    # synthetic | hdf5
+    #   synthetic  generates gaussian blobs and brute-forces its own ground truth
+    #   hdf5       reads an ann-benchmarks file: train vectors, test queries, neighbors as row numbers into train
+    type: synthetic
+
+    # Path or URL of the hdf5 file. Required for type: hdf5, ignored for synthetic. A URL is fetched once into
+    # src/test/resources/dataset (override with -Dknn.corpus.dir) and read from there afterwards; .bz2 is decompressed
+    # on arrival. Unset by default.
+    # file: https://host/path/documents-1k.hdf5.bz2
+
+    # Vectors to index. For hdf5, a value below the file's own count takes the first N rows and recomputes ground truth
+    # for them, because the file's neighbours are row numbers into the whole set.
+    size: 4000
+
+    # Queries to generate or keep from the file's test set. Ground truth for a synthetic corpus costs
+    # queries x size x dimension, so this is the setup cost. No point exceeding search.queries.
+    queries: 200
+
+    # Ignored for hdf5 — the file supplies its own, and Hdf5Corpus warns rather than appearing to honour these.
+    dimension: 32
+    # Number of gaussian blobs. Fewer blobs means more vectors competing to be a query's top k, which lowers recall.
+    clusters: 16
+    # Per-coordinate width of a blob. Scales the residuals a quantizer encodes and the distances it ranks alike.
+    spread: 0.05
+    seed: 42
+
+    # Neighbours held per query, which bounds search.k. A synthetic scenario with k > depth fails at load. An hdf5
+    # corpus carries its own depth (usually 100) and this is ignored.
+    depth: 10
+
+    # euclidean | dot_product | cosine | maximum_inner_product (case-insensitive).
+    # For hdf5 this must be the metric the file's neighbours were computed under. Getting it wrong does not fail: every
+    # query is scored against the answers to a different question and the lost recall looks like the format's fault.
+    # dot_product is only equivalent to inner product on unit-length vectors.
+    similarity: euclidean
+
+  index:
+    # Buffered docs per segment, so size / docsPerSegment is roughly the segment count. For a clustering format this
+    # also decides how coarse the centroids are, since clusters are allocated per segment.
+    docsPerSegment: 1000
+
+    # Segments to merge down to after flushing. Unset means measure the index as flushed; 1 merges everything into one.
+    # Must be at least 1. A merge re-clusters what it merges, so this is what exercises the writer's merge path.
+    # forceMerge: 1
+
+    # File extensions the codec must have written, checked before any measurement is reported. Empty by default, which
+    # asserts nothing — set it for a format with sidecar files, or Lucene's exact-search fallback (used when an
+    # approximate search returns fewer than k hits) would be reported as that format's recall.
+    expectFiles: []
+
+  search:
+    # Neighbours requested per query. Cannot exceed the ground-truth depth available.
+    k: 10
+    # Queries actually searched, taken from the corpus's query set.
+    queries: 200
+    # Times the whole query set is searched. Above 1 for a profiling run, so JFR has enough to sample.
+    repeat: 1
+    # Queries searched before timing starts, to let the JIT settle. Negative disables it.
+    warmup: 50
+
+    # Threads one query may use. 1 means Lucene searches leaves on the calling thread, so a multi-segment index costs
+    # the sum of its segments — an upper bound rather than what a production searcher with an executor does. Above 1
+    # searches leaves concurrently, which changes latency but not results.
+    threads: 1
+
+    # How far a returned score may sit from the exact score of the same document. A property of the format and its
+    # quantization width, so set it from a measured run rather than by choice, and per width if a suite varies the
+    # width. Negative disables the check, for a format whose score is not an approximation of the metric at all.
+    scoreTolerance: 1.0e-6
+    # Bound on the mean of the *signed* errors, which catches a different fault: rounding is symmetric and averages to
+    # about zero however coarse it is, so a mean away from zero is systematic bias that a max bound loose enough to
+    # admit coarse rounding cannot see. Defaults to a tenth of scoreTolerance.
+    scoreBias: 1.0e-7
+
+  codec:
+    # SPI name of the KnnVectorsFormat's codec, resolved through Codec.forName. Lucene103 is Lucene's own, which is
+    # what makes a comparison run possible.
+    name: Lucene103
+
+    # Algorithm parameters. ONLY quantization.docBits IS APPLIED: the test constructs ClusterANN1030TestCodec directly
+    # for it, since SPI can only call a no-arg constructor. Anything else here is carried and logged with a warning,
+    # and the run measures the format's compiled-in defaults — so a scenario that varies only an unapplied parameter
+    # measures the same thing twice.
+    params: {}
+      # quantization:
+      #   docBits: 1        # 1, 2 or 4; requires codec.name: ClusterANN1030TestCodec
+
+scenarios:
+  # The minimum a scenario needs is a name, which then measures `defaults` exactly.
+  - name: defaults
+
+  # Overrides merge leaf by leaf: this changes one search key and inherits every other setting.
+  - name: k-100
+    corpus: {depth: 100}
+    search: {k: 100}
+
+  # Merged into one segment, for the pair that says what leaving an index fragmented costs.
+  - name: merged
+    index: {forceMerge: 1}

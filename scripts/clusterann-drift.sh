@@ -18,13 +18,13 @@ REF="${1:-}"
 # shellcheck source=clusterann-formats-rewrite.sh
 source "$KNN_ROOT/scripts/clusterann-formats-rewrite.sh"
 
-# k-NN files allowed to have no formats counterpart, as "<set>/<path relative to the clusterann root>".
+# k-NN files allowed to have no formats counterpart, as "<set>/<path relative to src/<set>/java>".
 KNN_ONLY_ALLOWLIST=(
   # Copy of Lucene 10.4's Lucene104ScalarQuantizedVectorsFormat.ScalarEncoding; formats gets it from its
   # juno-patched Lucene 10.3, k-NN's upstream Lucene 10.3.2 does not have it.
-  main/read/block/scalar/ScalarEncoding.java
+  main/org/opensearch/knn/clusterann/read/block/scalar/ScalarEncoding.java
   # OptimizedScalarQuantizer.transposeDibit, same story.
-  main/read/block/scalar/Lucene104Backports.java
+  main/org/opensearch/knn/clusterann/read/block/scalar/Lucene104Backports.java
 )
 
 if [[ ! -d "$FMT" ]]; then
@@ -32,7 +32,7 @@ if [[ ! -d "$FMT" ]]; then
   exit 2
 fi
 
-# Formats files for one source set, as "<formats path under src/<set>/java>|<k-NN rel path>", sorted by k-NN path.
+# Formats files for one source set, as "<k-NN rel path>|<formats path under src/<set>/java>", sorted by k-NN path.
 fmt_list() { # $1 = main|test
   local p rel
   {
@@ -56,10 +56,13 @@ fmt_cat() { # $1 = main|test, $2 = formats path under src/<set>/java
 }
 
 knn_list() { # $1 = main|test
-  (cd "$KNN_ROOT/src/$1/java/$KNN_PKG_PATH" 2>/dev/null && find . -name '*.java' | sed 's|^\./||') | sort
+  local root
+  for root in "${KNN_ROOTS[@]}"; do
+    (cd "$KNN_ROOT/src/$1/java" 2>/dev/null && find "$root" -name "*.java" 2>/dev/null) || true
+  done | sort
 }
 
-knn_cat() { strip_header < "$KNN_ROOT/src/$1/java/$KNN_PKG_PATH/$2"; }
+knn_cat() { strip_header < "$KNN_ROOT/src/$1/java/$2"; }
 
 is_allowlisted() {
   local f
@@ -104,5 +107,45 @@ for set in main test; do
     fi
   done <<< "$both"
 done
+
+# Test resources: suite YAML, baselines, the committed corpus and the codec SPI entry (which formats keeps under
+# src/test/java/META-INF and k-NN under src/test/resources/META-INF). Compared byte-for-byte, the SPI file after
+# the package rewrite.
+fmt_res_list() { # prints "<k-NN rel>|<formats path from package root>"
+  local p rel
+  {
+    if [[ -n "$REF" ]]; then
+      git -C "$FMT" ls-tree -r --name-only "$REF" -- src/test/resources src/test/java/META-INF
+    else
+      (cd "$FMT" && find src/test/resources src/test/java/META-INF -type f 2>/dev/null | sed 's|^\./||') || true
+    fi
+  } | while IFS= read -r p; do
+    case "$p" in
+      src/test/java/META-INF/*) rel="$(fmt_res_to_knn_res "${p#src/test/java/}")" ;;
+      src/test/resources/*) rel="$(fmt_res_to_knn_res "${p#src/test/resources/}")" ;;
+      *) rel="" ;;
+    esac
+    [[ -n "$rel" ]] && echo "$rel|$p"
+  done | sort -t'|' -k1,1
+}
+
+fmt_res_cat() { # $1 = formats path from package root
+  if [[ -n "$REF" ]]; then git -C "$FMT" show "$REF:$1"; else cat "$FMT/$1"; fi \
+    | { if [[ "$1" == */META-INF/services/* ]]; then rewrite_fmt_to_knn; else cat; fi; }
+}
+
+res_pairs="$(fmt_res_list)"
+while IFS='|' read -r rel p; do
+  [[ -z "$rel" ]] && continue
+  knn_file="$KNN_ROOT/src/test/resources/$rel"
+  if [[ ! -f "$knn_file" ]]; then
+    drift=1
+    echo "== test resource in formats, missing from k-NN: $rel =="
+  elif ! cmp -s <(fmt_res_cat "$p") "$knn_file"; then
+    drift=1
+    echo "== test resource differs: $rel =="
+    diff -u --label "formats/$rel" --label "k-NN/$rel" <(fmt_res_cat "$p") "$knn_file" | sed -n "1,${DRIFT_DIFF_LINES:-40}p" || true
+  fi
+done <<< "$res_pairs"
 
 exit $drift

@@ -1,0 +1,11 @@
+# Recall and latency per set of parameters. Regenerate a row by rerunning with -Dknn.updateBaselines.
+# Latency is machine-dependent and recorded for comparison; only recall is asserted by default.
+scenario,corpus,codec,k,queries,recall,p50Millis,p90Millis
+1bit-flushed,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,10,500,0.038,4.326209,4.699166
+2bit-merged-k100,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,100,500,0.78344,0.999458,1.103208
+1bit-merged-k100,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,100,500,0.61274,0.729458,0.804167
+2bit-flushed,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,10,500,0.045,6.173875,6.632041
+1bit-flushed-k100,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,100,500,0.1275,4.652292,5.20075
+1bit-merged,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,10,500,0.4072,0.959875,1.081834
+2bit-merged,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,10,500,0.6368,1.342083,1.482375
+2bit-flushed-k100,synthetic-euclidean-100000x128-c100-sd0.05-q1000-s42,ClusterANN1030TestCodec,100,500,0.14242,6.36125,7.093792

@@ -1,0 +1,18 @@
+# Recall and latency per set of parameters. Regenerate a row by rerunning with -Dknn.updateBaselines.
+# Latency is machine-dependent and recorded for comparison; only recall is asserted by default.
+scenario,corpus,codec,k,queries,recall,p50Millis,p90Millis
+4bit-flushed-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.91577,14.966791,16.627334
+1bit-merged-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.68165,3.4955,4.024958
+1bit-flushed,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.6191,9.737166,10.846625
+1bit-flushed-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.68195,9.126625,10.292542
+2bit-merged,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.7675,4.392708,5.083625
+4bit-flushed-threads4,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.8942,4.230417,5.618875
+1bit-merged,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.6206,2.618334,3.010542
+2bit-flushed-threads4,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.7655,2.858709,3.439875
+4bit-flushed,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.8942,14.883417,16.640458
+1bit-flushed-threads4,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.6191,1.712542,2.100042
+4bit-merged,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.8845,5.717,6.679
+2bit-flushed-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.81186,11.374667,12.176292
+2bit-flushed,documents-100k-n100000-q1000,ClusterANN1030TestCodec,10,1000,0.7655,11.947542,12.956041
+2bit-merged-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.80429,4.689583,5.581209
+4bit-merged-k100,documents-100k-n100000-q1000,ClusterANN1030TestCodec,100,1000,0.89665,5.520084,6.4775

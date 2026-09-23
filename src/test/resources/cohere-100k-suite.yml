@@ -1,0 +1,91 @@
+# Cohere 100k from the OpenSearch Benchmark vectorsearch workload. The suite whose recall numbers mean something.
+#
+#   brazil-build test -Dtests.extra.jvmargs="-Dknn.suite=src/test/resources/cohere-100k-suite.yml"
+#
+# Not committed: the first run downloads 307 MB into src/test/resources/dataset (override with -Dknn.corpus.dir) and
+# later runs open the cached copy. Layout is ann-benchmarks': train vectors, test queries, neighbors as row numbers
+# into train.
+#
+# Neither of these is recorded in the file, so both have to be right here: corpus.similarity must be the metric the
+# neighbours were computed under, and search.k cannot exceed the neighbour depth the file carries (100).
+
+defaults:
+  corpus:
+    type: hdf5
+    file: https://dbyiw3u3rf9yr.cloudfront.net/corpora/vectorsearch/cohere-wikipedia-22-12-en-embeddings/documents-100k.hdf5.bz2
+    similarity: maximum_inner_product
+    # The whole file. Lower it and the corpus is the first N rows with ground truth recomputed.
+    size: 100000
+    queries: 1000
+
+  index:
+    # Ten segments. Clusters are per segment, so this decides how coarse the centroids are - the biggest lever on recall.
+    docsPerSegment: 10000
+    expectFiles: [clap, clac]
+
+  search:
+    k: 10
+    # 1 means Lucene searches leaves on the calling thread, so a fragmented index costs the sum of its segments.
+    threads: 1
+    queries: 1000
+    repeat: 1
+    warmup: 50
+    # Not yet measured on this corpus. Tighten to just above what a clean run reports.
+    scoreTolerance: 1000
+    scoreBias: 1000
+
+  codec:
+    name: ClusterANN1030TestCodec
+    params:
+      quantization:
+        docBits: 1
+
+scenarios:
+  # The flushed/merged pair is the cost of leaving an index fragmented.
+  - name: 1bit-flushed
+  - name: 1bit-merged
+    index: {forceMerge: 1}
+
+  - name: 2bit-flushed
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 2bit-merged
+    index: {forceMerge: 1}
+    codec: {params: {quantization: {docBits: 2}}}
+
+  # 4 bits is the widest the format scores, at four times the posting bytes of 1 bit.
+  - name: 4bit-flushed
+    codec: {params: {quantization: {docBits: 4}}}
+  - name: 4bit-merged
+    index: {forceMerge: 1}
+    codec: {params: {quantization: {docBits: 4}}}
+
+  # Flushed only: a merged index is one leaf with nothing to search concurrently. These rows exist for their latency.
+  - name: 1bit-flushed-threads4
+    search: {threads: 4}
+  - name: 2bit-flushed-threads4
+    search: {threads: 4}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 4bit-flushed-threads4
+    search: {threads: 4}
+    codec: {params: {quantization: {docBits: 4}}}
+
+  # k=100, what the OSB workload reports. No corpus.depth needed: the file already carries 100 neighbours per query.
+  - name: 1bit-flushed-k100
+    search: {k: 100}
+  - name: 1bit-merged-k100
+    index: {forceMerge: 1}
+    search: {k: 100}
+  - name: 2bit-flushed-k100
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 2bit-merged-k100
+    index: {forceMerge: 1}
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 4bit-flushed-k100
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 4}}}
+  - name: 4bit-merged-k100
+    index: {forceMerge: 1}
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 4}}}

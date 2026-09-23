@@ -1,0 +1,64 @@
+# Default suite: 1000 Cohere embeddings through the ClusterANN format. Runs on every build.
+#
+#   brazil-build test
+#
+# A smoke test, not a measurement: 1000 vectors is two or three clusters, so recall sits near the ceiling. Use
+# cohere-100k-suite.yml for numbers that separate the encodings.
+#
+# The corpus is committed at src/test/resources/dataset/documents-1k.hdf5, so no build fetches anything; the URL below
+# is provenance. File holds train 1000x768, test 1000x768, neighbors 1000x100.
+
+defaults:
+  corpus:
+    type: hdf5
+    file: https://dbyiw3u3rf9yr.cloudfront.net/corpora/vectorsearch/cohere-wikipedia-22-12-en-embeddings/documents-1k.hdf5.bz2
+    # Required: these vectors are not unit length (norms 12.5-15.1), so dot_product would rank against different answers.
+    similarity: maximum_inner_product
+    size: 1000
+    queries: 1000
+
+  index:
+    # Four segments, so flushed scenarios span more than one and merged ones have something to merge.
+    docsPerSegment: 250
+    # Without this, Lucene's exact-search fallback would be reported as this format's recall.
+    expectFiles: [clap, clac]
+
+  search:
+    k: 10
+    queries: 200
+    repeat: 1
+    warmup: -1
+    # Measured maxima over 2000 hits: 7.41 at 1 bit, 4.89 at 2, 2.18 at 4, against scores of 130-160. Per width, so a
+    # 4-bit regression cannot hide inside a bound sized for 1 bit.
+    scoreTolerance: 9.0
+    # Measured 0.41. The sign flips with width, positive at 1 bit and negative at 2 and 4; unexplained.
+    scoreBias: 0.6
+
+  codec:
+    name: ClusterANN1030TestCodec
+    params:
+      quantization:
+        # 1, 2 or 4 only.
+        docBits: 1
+
+scenarios:
+  # Measured recall@10: 0.66 at 1 bit, 0.79 at 2, 0.91 at 4.
+  - name: 1bit-flushed
+  - name: 1bit-merged
+    index: {forceMerge: 1}
+
+  - name: 2bit-flushed
+    search: {scoreTolerance: 6.0}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 2bit-merged
+    index: {forceMerge: 1}
+    search: {scoreTolerance: 6.0}
+    codec: {params: {quantization: {docBits: 2}}}
+
+  - name: 4bit-flushed
+    search: {scoreTolerance: 3.0}
+    codec: {params: {quantization: {docBits: 4}}}
+  - name: 4bit-merged
+    index: {forceMerge: 1}
+    search: {scoreTolerance: 3.0}
+    codec: {params: {quantization: {docBits: 4}}}

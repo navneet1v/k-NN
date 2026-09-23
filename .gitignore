@@ -34,3 +34,8 @@ benchmarks/perf-tool/okpt/pyvenv.cfg
 benchmarks/perf-tool/okpt/env/
 benchmarks/perf-tool/okpt/venv/
 benchmarks/perf-tool/okpt/.pytype/
+
+# Benchmark corpora downloaded on demand by the ClusterANN component test (Hdf5Corpus); hundreds of MB each.
+# The 1k smoke corpus is small and committed.
+/src/test/resources/dataset/*
+!/src/test/resources/dataset/documents-1k.hdf5

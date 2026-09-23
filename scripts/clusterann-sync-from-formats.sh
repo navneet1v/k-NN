@@ -6,8 +6,8 @@
 #   scripts/clusterann-sync-from-formats.sh <formats-commit> --at <ref>   same file set, but content as of <ref>
 #   scripts/clusterann-sync-from-formats.sh --all <ref>                   every ClusterANN file as of <ref>
 #
-# Only files under the synced packages are touched (see clusterann-formats-rewrite.sh); the formats codec and
-# build files are skipped and listed so the caller can port them by hand if needed. New files get the
+# Only files under the synced packages and test resources are touched (see clusterann-formats-rewrite.sh);
+# formats' build files are skipped and listed so the caller can port them by hand if needed. New files get the
 # OpenSearch SPDX header. Nothing is committed and spotless is not run: review, `./gradlew spotlessApply`,
 # build, test, then commit with the formats hash in the message.
 set -euo pipefail
@@ -31,29 +31,49 @@ done
 [[ -n "$COMMIT" || -n "$ALL" ]] || usage
 [[ -d "$FMT/.git" || -f "$FMT/.git" ]] || { echo "formats package not found at $FMT" >&2; exit 2; }
 
-# Split "src/<set>/java/<pkgpath>" into set + package-relative path.
+# Split "src/<set>/java/<pkgpath>" into set + package-relative path. Formats keeps its test SPI file under
+# src/test/java/META-INF; k-NN wants it under src/test/resources/META-INF, so it is classed as a resource.
 split_path() { # $1 = formats path -> prints "<set> <fmt-rel>" or nothing
   local p="$1" set rest
   case "$p" in
+    src/test/java/META-INF/*) set=test-res; rest="${p#src/test/java/}" ;;
     src/main/java/*) set=main; rest="${p#src/main/java/}" ;;
     src/test/java/*) set=test; rest="${p#src/test/java/}" ;;
+    src/test/resources/*) set=test-res; rest="${p#src/test/resources/}" ;;
     *) return ;;
   esac
   echo "$set $rest"
 }
 
-knn_path() { # $1 = set, $2 = k-NN rel -> absolute k-NN path
-  echo "$KNN_ROOT/src/$1/java/$KNN_PKG_PATH/$2"
+# Resolve a formats-relative path to its k-NN destination, or print nothing when outside the synced set.
+knn_path() { # $1 = set, $2 = formats rel
+  local rel
+  case "$1" in
+    test-res)
+      rel="$(fmt_res_to_knn_res "$2")"
+      [[ -n "$rel" ]] && echo "$KNN_ROOT/src/test/resources/$rel" ;;
+    *)
+      rel="$(fmt_rel_to_knn_rel "$2")"
+      [[ -n "$rel" ]] && echo "$KNN_ROOT/src/$1/java/$rel" ;;
+  esac
 }
+
+is_java() { [[ "$1" == *.java ]]; }
 
 write_file() { # $1 = ref, $2 = formats path, $3 = destination
   local content
-  content="$(git -C "$FMT" show "$1:$2" | rewrite_fmt_to_knn)"
   mkdir -p "$(dirname "$3")"
-  if [[ "$content" == "/*"* ]]; then
-    printf '%s\n' "$content" > "$3"
+  if is_java "$2"; then
+    content="$(git -C "$FMT" show "$1:$2" | rewrite_fmt_to_knn)"
+    if [[ "$content" == "/*"* ]]; then
+      printf '%s\n' "$content" > "$3"
+    else
+      printf '%s\n%s\n' "$SPDX_HEADER" "$content" > "$3"
+    fi
+  elif [[ "$2" == */META-INF/services/* ]]; then
+    git -C "$FMT" show "$1:$2" | rewrite_fmt_to_knn > "$3"
   else
-    printf '%s\n%s\n' "$SPDX_HEADER" "$content" > "$3"
+    git -C "$FMT" show "$1:$2" > "$3"   # non-Java resource: verbatim
   fi
   git -C "$KNN_ROOT" add "$3"
   echo "  wrote   ${3#"$KNN_ROOT"/}"
@@ -68,15 +88,23 @@ remove_file() { # $1 = destination
 
 skipped=()
 
+# Destination for a formats path, or empty (and recorded as skipped when $2 is given) if outside the synced set.
+dest_for() { # $1 = formats path, [$2 = label to record on skip]
+  local set rel d
+  read -r set rel <<< "$(split_path "$1")" || true
+  d=""
+  [[ -n "${set:-}" ]] && d="$(knn_path "$set" "$rel")"
+  if [[ -z "$d" && -n "${2:-}" ]]; then skipped+=("$2"); fi
+  echo "$d"
+}
+
 if [[ -n "$ALL" ]]; then
   echo "== materializing every ClusterANN file as of formats $ALL =="
   while IFS= read -r p; do
-    read -r set rel <<< "$(split_path "$p")" || true
-    [[ -z "${set:-}" ]] && continue
-    knn_rel="$(fmt_rel_to_knn_rel "$rel")"
-    [[ -z "$knn_rel" ]] && continue
-    write_file "$ALL" "$p" "$(knn_path "$set" "$knn_rel")"
-  done < <(git -C "$FMT" ls-tree -r --name-only "$ALL" -- src/main/java src/test/java)
+    d="$(dest_for "$p")"
+    [[ -z "$d" ]] && continue
+    write_file "$ALL" "$p" "$d"
+  done < <(git -C "$FMT" ls-tree -r --name-only "$ALL" -- src/main/java src/test/java src/test/resources)
   exit 0
 fi
 
@@ -86,27 +114,18 @@ while IFS=$'\t' read -r status p1 p2; do
   kind="${status:0:1}"
   case "$kind" in
     D)
-      read -r set rel <<< "$(split_path "$p1")" || true
-      [[ -z "${set:-}" ]] && { skipped+=("$status $p1"); continue; }
-      knn_rel="$(fmt_rel_to_knn_rel "$rel")"; [[ -z "$knn_rel" ]] && { skipped+=("$status $p1"); continue; }
-      remove_file "$(knn_path "$set" "$knn_rel")"
+      d="$(dest_for "$p1" "$status $p1")"; [[ -z "$d" ]] && continue
+      remove_file "$d"
       ;;
     R)
-      read -r set rel <<< "$(split_path "$p1")" || true
-      if [[ -n "${set:-}" ]]; then
-        knn_rel="$(fmt_rel_to_knn_rel "$rel")"; [[ -n "$knn_rel" ]] && remove_file "$(knn_path "$set" "$knn_rel")"
-      fi
-      read -r set rel <<< "$(split_path "$p2")" || true
-      [[ -z "${set:-}" ]] && { skipped+=("$status $p1 -> $p2"); continue; }
-      knn_rel="$(fmt_rel_to_knn_rel "$rel")"; [[ -z "$knn_rel" ]] && { skipped+=("$status $p1 -> $p2"); continue; }
-      write_file "$STATE" "$p2" "$(knn_path "$set" "$knn_rel")"
+      d="$(dest_for "$p1")"; [[ -n "$d" ]] && remove_file "$d"
+      d="$(dest_for "$p2" "$status $p1 -> $p2")"; [[ -z "$d" ]] && continue
+      write_file "$STATE" "$p2" "$d"
       ;;
     A|M)
-      read -r set rel <<< "$(split_path "$p1")" || true
-      [[ -z "${set:-}" ]] && { skipped+=("$status $p1"); continue; }
-      knn_rel="$(fmt_rel_to_knn_rel "$rel")"; [[ -z "$knn_rel" ]] && { skipped+=("$status $p1"); continue; }
+      d="$(dest_for "$p1" "$status $p1")"; [[ -z "$d" ]] && continue
       if git -C "$FMT" cat-file -e "$STATE:$p1" 2>/dev/null; then
-        write_file "$STATE" "$p1" "$(knn_path "$set" "$knn_rel")"
+        write_file "$STATE" "$p1" "$d"
       else
         echo "  (gone by $STATE, not written) $p1"
       fi

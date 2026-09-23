@@ -14,15 +14,25 @@
 #      at clusterann/read/block/scalar/ScalarEncoding, and OptimizedScalarQuantizer.transposeDibit plus
 #      VectorUtil.int4DotProductSinglePacked (also 10.4) are redirected to clusterann/read/block/scalar/Lucene104Backports.
 #   4. javax.annotation is not on k-NN's classpath: Nullable becomes org.opensearch.common.Nullable, and the
-#      thread-safety markers are dropped.
+#      thread-safety markers are dropped. Neither is spotbugs-annotations: @SuppressFBWarnings is dropped.
 #   5. k-NN requires the OpenSearch SPDX header on every file and runs spotless; formats has neither.
+#   6. The codec layer (the Lucene KnnVectorsFormat/Writer/Reader triple, the test codec and the suite-driven
+#      component test) lives at org.opensearch.knn.vectorformats.codec in formats and at
+#      org.opensearch.knn.index.codec.clusterann in k-NN, class names unchanged. Test resources (suite YAML,
+#      baselines, the committed 1k corpus) are copied verbatim; the codec SPI file moves from formats'
+#      src/test/java/META-INF to k-NN's src/test/resources/META-INF.
 
 FMT_PKG='org.opensearch.knn.vectorformats.clusterann'
 KNN_PKG='org.opensearch.knn.clusterann'
 FMT_PKG_PATH='org/opensearch/knn/vectorformats/clusterann'
 KNN_PKG_PATH='org/opensearch/knn/clusterann'
 FMT_QUANT_PATH='org/opensearch/knn/vectorformats/quantization'
-KNN_QUANT_REL='read/block/scalar'   # where formats' quantization/ files land, relative to the k-NN clusterann root
+KNN_QUANT_PATH="$KNN_PKG_PATH/read/block/scalar"   # where formats' quantization/ files land
+FMT_CODEC_PATH='org/opensearch/knn/vectorformats/codec'
+KNN_CODEC_PATH='org/opensearch/knn/index/codec/clusterann'
+
+# Every k-NN package root the synced set lands in, relative to src/<set>/java/.
+KNN_ROOTS=("$KNN_PKG_PATH" "$KNN_CODEC_PATH")
 
 SPDX_HEADER='/*
  * Copyright OpenSearch Contributors
@@ -30,13 +40,25 @@ SPDX_HEADER='/*
  */
 '
 
-# Map a formats source path (relative to src/<set>/java/) to a k-NN path relative to the clusterann root,
+# Map a formats source path (relative to src/<set>/java/) to a k-NN path relative to src/<set>/java/,
 # or print nothing when the file is outside the synced set.
 fmt_rel_to_knn_rel() {
   local p="$1"
   case "$p" in
-    "$FMT_PKG_PATH"/*) echo "${p#"$FMT_PKG_PATH"/}" ;;
-    "$FMT_QUANT_PATH"/*) echo "$KNN_QUANT_REL/${p#"$FMT_QUANT_PATH"/}" ;;
+    "$FMT_PKG_PATH"/*) echo "$KNN_PKG_PATH/${p#"$FMT_PKG_PATH"/}" ;;
+    "$FMT_QUANT_PATH"/*) echo "$KNN_QUANT_PATH/${p#"$FMT_QUANT_PATH"/}" ;;
+    "$FMT_CODEC_PATH"/*) echo "$KNN_CODEC_PATH/${p#"$FMT_CODEC_PATH"/}" ;;
+    *) ;;
+  esac
+}
+
+# Map a formats test resource path (relative to src/test/resources/, or META-INF/... from src/test/java/) to
+# its k-NN path relative to src/test/resources/, or print nothing when it is not part of the synced set.
+fmt_res_to_knn_res() {
+  local p="$1"
+  case "$p" in
+    META-INF/services/*) echo "$p" ;;
+    baselines/*|dataset/*|*-suite.yml) echo "$p" ;;
     *) ;;
   esac
 }
@@ -46,6 +68,8 @@ rewrite_fmt_to_knn() {
   perl -pe '
     s/\borg\.opensearch\.knn\.vectorformats\.clusterann\b/org.opensearch.knn.clusterann/g;
     s/\borg\.opensearch\.knn\.vectorformats\.quantization\b/org.opensearch.knn.clusterann.read.block.scalar/g;
+    s/\borg\.opensearch\.knn\.vectorformats\.codec\b/org.opensearch.knn.index.codec.clusterann/g;
+    $_ = "" if /^import edu\.umd\.cs\.findbugs\.annotations\.SuppressFBWarnings;$/;
     s/^import org\.apache\.lucene\.codecs\.lucene103\.Lucene103ScalarQuantizedVectorsFormat(\.ScalarEncoding)?;$/import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;/;
     s/\bLucene103ScalarQuantizedVectorsFormat\.ScalarEncoding\b/ScalarEncoding/g;
     s/\bOptimizedScalarQuantizer\.transposeDibit\b/Lucene104Backports.transposeDibit/g;
@@ -53,7 +77,13 @@ rewrite_fmt_to_knn() {
     s/^import javax\.annotation\.Nullable;$/import org.opensearch.common.Nullable;/;
     $_ = "" if /^import javax\.annotation\.concurrent\.(Not)?ThreadSafe;$/;
     $_ = "" if /^\@(Not)?ThreadSafe$/;
-  ' | awk '!(/^import / && seen[$0]++)' | drop_same_package_imports | add_backport_import
+  ' | awk '!(/^import / && seen[$0]++)' | drop_same_package_imports | drop_fb_annotation | add_backport_import
+}
+
+# spotbugs-annotations is not on k-NN's classpath; the annotation is a spotbugs-only hint, so it goes (its
+# import is dropped line-wise above). The block may span lines with one level of nested parentheses.
+drop_fb_annotation() {
+  perl -0pe 's/^\@SuppressFBWarnings\((?:[^()]|\([^()]*\))*\)\n//mg'
 }
 
 # The rewrite can turn a cross-package import into one naming the file's own package (formats imports

@@ -1,0 +1,76 @@
+# Generated vectors through the ClusterANN format. Needs no network, unlike the Cohere suites.
+#
+#   brazil-build test -Dtests.extra.jvmargs="-Dknn.suite=src/test/resources/clusterann-format-suite.yml"
+#
+# Recall here is low and that is the corpus, not a defect: at 128 dimensions the blobs concentrate, so a query's 10th
+# and 100th neighbours sit close enough that 1-bit reconstruction error reorders them. Two measurements bound it -
+# probing every cluster instead of the default budget changes recall by nothing, and 1 to 2 docBits moved it 0.39 to
+# 0.63 - so the ceiling is quantization error, not cluster selection. Use a Cohere suite to judge the quantizer.
+
+defaults:
+  corpus:
+    type: synthetic
+    size: 100000
+    # Ground truth is brute-forced at queries x size x dimension, so this is the setup cost.
+    queries: 1000
+    dimension: 128
+    # ~1000 vectors per blob. Fewer blobs means a larger confusion set and lower recall (0.32 at 16 blobs).
+    clusters: 100
+    # Per-coordinate blob width. Scales residuals and distances alike, so it describes the corpus rather than tuning it.
+    spread: 0.05
+    # Bounds the k a scenario may search at.
+    depth: 10
+    seed: 42
+    similarity: euclidean
+
+  index:
+    docsPerSegment: 10000
+    # Without this, Lucene's exact-search fallback would be reported as this format's recall.
+    expectFiles: [clap, clac]
+    # forceMerge: 1   # segments to merge down to; omit to measure the index as flushed
+
+  search:
+    k: 10
+    queries: 500
+    repeat: 1
+    warmup: -1
+    # Smoke bounds. Measured max ~0.50 and mean signed -0.25 flushed; the bias is large rather than noise, unexplained.
+    scoreTolerance: 0.6
+    scoreBias: 0.35
+
+  codec:
+    name: ClusterANN1030TestCodec
+    params:
+      quantization:
+        # 1, 2 or 4 only.
+        docBits: 1
+
+scenarios:
+  # 1 bit, k=10
+  - name: 1bit-flushed
+  - name: 1bit-merged
+    index: {forceMerge: 1}
+
+  - name: 2bit-flushed
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 2bit-merged
+    index: {forceMerge: 1}
+    codec: {params: {quantization: {docBits: 2}}}
+
+  # k=100. corpus.depth must be at least k, or there is no ground truth to score against.
+  - name: 1bit-flushed-k100
+    corpus: {depth: 100}
+    search: {k: 100}
+  - name: 1bit-merged-k100
+    corpus: {depth: 100}
+    index: {forceMerge: 1}
+    search: {k: 100}
+  - name: 2bit-flushed-k100
+    corpus: {depth: 100}
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 2bit-merged-k100
+    corpus: {depth: 100}
+    index: {forceMerge: 1}
+    search: {k: 100}
+    codec: {params: {quantization: {docBits: 2}}}

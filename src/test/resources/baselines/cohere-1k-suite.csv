@@ -1,0 +1,9 @@
+# Recall and latency per set of parameters. Regenerate a row by rerunning with -Dknn.updateBaselines.
+# Latency is machine-dependent and recorded for comparison; only recall is asserted by default.
+scenario,corpus,codec,k,queries,recall,p50Millis,p90Millis
+1bit-flushed,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.6675,0.320292,0.61975
+4bit-merged,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.915,0.400083,0.633292
+2bit-merged,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.7805,0.300708,0.377125
+1bit-merged,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.6565,0.16725,0.195208
+4bit-flushed,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.9105,0.303584,0.335083
+2bit-flushed,documents-1k-n1000-q1000,ClusterANN1030TestCodec,10,200,0.797,0.248417,0.270125

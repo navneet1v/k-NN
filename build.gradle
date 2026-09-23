@@ -502,6 +502,16 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-params:5.11.4"
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.11.4"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
+    // The ClusterANN codec tests ported from SearchServicesKnnVectorFormats include LuceneTestCase (JUnit 4)
+    // classes; vintage lets the clusterAnnTest task run those on the same JUnit Platform launch. Its junit:junit
+    // dependency drags in hamcrest-core 1.3, which jar-hells with the hamcrest 2.1 OpenSearch already ships.
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4") {
+        exclude group: 'org.hamcrest', module: 'hamcrest-core'
+    }
+    // Suite-driven ClusterANN component test: SnakeYAML parses the suite file (already on the classpath through
+    // OpenSearch), jhdf reads the .hdf5 corpora, commons-compress unpacks the .hdf5.bz2 downloads.
+    testImplementation "io.jhdf:jhdf:0.13.0"
+    testImplementation "org.apache.commons:commons-compress:1.27.1"
     implementation 'com.github.oshi:oshi-core:6.4.13'
     api "net.java.dev.jna:jna:${versions.jna}"
     api "net.java.dev.jna:jna-platform:${versions.jna}"
@@ -591,13 +601,28 @@ tasks.register('buildJniTest', Test) {
 }
 
 // ClusterANN unit tests are written against JUnit 5, which the randomized runner used by the test
-// task does not understand, so they get a task of their own on the JUnit Platform.
+// task does not understand, so they get a task of their own on the JUnit Platform. The codec-level
+// tests under index/codec/clusterann (some of them LuceneTestCase, run through vintage) live here too.
 tasks.register('clusterAnnTest', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform()
     systemProperty 'tests.security.manager', 'false'
     include '**/clusterann/**'
+    // The OpenSearch build plugin points every Test task at build/testrun/<task>; the component test resolves its
+    // suite file, baselines and corpus cache relative to the project root (same as in formats), so run from there.
+    workingDir = projectDir
+    // The suite-driven component test (KNNVectorFormatsComponentTest) is steered by system properties;
+    // the test JVM is forked, so anything given as -Dknn.* on the gradle command line is passed through:
+    //   ./gradlew clusterAnnTest --tests '*KNNVectorFormatsComponentTest' -Dknn.suite=src/test/resources/cohere-100k-suite.yml
+    //   -Dknn.update=true   rewrite the suite's baseline CSV with this run's measurements
+    //   -Dknn.jfr=true      record a JFR profile per scenario into build/jfr (knn.jfr.dir, knn.jfr.settings)
+    //   -Dknn.corpus.dir    where downloaded .hdf5 corpora are cached (default src/test/resources/dataset)
+    System.properties.each { k, v ->
+        if (k.toString().startsWith('knn.')) {
+            systemProperty k.toString(), v.toString()
+        }
+    }
 }
 
 check.dependsOn clusterAnnTest
