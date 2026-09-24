@@ -200,7 +200,7 @@ public final class HierarchicalKMeans {
 
         // Single centroid for tiny datasets
         if (n <= config.targetSize) {
-            float[][] centroids = new float[][] { computeMean(vectors, indices(n)) };
+            float[][] centroids = new float[][] { computeMean(vectors, indices(n), config) };
             int[] assignments = new int[n];
             return new Result(centroids, assignments, 1, dim);
         }
@@ -329,7 +329,7 @@ public final class HierarchicalKMeans {
 
         if (n <= splitThreshold || depth >= MAX_DEPTH) {
             List<float[]> result = new ArrayList<>();
-            result.add(computeMean(allVectors, indices));
+            result.add(computeMean(allVectors, indices, config));
             return result;
         }
 
@@ -393,7 +393,7 @@ public final class HierarchicalKMeans {
         return ClusterANNVectorValues.fromSubset(allVectors, indices);
     }
 
-    private static float[] computeMean(ClusterANNVectorValues vectors, int[] indices) throws IOException {
+    private static float[] computeMean(ClusterANNVectorValues vectors, int[] indices, Config config) throws IOException {
         int dim = vectors.dimension();
         float[] mean = new float[dim];
         for (int idx : indices) {
@@ -405,6 +405,14 @@ public final class HierarchicalKMeans {
         float inv = 1f / indices.length;
         for (int d = 0; d < dim; d++) {
             mean[d] *= inv;
+        }
+        // Cosine centroids must be unit length: OptimizedScalarQuantizer asserts a unit centroid under
+        // cosine, and KMeans.updateCentroids already projects spherical centroids onto the unit sphere.
+        // These shortcut paths (single-centroid and splitRecursive leaves) skip KMeans, so project here
+        // too — otherwise a cosine corpus with small segments produces non-unit centroids (assertion
+        // trip under -ea, silent recall loss otherwise). Mirrors CR-307468808.
+        if (config.metric == DistanceMetric.COSINE) {
+            normalizeInPlace(mean);
         }
         return mean;
     }

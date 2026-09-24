@@ -197,4 +197,59 @@ public class HierarchicalKMeansTests extends KNNTestCase {
         }
         return ClusterANNVectorValues.fromList(vecs, dim);
     }
+
+    // ========== cosine centroids (CR-307468808 parity) ==========
+    // The single-centroid path (n <= targetSize) and the splitRecursive leaves build centroids
+    // without running KMeans. They previously returned raw means under cosine while KMeans returned
+    // unit vectors, and OptimizedScalarQuantizer asserts a unit centroid under cosine; computeMean
+    // now projects onto the unit sphere for cosine on every path.
+
+    public void testCosineSingleCentroidPathIsUnitLength() throws Exception {
+        ClusterANNVectorValues vectors = makeUnit(200, DIM, 7L);
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(512).metric(DistanceMetric.COSINE).seed(7L).parallel(false).build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
+
+        assertEquals("single-centroid path", 1, result.numCentroids());
+        assertAllUnitLength(result.centroids());
+    }
+
+    public void testCosineSplitPathsAreUnitLength() throws Exception {
+        // Well above targetSize: top-level KMeans plus recursive splits whose leaves come from computeMean.
+        ClusterANNVectorValues vectors = makeUnit(4000, DIM, 11L);
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(64).metric(DistanceMetric.COSINE).seed(11L).parallel(false).build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, config);
+
+        assertTrue("expected split path, got " + result.numCentroids(), result.numCentroids() > 1);
+        assertAllUnitLength(result.centroids());
+    }
+
+    private static void assertAllUnitLength(float[][] centroids) {
+        for (int c = 0; c < centroids.length; c++) {
+            double norm = 0;
+            for (float x : centroids[c]) norm += (double) x * x;
+            norm = Math.sqrt(norm);
+            // Zero centroids are allowed (empty/opposite-sum clusters have no direction to project).
+            assertTrue("centroid " + c + " not unit length: norm=" + norm,
+                norm == 0.0 || Math.abs(norm - 1.0) < 1e-4);
+        }
+    }
+
+    /** Random unit-length directions, spread widely so their raw means are far from unit length. */
+    private static ClusterANNVectorValues makeUnit(int n, int dim, long seed) {
+        Random rng = new Random(seed);
+        List<float[]> vecs = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] v = new float[dim];
+            double norm = 0;
+            for (int d = 0; d < dim; d++) { v[d] = (float) rng.nextGaussian(); norm += (double) v[d] * v[d]; }
+            float inv = (float) (1.0 / Math.sqrt(norm));
+            for (int d = 0; d < dim; d++) v[d] *= inv;
+            vecs.add(v);
+        }
+        return ClusterANNVectorValues.fromList(vecs, dim);
+    }
 }
