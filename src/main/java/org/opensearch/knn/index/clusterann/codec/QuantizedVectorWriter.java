@@ -121,6 +121,9 @@ public final class QuantizedVectorWriter implements Closeable {
             OptimizedScalarQuantizer.packAsBinary(scratch, packed);
         } else if (docBits == 2) {
             OptimizedScalarQuantizer.transposeDibit(scratch, packed);
+        } else if (docBits == 8) {
+            // Faithful Lucene 8-bit: store the raw assignment byte per dim (no transpose).
+            System.arraycopy(scratch, 0, packed, 0, dimension);
         } else {
             OptimizedScalarQuantizer.transposeHalfByte(scratch, packed);
         }
@@ -154,6 +157,7 @@ public final class QuantizedVectorWriter implements Closeable {
     public static int packedBytesPerVector(int dimension, int bits) {
         if (bits == 1) return (dimension + 7) / 8;
         if (bits == 2) return ((dimension + 7) / 8) * 2;
+        if (bits == 8) return dimension;   // raw byte per dim (Lucene UNSIGNED_BYTE doc level)
         return ((dimension + 7) / 8) * 4;
     }
 }

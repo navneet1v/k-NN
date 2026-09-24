@@ -113,25 +113,31 @@ public final class ThermometerVectorWriter implements Closeable {
         // Skip the inert int8 tier entirely when not storing it.
         if (!STORE_INT8) return;
 
-        // Inert 8-bit int8 (per-vector max-abs scale, unsigned-offset). Faithful to Int8Quantizer.
-        float maxAbs = 0f;
+        // Inert 8-bit int8. Two interval choices:
+        //  - default: per-vector max-abs (scale = maxAbs/127), faithful to IVFaster Int8Quantizer.
+        //  - OSQ8 (clusterann.thermo.osq8=true): per-vector MSE-grid-optimized SYMMETRIC interval
+        //    (Lucene OptimizedScalarQuantizer): init half-width = MSE_GRID[7]*std, refine by
+        //    anisotropic coordinate descent, then scale = halfWidth/127. Symmetric so the existing
+        //    signed-dot int8Score reconstruction stays valid; the win is a tighter, MSE-optimal step.
+        float scale;
         double sqNorm = 0;
-        for (int d = 0; d < dimension; d++) {
-            float v = rotated[d];
-            float a = Math.abs(v);
-            if (a > maxAbs) maxAbs = a;
-            sqNorm += (double) v * v;
+        for (int d = 0; d < dimension; d++) sqNorm += (double) rotated[d] * rotated[d];
+        if (OSQ8) {
+            scale = osqSymmetricScale(rotated, dimension) ;
+        } else {
+            float maxAbs = 0f;
+            for (int d = 0; d < dimension; d++) { float a = Math.abs(rotated[d]); if (a > maxAbs) maxAbs = a; }
+            scale = maxAbs / 127f;
         }
         int base = idx * dimension;
-        if (maxAbs == 0f) {
+        if (scale <= 0f) {
             for (int d = 0; d < dimension; d++) int8Block[base + d] = INT8_OFFSET;
             scaleBlock[idx] = 1f;
             sumBlock[idx] = 0;
             normBlock[idx] = 0f;
             return;
         }
-        float scale = maxAbs / 127f;
-        float inv = 127f / maxAbs;
+        float inv = 1f / scale;
         int sum = 0;
         for (int d = 0; d < dimension; d++) {
             int q = Math.round(rotated[d] * inv);
@@ -143,6 +149,64 @@ public final class ThermometerVectorWriter implements Closeable {
         scaleBlock[idx] = scale;
         sumBlock[idx] = sum;
         normBlock[idx] = (float) sqNorm;
+    }
+
+    /** OSQ toggle: use MSE-grid-optimized symmetric interval for the int8 tier. */
+    static final boolean OSQ8 = Boolean.getBoolean("clusterann.thermo.osq8");
+    private static final float MSE_GRID_8BIT = 3.922f;   // Lucene MINIMUM_MSE_GRID[7] half-width (in std units)
+    private static final float OSQ_LAMBDA = 0.1f;
+    private static final int OSQ_ITERS = 5;
+
+    /**
+     * Symmetric OSQ interval half-width for an 8-bit code, faithful to Lucene
+     * OptimizedScalarQuantizer but constrained to a symmetric [-h, h] interval so the existing
+     * signed int8 scorer stays valid. Returns scale = h / 127.
+     */
+    private static float osqSymmetricScale(float[] v, int dim) {
+        double mean = 0, var = 0, norm2 = 0, maxAbs = 0;
+        for (int i = 0; i < dim; i++) {
+            double x = v[i]; norm2 += x * x; double a = Math.abs(x); if (a > maxAbs) maxAbs = a;
+            double delta = x - mean; mean += delta / (i + 1); var += delta * (x - mean);
+        }
+        var /= dim; double std = Math.sqrt(var);
+        if (norm2 == 0 || maxAbs == 0) return (float) (maxAbs / 127.0);
+        double h = Math.min(MSE_GRID_8BIT * std, maxAbs);   // symmetric init half-width, clamped to range
+        final int points = 256;
+        double scale = (1.0 - OSQ_LAMBDA) / norm2;
+        if (Double.isFinite(scale)) {
+            double curLoss = symLoss(v, dim, h, points, norm2);
+            for (int it = 0; it < OSQ_ITERS; it++) {
+                // Coordinate descent on symmetric half-width h: value = h*(2k/(P-1) - 1).
+                double stepInv = (points - 1.0) / (2.0 * h);
+                double num = 0, den = 0;
+                for (int i = 0; i < dim; i++) {
+                    double xi = v[i];
+                    double cx = Math.max(-h, Math.min(h, xi));
+                    double k = Math.round((cx + h) * stepInv);
+                    double s = 2.0 * k / (points - 1.0) - 1.0;   // reconstruction unit in [-1,1]
+                    num += xi * s; den += s * s;
+                }
+                if (den == 0) break;
+                double hOpt = num / den;
+                if (hOpt <= 0 || Math.abs(hOpt - h) < 1e-8) break;
+                double nl = symLoss(v, dim, hOpt, points, norm2);
+                if (nl > curLoss) break;
+                h = hOpt; curLoss = nl;
+            }
+        }
+        return (float) (h / 127.0);
+    }
+
+    private static double symLoss(float[] v, int dim, double h, int points, double norm2) {
+        double step = (2.0 * h) / (points - 1.0); if (step == 0) return Double.MAX_VALUE;
+        double xe = 0, e = 0;
+        for (int i = 0; i < dim; i++) {
+            double xi = v[i];
+            double cx = Math.max(-h, Math.min(h, xi));
+            double xq = -h + step * Math.round((cx + h) / step);
+            xe += xi * (xi - xq); e += (xi - xq) * (xi - xq);
+        }
+        return (1.0 - OSQ_LAMBDA) * xe * xe / norm2 + OSQ_LAMBDA * e;
     }
 
     @Override

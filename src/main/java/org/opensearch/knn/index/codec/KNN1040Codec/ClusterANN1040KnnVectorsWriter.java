@@ -92,6 +92,12 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     public ClusterANN1040KnnVectorsWriter(SegmentWriteState state, FlatVectorsWriter flatVectorsWriter, int docBits) throws IOException {
         this.state = state;
         this.flatVectorsWriter = flatVectorsWriter;
+        // POC: force faithful Lucene OSQ 8-bit docs (Flow A, x4 compression) via -Dclusterann.osq8=true.
+        // Overrides the resolved docBits so we can benchmark 8-bit OSQ against Flow B int8 without
+        // threading a new CompressionLevel through the encoder chain.
+        if (Boolean.getBoolean("clusterann.osq8")) {
+            docBits = 8;
+        }
         this.docBits = validateDocBits(docBits);
 
         boolean success = false;
@@ -299,7 +305,14 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         // requires the 1/sqrt(dim) rotated distribution for every similarity).
         final boolean flowB = quantizerId == QUANTIZER_IVFASTER_ABSOLUTE;
         final boolean flowC = quantizerId == QUANTIZER_SCANN_RESIDUAL_PQ;
-        boolean useRotation = flowB || fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN;
+        // POC experiment: Flow A normally rotates for EUCLIDEAN only. Rotation (which preserves dot
+        // products, so ⟨Rq,Rd⟩=⟨q,d⟩) redistributes per-dim variance and should improve low-bit
+        // quantization on skewed IP embeddings too. Enable rotation for IP via
+        // -Dclusterann.flowA.rotateIP=true (reader gate must match).
+        final boolean flowARotateIP = Boolean.getBoolean("clusterann.flowA.rotateIP");
+        boolean useRotation = flowB
+            || fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN
+            || (flowARotateIP && !flowC);
         RandomRotation randomRotation = flowB ? null : RandomRotation.create(dimension);
         HadamardRotation hadamard = flowB ? HadamardRotation.create(dimension) : null;
         float[][] transformedCentroids = new float[numCentroids][dimension];
@@ -735,8 +748,8 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
     }
 
     private static byte validateDocBits(int bits) {
-        if (bits != 1 && bits != 2 && bits != 4) {
-            throw new IllegalArgumentException("docBits must be 1, 2, or 4, got: " + bits);
+        if (bits != 1 && bits != 2 && bits != 4 && bits != 8) {
+            throw new IllegalArgumentException("docBits must be 1, 2, 4, or 8, got: " + bits);
         }
         return (byte) bits;
     }

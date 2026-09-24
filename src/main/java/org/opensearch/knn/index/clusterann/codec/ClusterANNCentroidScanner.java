@@ -60,6 +60,14 @@ public final class ClusterANNCentroidScanner {
      */
     private static final boolean RERANK_INT8 = "int8".equalsIgnoreCase(System.getProperty("clusterann.thermo.rerank"));
 
+    /**
+     * Int8-ONLY flow: skip the 2-bit thermometer coarse shortlist entirely and rank every probed
+     * doc directly by its int8 dot score. Avoids the coarse tier's weak/saturating Hamming ranking
+     * (which can drop true neighbors before rescore) at the cost of scoring all probed docs by int8
+     * instead of a shortlist. Toggle: {@code -Dclusterann.thermo.int8only=true} (implies int8).
+     */
+    private static final boolean INT8_ONLY = Boolean.getBoolean("clusterann.thermo.int8only");
+
     // Reusable buffers
     private int[] docIdBuf = new int[1024];
     private int[] ordBuf = new int[1024];
@@ -255,15 +263,15 @@ public final class ClusterANNCentroidScanner {
         // For int8 rerank, also buffer the int8 code + corrections per position.
         int[] hamByPos = new int[count];
         java.util.Arrays.fill(hamByPos, Integer.MAX_VALUE);
-        byte[] int8Buf = RERANK_INT8 ? new byte[count * fieldState.dimension] : null;
-        float[] scaleBuf = RERANK_INT8 ? new float[count] : null;
-        int[] sumBuf = RERANK_INT8 ? new int[count] : null;
-        float[] normBuf = RERANK_INT8 ? new float[count] : null;
+        byte[] int8Buf = (RERANK_INT8 || INT8_ONLY) ? new byte[count * fieldState.dimension] : null;
+        float[] scaleBuf = (RERANK_INT8 || INT8_ONLY) ? new float[count] : null;
+        int[] sumBuf = (RERANK_INT8 || INT8_ONLY) ? new int[count] : null;
+        float[] normBuf = (RERANK_INT8 || INT8_ONLY) ? new float[count] : null;
         int nCand = 0;
         int pos = 0;
         while (pos < count) {
             int blockSize = Math.min(BLOCK_SIZE, count - pos);
-            if (RERANK_INT8) {
+            if (RERANK_INT8 || INT8_ONLY) {
                 thermoReader.scanBlockCoarseAndInt8(postingsInput, blockSize, pos, hamming, int8Buf, scaleBuf, sumBuf, normBuf);
             } else {
                 thermoReader.scanBlockCoarse(postingsInput, blockSize, hamming);
@@ -292,6 +300,19 @@ public final class ClusterANNCentroidScanner {
 
         float minCompetitive = collector.minCompetitiveSimilarity();
         int batch = 0;
+
+        // Int8-ONLY: score EVERY valid probed doc by int8 (no coarse Hamming shortlist). The coarse
+        // planes were still read (to keep the stream aligned) but are ignored for ranking.
+        if (INT8_ONLY) {
+            for (int i = 0; i < count; i++) {
+                if (!validBuf[i]) continue;
+                float score = thermoReader.int8Score(int8Buf, i * fieldState.dimension, scaleBuf[i], sumBuf[i], normBuf[i], simFunc);
+                if (score > minCompetitive) collector.collect(docIdBuf[i], score);
+                batch++;
+            }
+            collector.incVisitedCount(batch);
+            return batch;
+        }
 
         if (RERANK_INT8) {
             if (org.opensearch.knn.index.clusterann.codec.ShardInt8Stash.SHARD_SCOPE) {

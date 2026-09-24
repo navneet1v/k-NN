@@ -58,6 +58,8 @@ public final class QuantizedVectorReader {
     private final byte[] bitsArray;
     private final float[] queryCopy;
     private final byte[] transposedBuffer;
+    /** Raw 4-bit query assignments (0..15), kept for the 8-bit doc plain-int dot path. */
+    private final byte[] rawQueryBuf;
 
     // Block read buffers
     private final byte[] flatCodesBuf;
@@ -103,6 +105,7 @@ public final class QuantizedVectorReader {
         this.bitsArray = new byte[] { QUERY_BITS };
         this.queryCopy = new float[fieldState.dimension];
         this.transposedBuffer = new byte[((fieldState.dimension + 7) / 8) * 4];
+        this.rawQueryBuf = new byte[fieldState.dimension];
 
         this.flatCodesBuf = new byte[BLOCK_SIZE * packedBytes];
         this.intBuf = new int[BLOCK_SIZE];
@@ -218,6 +221,12 @@ public final class QuantizedVectorReader {
                 int j = validOffsets[v];
                 rawDotBuf[j] = int4DibitDotProductOffset(currentTransposed, flatCodesBuf, j * packedBytes, packedBytes);
             }
+        } else if (fieldState.docBits == 8) {
+            // Faithful Lucene 8-bit: plain int dot of raw 4-bit query assignments × raw 8-bit doc bytes.
+            for (int v = 0; v < validCount; v++) {
+                int j = validOffsets[v];
+                rawDotBuf[j] = int4x8DotProductOffset(rawQueryBuf, flatCodesBuf, j * packedBytes, fieldState.dimension);
+            }
         } else {
             for (int v = 0; v < validCount; v++) {
                 int j = validOffsets[v];
@@ -307,6 +316,8 @@ public final class QuantizedVectorReader {
 
         Arrays.fill(transposedBuffer, (byte) 0);
         OptimizedScalarQuantizer.transposeHalfByte(scratch, transposedBuffer);
+        // For 8-bit docs we score with a plain int dot, so keep the raw 4-bit query assignments.
+        System.arraycopy(scratch, 0, rawQueryBuf, 0, rawQueryBuf.length);
 
         currentTransposed = transposedBuffer;
         currentQueryLower = qResult.lowerInterval();
@@ -381,6 +392,19 @@ public final class QuantizedVectorReader {
     }
 
     /** 2-bit doc × 4-bit query with offset. */
+    /**
+     * Faithful Lucene 8-bit doc dot: plain integer dot of the raw 4-bit query assignments (0..15)
+     * with the raw 8-bit doc assignments (0..255). {@code query} and {@code docs} are both unpacked
+     * (one byte per dimension); {@code offset} is the doc's byte offset, {@code dim} the dimension.
+     */
+    private static float int4x8DotProductOffset(byte[] query, byte[] docs, int offset, int dim) {
+        long sum = 0;
+        for (int i = 0; i < dim; i++) {
+            sum += (query[i] & 0xFF) * (long) (docs[offset + i] & 0xFF);
+        }
+        return sum;
+    }
+
     private static float int4DibitDotProductOffset(byte[] query, byte[] docs, int offset, int len) {
         int stripeSize = len / 2;
         int qStripe = stripeSize; // query always has 4 stripes of stripeSize

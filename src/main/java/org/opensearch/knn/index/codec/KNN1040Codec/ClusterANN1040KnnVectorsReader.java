@@ -260,8 +260,9 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             org.opensearch.knn.index.clusterann.algorithm.HadamardRotation.create(fieldState.dimension)
                 .transform(target, rotatedQuery);
             thermoReader.prepareQuery(rotatedQuery);
-            // If int8 rerank is enabled, also prepare the int8 query form.
-            if ("int8".equalsIgnoreCase(System.getProperty("clusterann.thermo.rerank"))) {
+            // Prepare the int8 query form if int8 is used for ranking (rerank tier OR int8-only flow).
+            if ("int8".equalsIgnoreCase(System.getProperty("clusterann.thermo.rerank"))
+                    || Boolean.getBoolean("clusterann.thermo.int8only")) {
                 thermoReader.prepareInt8Query(rotatedQuery);
             }
         }
@@ -277,9 +278,13 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             pqState = new org.opensearch.knn.index.clusterann.codec.PQScanState(codebook, target, simFunc);
         }
 
-        // Transform query for ADC scoring (randomRotation redistributes variance for better quantization)
+        // Transform query for ADC scoring (randomRotation redistributes variance for better quantization).
+        // Normally EUCLIDEAN-only; the flowA.rotateIP POC also rotates IP queries. The write side
+        // applied rotation whenever hasRotation() is true, so gate on that + the flag for IP.
         float[] adcTarget = target;
-        if (useADC && centroidReader.hasRotation() && simFunc == VectorSimilarityFunction.EUCLIDEAN) {
+        boolean flowARotateIP = Boolean.getBoolean("clusterann.flowA.rotateIP");
+        if (useADC && centroidReader.hasRotation()
+                && (simFunc == VectorSimilarityFunction.EUCLIDEAN || flowARotateIP)) {
             adcTarget = new float[target.length];
             centroidReader.transformQuery(target, adcTarget);
         }
@@ -350,7 +355,7 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             fieldState,
             exactScorer,
             adcReader,
-            target,
+            adcTarget,
             acceptBits,
             visited,
             useADC,

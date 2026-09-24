@@ -91,6 +91,25 @@ public enum ScalarBitEncoding {
         public int docPackedBytes(int dimension) {
             return ((dimension + 7) / 8) * 4;
         }
+    },
+
+    /**
+     * 8-bit doc / 4-bit query (asymmetric) — 4x compression. Faithful Lucene OSQ UNSIGNED_BYTE doc
+     * level: the doc assignment (0..255) is stored RAW, one byte per dimension, with no bit-plane
+     * transpose (a full byte has no benefit from the popcount-per-plane trick that 1/2/4-bit use).
+     * Scored by a plain integer dot of the 4-bit query assignments (0..15) with the raw doc bytes.
+     */
+    EIGHT_BIT((byte) 8, (byte) 4) {
+        @Override
+        public void packDoc(byte[] raw, byte[] packed, int dimension) {
+            // Raw store: assignment byte per dim (Lucene keeps 8-bit codes unpacked).
+            System.arraycopy(raw, 0, packed, 0, dimension);
+        }
+
+        @Override
+        public int docPackedBytes(int dimension) {
+            return dimension;
+        }
     };
 
     private final byte docBits;
@@ -143,7 +162,8 @@ public enum ScalarBitEncoding {
             case 1 -> ONE_BIT;
             case 2 -> TWO_BIT;
             case 4 -> FOUR_BIT;
-            default -> throw new IllegalArgumentException("Unsupported doc bits: " + bits + " (must be 1, 2, or 4)");
+            case 8 -> EIGHT_BIT;
+            default -> throw new IllegalArgumentException("Unsupported doc bits: " + bits + " (must be 1, 2, 4, or 8)");
         };
     }
 
