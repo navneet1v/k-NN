@@ -143,4 +143,38 @@ public final class VectorMath {
         System.arraycopy(idx, 0, result, 0, resultSize);
         return result;
     }
+
+    /**
+     * The centroid of {@code count} member vectors whose element-wise sum is {@code sum}, under {@code metric} — the
+     * one definition shared by every clustering path, so k-means and the hierarchical shortcuts cannot disagree:
+     *
+     * <ul>
+     *   <li>{@code EUCLIDEAN} and the inner-product metrics: the arithmetic mean, in input space.</li>
+     *   <li>{@code COSINE}: the mean projected back onto the unit sphere. Cosine vectors are unit length, and a mean
+     *       of unit vectors is shorter than 1 (two opposite vectors average to 0); the quantizer requires a unit
+     *       centroid under cosine, and the format stores cosine centroids unit-norm. A zero mean stays zero (no
+     *       direction to project), which k-means treats as an empty cluster.</li>
+     * </ul>
+     *
+     * Written into {@code out}, which may be {@code sum} itself. Returns {@code out}.
+     */
+    public static float[] centroidFromSum(float[] sum, int count, VectorSimilarityFunction metric, float[] out) {
+        float invCount = 1f / count;
+        for (int d = 0; d < sum.length; d++) {
+            out[d] = sum[d] * invCount;
+        }
+        if (metric == VectorSimilarityFunction.COSINE) {
+            float norm = 0f;
+            for (float x : out) {
+                norm += x * x;
+            }
+            if (norm > 0f) {
+                float inv = (float) (1.0 / Math.sqrt(norm));
+                for (int d = 0; d < out.length; d++) {
+                    out[d] *= inv;
+                }
+            }
+        }
+        return out;
+    }
 }

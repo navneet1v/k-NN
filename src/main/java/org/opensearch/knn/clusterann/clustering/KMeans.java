@@ -87,7 +87,6 @@ public final class KMeans {
             return new Result(new float[0][], new int[0], new int[0], 0, dim, 0, true);
         }
         k = Math.max(1, Math.min(k, n));
-        boolean spherical = config.metric == VectorSimilarityFunction.COSINE;
 
         // When caller-supplied centroids are used verbatim, their length must match the clamped k:
         // assignmentStep derives its cluster count from centroids.length, while clusterSums/
@@ -142,7 +141,7 @@ public final class KMeans {
                 centroidProximityMap = computeCentroidProximityMap(centroids, k);
             }
             int moved = assignmentStep(iterVectors, centroids, iterAssignments, clusterSums, clusterCounts, config, centroidProximityMap);
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, spherical);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, config.metric);
             sanitizeCentroids(centroids, k, dim);
 
             boolean rebalanced = false;
@@ -170,7 +169,7 @@ public final class KMeans {
         // so counts/assignments would otherwise be inconsistent with the returned centroids.
         if (needsSampling || lastIterationRebalanced) {
             assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, config, centroidProximityMap);
-            updateCentroids(centroids, clusterSums, clusterCounts, k, dim, spherical);
+            updateCentroids(centroids, clusterSums, clusterCounts, k, config.metric);
             sanitizeCentroids(centroids, k, dim);
         }
 
@@ -345,32 +344,17 @@ public final class KMeans {
 
     // ========== Centroid Update ==========
 
+    /** Every non-empty cluster's centroid from its member sum; see {@link VectorMath#centroidFromSum} for what that is per metric. */
     private static void updateCentroids(
         float[][] centroids,
         float[][] clusterSums,
         int[] clusterCounts,
         int k,
-        int dim,
-        boolean spherical
+        VectorSimilarityFunction metric
     ) {
         for (int c = 0; c < k; c++) {
             if (clusterCounts[c] > 0) {
-                float invCount = 1f / clusterCounts[c];
-                for (int d = 0; d < dim; d++) {
-                    centroids[c][d] = clusterSums[c][d] * invCount;
-                }
-                if (spherical) {
-                    float norm = 0f;
-                    for (int d = 0; d < dim; d++) {
-                        norm += centroids[c][d] * centroids[c][d];
-                    }
-                    if (norm > 0f) {
-                        float invNorm = (float) (1.0 / Math.sqrt(norm));
-                        for (int d = 0; d < dim; d++) {
-                            centroids[c][d] *= invNorm;
-                        }
-                    }
-                }
+                VectorMath.centroidFromSum(clusterSums[c], clusterCounts[c], metric, centroids[c]);
             }
         }
     }

@@ -6,9 +6,14 @@
 package org.opensearch.knn.clusterann.math;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.util.VectorUtil;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -215,5 +220,47 @@ class VectorMathTests {
         assertEquals(2, nearest.length);
         assertEquals(1, nearest[0]);
         assertEquals(2, nearest[1]);
+    }
+
+    // ========== centroidFromSum ==========
+
+    @ParameterizedTest
+    @EnumSource(value = VectorSimilarityFunction.class, names = { "EUCLIDEAN", "MAXIMUM_INNER_PRODUCT", "DOT_PRODUCT" })
+    void testCentroidFromSum_isThePlainMean_forRawMetrics(VectorSimilarityFunction metric) {
+        float[] sum = { 3.0f, -6.0f, 0.0f, 1.5f };
+
+        float[] out = VectorMath.centroidFromSum(sum, 3, metric, new float[4]);
+
+        assertArrayEquals(new float[] { 1.0f, -2.0f, 0.0f, 0.5f }, out, 0.0f);
+    }
+
+    @Test
+    void testCentroidFromSum_projectsTheMeanOntoTheUnitSphere_forCosine() {
+        // Two unit vectors 90 degrees apart: the mean has length sqrt(2)/2, the centroid must have length 1.
+        float[] sum = { 1.0f, 1.0f, 0.0f };
+
+        float[] out = VectorMath.centroidFromSum(sum, 2, VectorSimilarityFunction.COSINE, new float[3]);
+
+        float inv = (float) (1.0 / Math.sqrt(2.0));
+        assertArrayEquals(new float[] { inv, inv, 0.0f }, out, 1e-7f);
+        assertTrue(VectorUtil.isUnitVector(out));
+    }
+
+    @Test
+    void testCentroidFromSum_leavesAZeroSumAtZero_forCosine() {
+        // Two opposite unit vectors: no direction to project onto.
+        float[] out = VectorMath.centroidFromSum(new float[] { 0.0f, 0.0f }, 2, VectorSimilarityFunction.COSINE, new float[2]);
+
+        assertArrayEquals(new float[] { 0.0f, 0.0f }, out, 0.0f);
+    }
+
+    @Test
+    void testCentroidFromSum_canWriteInPlace() {
+        float[] sum = { 2.0f, 4.0f };
+
+        float[] out = VectorMath.centroidFromSum(sum, 2, VectorSimilarityFunction.EUCLIDEAN, sum);
+
+        assertSame(sum, out);
+        assertArrayEquals(new float[] { 1.0f, 2.0f }, sum, 0.0f);
     }
 }

@@ -8,6 +8,7 @@ package org.opensearch.knn.clusterann.clustering;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
+import org.apache.lucene.util.VectorUtil;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -321,6 +322,79 @@ class HierarchicalKMeansTests {
             for (int d = 0; d < dim; d++) {
                 vector[d] = centres[group][d] + (float) rng.nextGaussian() * 0.05f;
             }
+            vectors.add(vector);
+        }
+        return FloatVectorValues.fromFloats(vectors, dim);
+    }
+
+    // ========== cosine centroids ==========
+    // The single-centroid path (n <= targetSize) and the splitRecursive leaves build centroids without running
+    // KMeans. They used to return raw means under cosine while KMeans returned unit vectors, and the quantizer
+    // asserts a unit centroid under cosine; both now go through VectorMath.centroidFromSum.
+
+    @Test
+    void testCluster_cosine_singleCentroidPath_isUnitLength() throws IOException {
+        FloatVectorValues source = unitVectors(200, 16, 7L);
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(512)
+            .metric(VectorSimilarityFunction.COSINE)
+            .seed(7L)
+            .build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(source, config);
+
+        assertEquals(1, result.numCentroids());
+        assertAllUnitLength(result.centroids());
+    }
+
+    @Test
+    void testCluster_cosine_splitPaths_areUnitLength() throws IOException {
+        // Well above targetSize: top-level KMeans plus recursive splits whose leaves come from centroidOf.
+        FloatVectorValues source = unitVectors(4000, 16, 11L);
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(64)
+            .metric(VectorSimilarityFunction.COSINE)
+            .seed(11L)
+            .maxIterations(5)
+            .build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(source, config);
+
+        assertTrue(result.numCentroids() > 1, "expected the split path, got " + result.numCentroids() + " centroid");
+        assertAllUnitLength(result.centroids());
+    }
+
+    @Test
+    void testCluster_euclidean_singleCentroidPath_isThePlainMean() throws IOException {
+        List<float[]> vectors = List.of(new float[] { 0f, 0f }, new float[] { 2f, 0f }, new float[] { 1f, 3f });
+        HierarchicalKMeans.Config config = HierarchicalKMeans.Config.builder()
+            .targetSize(512)
+            .metric(VectorSimilarityFunction.EUCLIDEAN)
+            .build();
+
+        HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(FloatVectorValues.fromFloats(vectors, 2), config);
+
+        assertEquals(1, result.numCentroids());
+        assertArrayEquals(new float[] { 1f, 1f }, result.centroids()[0], 1e-6f);
+    }
+
+    private static void assertAllUnitLength(float[][] centroids) {
+        for (int c = 0; c < centroids.length; c++) {
+            float norm = (float) Math.sqrt(VectorUtil.dotProduct(centroids[c], centroids[c]));
+            assertTrue(VectorUtil.isUnitVector(centroids[c]), "centroid " + c + " has norm " + norm);
+        }
+    }
+
+    /** Random directions, all unit length, spread widely so their means are far from unit length. */
+    private static FloatVectorValues unitVectors(int n, int dim, long seed) {
+        Random rng = new Random(seed);
+        List<float[]> vectors = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            float[] vector = new float[dim];
+            for (int d = 0; d < dim; d++) {
+                vector[d] = (float) rng.nextGaussian();
+            }
+            VectorUtil.l2normalize(vector);
             vectors.add(vector);
         }
         return FloatVectorValues.fromFloats(vectors, dim);

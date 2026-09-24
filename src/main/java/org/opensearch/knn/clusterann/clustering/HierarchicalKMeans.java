@@ -72,7 +72,7 @@ public final class HierarchicalKMeans {
 
         // Single centroid for tiny datasets
         if (n <= config.targetSize) {
-            float[][] centroids = new float[][] { computeMean(vectors, indices(n)) };
+            float[][] centroids = new float[][] { centroidOf(vectors, indices(n), config.metric) };
             int[] assignments = new int[n];
             return new Result(centroids, assignments, 1, dim);
         }
@@ -272,7 +272,7 @@ public final class HierarchicalKMeans {
 
         if (n <= splitThreshold || depth >= MAX_DEPTH) {
             List<float[]> result = new ArrayList<>();
-            result.add(computeMean(allVectors, indices));
+            result.add(centroidOf(allVectors, indices, config.metric));
             return result;
         }
 
@@ -464,20 +464,17 @@ public final class HierarchicalKMeans {
         }
     }
 
-    private static float[] computeMean(FloatVectorValues vectors, int[] indices) throws IOException {
+    /** The centroid of the members at {@code indices} under {@code metric}; see {@link VectorMath#centroidFromSum}. */
+    private static float[] centroidOf(FloatVectorValues vectors, int[] indices, VectorSimilarityFunction metric) throws IOException {
         int dim = vectors.dimension();
-        float[] mean = new float[dim];
+        float[] sum = new float[dim];
         for (int idx : indices) {
             float[] vec = vectors.vectorValue(idx);
             for (int d = 0; d < dim; d++) {
-                mean[d] += vec[d];
+                sum[d] += vec[d];
             }
         }
-        float inv = 1f / indices.length;
-        for (int d = 0; d < dim; d++) {
-            mean[d] *= inv;
-        }
-        return mean;
+        return VectorMath.centroidFromSum(sum, indices.length, metric, sum);
     }
 
     private static int[] indices(int n) {
