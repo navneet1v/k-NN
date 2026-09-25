@@ -60,9 +60,17 @@ public final class ThermometerVectorReader {
     static final boolean STORE_INT8 =
         Boolean.parseBoolean(System.getProperty("clusterann.thermo.storeInt8", "true"));
 
+    /**
+     * MUST match {@link ThermometerVectorWriter#STORE_COARSE} for the index being read. When false,
+     * blocks contain only the int8 tier (no coarse 2-bit planes). Set via
+     * {@code -Dclusterann.thermo.storeCoarse=false}. Default true (legacy layout).
+     */
+    static final boolean STORE_COARSE =
+        Boolean.parseBoolean(System.getProperty("clusterann.thermo.storeCoarse", "true"));
+
     /** Bytes one block of {@code blockSize} vectors occupies on disk (must match the writer). */
     public long blockBytes(int blockSize) {
-        long bytes = (long) blockSize * coarseBytes;
+        long bytes = STORE_COARSE ? (long) blockSize * coarseBytes : 0L;
         if (STORE_INT8) {
             bytes += (long) blockSize * dimension
                 + (long) blockSize * Float.BYTES
@@ -70,6 +78,24 @@ public final class ThermometerVectorReader {
                 + (long) blockSize * Float.BYTES;
         }
         return bytes;
+    }
+
+    /**
+     * Read one block's int8 codes + corrections WITHOUT any coarse planes (STORE_COARSE=false layout).
+     * Used by the int8-only scan when the 2-bit tier was not written. Buffers codes into
+     * {@code int8Out} at {@code (posBase+j)*dimension} and corrections into the parallel arrays.
+     */
+    public void scanBlockInt8Only(
+        IndexInput input, int blockSize, int posBase,
+        byte[] int8Out, float[] scaleOut, int[] sumOut, float[] normOut
+    ) throws IOException {
+        if (!STORE_INT8) {
+            throw new IllegalStateException("int8-only read requested but storeInt8=false");
+        }
+        input.readBytes(int8Out, posBase * dimension, blockSize * dimension);
+        for (int j = 0; j < blockSize; j++) scaleOut[posBase + j] = Float.intBitsToFloat(input.readInt());
+        for (int j = 0; j < blockSize; j++) sumOut[posBase + j] = input.readInt();
+        for (int j = 0; j < blockSize; j++) normOut[posBase + j] = Float.intBitsToFloat(input.readInt());
     }
 
     /**

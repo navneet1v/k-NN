@@ -278,6 +278,16 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             pqState = new org.opensearch.knn.index.clusterann.codec.PQScanState(codebook, target, simFunc);
         }
 
+        // Flow D (Extended RaBitQ): build a scan state that rotates the query residual per cell and
+        // scores each doc via the unbiased estimator. Rotation is applied through the off-heap reader
+        // (same R the writer used). Bit-width comes from the query-time system property (POC).
+        org.opensearch.knn.index.clusterann.codec.RaBitQScanState rabitqState = null;
+        if (fieldState.quantizerId == QUANTIZER_RABITQ) {
+            int rbits = Integer.getInteger("clusterann.rabitq.bits", 4);
+            rabitqState = new org.opensearch.knn.index.clusterann.codec.RaBitQScanState(
+                target, fieldState.dimension, rbits, simFunc, centroidReader::transformQuery);
+        }
+
         // Transform query for ADC scoring (randomRotation redistributes variance for better quantization).
         // Normally EUCLIDEAN-only; the flowA.rotateIP POC also rotates IP queries. The write side
         // applied rotation whenever hasRotation() is true, so gate on that + the flag for IP.
@@ -361,7 +371,8 @@ public class ClusterANN1040KnnVectorsReader extends KnnVectorsReader {
             useADC,
             centroidReader,
             thermoReader,
-            pqState
+            pqState,
+            rabitqState
         );
 
         scanner.setSegmentToken(segmentName.hashCode());

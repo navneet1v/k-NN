@@ -41,6 +41,8 @@ public final class ClusterANNFormatConstants {
     public static final byte QUANTIZER_IVFASTER_ABSOLUTE = 1;
     /** Flow C: Google ScaNN-style residual Product Quantization (single global codebook). */
     public static final byte QUANTIZER_SCANN_RESIDUAL_PQ = 2;
+    /** Flow D: Extended RaBitQ — B-bit rotated-grid codes with an unbiased IP estimator. */
+    public static final byte QUANTIZER_RABITQ = 3;
 
     // Filtering: max filterCost * dimension to use exact scoring (Tier 1)
     // At 768d: threshold / 768 ≈ 2666 docs per segment triggers exact path

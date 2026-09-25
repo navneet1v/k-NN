@@ -69,7 +69,15 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         String q = System.getProperty("clusterann.quantizer");
         if ("ivfaster".equalsIgnoreCase(q)) return ClusterANNFormatConstants.QUANTIZER_IVFASTER_ABSOLUTE;
         if ("scann".equalsIgnoreCase(q)) return ClusterANNFormatConstants.QUANTIZER_SCANN_RESIDUAL_PQ;
+        if ("rabitq".equalsIgnoreCase(q)) return ClusterANNFormatConstants.QUANTIZER_RABITQ;
         return ClusterANNFormatConstants.QUANTIZER_PER_CENTROID_OSQ;
+    }
+
+    /** Flow D RaBitQ code bit-width (B). Overridable via -Dclusterann.rabitq.bits=N (default 4). */
+    static int rabitqBits() {
+        int b = Integer.getInteger("clusterann.rabitq.bits", 4);
+        if (b < 1 || b > 8) throw new IllegalArgumentException("clusterann.rabitq.bits must be 1..8, got " + b);
+        return b;
     }
     private final List<FieldWriterInfo> fields = new ArrayList<>();
 
@@ -310,16 +318,19 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         // quantization on skewed IP embeddings too. Enable rotation for IP via
         // -Dclusterann.flowA.rotateIP=true (reader gate must match).
         final boolean flowARotateIP = Boolean.getBoolean("clusterann.flowA.rotateIP");
+        final boolean flowD = quantizerId == QUANTIZER_RABITQ;
         boolean useRotation = flowB
             || fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.EUCLIDEAN
-            || (flowARotateIP && !flowC);
+            || (flowARotateIP && !flowC && !flowD);
+        // Flow D rotates the residual DIRECTION per vector (not the centroid), so centroids stay raw;
+        // but it still needs the RandomRotation persisted so the reader rebuilds the same R.
         RandomRotation randomRotation = flowB ? null : RandomRotation.create(dimension);
         HadamardRotation hadamard = flowB ? HadamardRotation.create(dimension) : null;
         float[][] transformedCentroids = new float[numCentroids][dimension];
         for (int c = 0; c < numCentroids; c++) {
             if (flowB) {
                 hadamard.transform(centroids[c], transformedCentroids[c]);
-            } else if (useRotation) {
+            } else if (useRotation && !flowD) {
                 randomRotation.transform(centroids[c], transformedCentroids[c]);
             } else {
                 System.arraycopy(centroids[c], 0, transformedCentroids[c], 0, dimension);
@@ -387,6 +398,18 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
                 centroidOffsets[origIdx] = startPos;
                 writePostingListPQ(primaryPostings[origIdx], vectors, centroids[origIdx], codebook);
                 writePostingListPQ(soarPostings[origIdx], vectors, centroids[origIdx], codebook);
+                postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
+            }
+        } else if (flowD) {
+            // Flow D = Extended RaBitQ. Per vector: residualize against its cell centroid, normalize,
+            // rotate with the field's RandomRotation, quantize to B-bit codes, store code + corrections.
+            int b = rabitqBits();
+            for (int si = 0; si < numCentroids; si++) {
+                int origIdx = spatialOrder[si];
+                long startPos = postingsOutput.getFilePointer();
+                centroidOffsets[origIdx] = startPos;
+                writePostingListRaBitQ(primaryPostings[origIdx], vectors, centroids[origIdx], randomRotation, b);
+                writePostingListRaBitQ(soarPostings[origIdx], vectors, centroids[origIdx], randomRotation, b);
                 postingSizes[origIdx] = (int) (postingsOutput.getFilePointer() - startPos);
             }
         } else {
@@ -474,7 +497,7 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         // Write centroids to .clac (off-heap, mmap'd at search time)
-        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, (useRotation || flowB) ? rotationBlob : null);
+        OffHeapCentroids.write(centroidsOutput, fieldInfo.number, centroids, transformedCentroids, numCentroids, dimension, (useRotation || flowB || flowD) ? rotationBlob : null);
 
         // 5. Write .claf: centroid assignment per ordinal (for filter-aware search)
         // Format: [fieldNumber:int][numVectors:int][numCentroids:int][assignments: numVectors × short]
@@ -574,6 +597,48 @@ public class ClusterANN1040KnnVectorsWriter extends KnnVectorsWriter {
             for (int d = 0; d < dim; d++) res[d] = vec[d] - centroid[d];
             codebook.encode(res, code, 0);
             postingsOutput.writeBytes(code, 0, codeBytes);
+        }
+    }
+
+    /**
+     * Flow D posting writer: [docIds | vInt count | ordinals | records(count · (dim+12))].
+     * Each record is the vector's RaBitQ code over its normalized, rotated residual (v − centroid),
+     * followed by gnorm, odob, resNorm (floats). See {@link org.opensearch.knn.index.clusterann.codec.RaBitQScanState}.
+     */
+    private void writePostingListRaBitQ(
+        int[] ordinals,
+        ClusterANNVectorValues vectors,
+        float[] centroid,
+        org.opensearch.knn.index.clusterann.algorithm.RandomRotation rotation,
+        int bits
+    ) throws IOException {
+        int count = ordinals.length;
+        int[] docIds = new int[count];
+        for (int i = 0; i < count; i++) docIds[i] = vectors.ordToDoc(ordinals[i]);
+        sortParallel(docIds, ordinals, count);
+        PostingListCodec.write(docIds, postingsOutput);
+        postingsOutput.writeVInt(count);
+        for (int i = 0; i < count; i++) postingsOutput.writeInt(ordinals[i]);
+
+        int dim = vectors.dimension();
+        byte[] code = new byte[dim];
+        float[] resid = new float[dim];
+        float[] o = new float[dim];
+        float[] oprime = new float[dim];
+        for (int i = 0; i < count; i++) {
+            float[] vec = vectors.vectorValue(ordinals[i]);
+            double rn = 0;
+            for (int d = 0; d < dim; d++) { float r = vec[d] - centroid[d]; resid[d] = r; rn += (double) r * r; }
+            float resNorm = (float) Math.sqrt(rn);
+            if (resNorm > 0) for (int d = 0; d < dim; d++) o[d] = (float) (resid[d] / resNorm);
+            else java.util.Arrays.fill(o, 0f);
+            rotation.transform(o, oprime);   // same map the reader applies to (q − c)
+            double gnorm = org.opensearch.knn.index.clusterann.codec.RaBitQuantizer.quantize(oprime, bits, code);
+            double odob = org.opensearch.knn.index.clusterann.codec.RaBitQuantizer.odob(code, oprime, bits, gnorm);
+            postingsOutput.writeBytes(code, 0, dim);
+            postingsOutput.writeInt(Float.floatToIntBits((float) gnorm));
+            postingsOutput.writeInt(Float.floatToIntBits((float) odob));
+            postingsOutput.writeInt(Float.floatToIntBits(resNorm));
         }
     }
 

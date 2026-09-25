@@ -103,6 +103,7 @@ public final class ClusterANNCentroidScanner {
     }
 
     private final PQScanState pqState;
+    private final RaBitQScanState rabitqState;
 
     public ClusterANNCentroidScanner(
         IndexInput postingsInput,
@@ -117,6 +118,23 @@ public final class ClusterANNCentroidScanner {
         ThermometerVectorReader thermoReader,
         PQScanState pqState
     ) {
+        this(postingsInput, fieldState, exactScorer, adcReader, target, acceptBits, visited, useADC, centroidReader, thermoReader, pqState, null);
+    }
+
+    public ClusterANNCentroidScanner(
+        IndexInput postingsInput,
+        ClusterANNFieldState fieldState,
+        RandomVectorScorer exactScorer,
+        QuantizedVectorReader adcReader,
+        float[] target,
+        Bits acceptBits,
+        BitSet visited,
+        boolean useADC,
+        OffHeapCentroids.Reader centroidReader,
+        ThermometerVectorReader thermoReader,
+        PQScanState pqState,
+        RaBitQScanState rabitqState
+    ) {
         this.postingsInput = postingsInput;
         this.fieldState = fieldState;
         this.exactScorer = exactScorer;
@@ -128,6 +146,7 @@ public final class ClusterANNCentroidScanner {
         this.centroidReader = centroidReader;
         this.thermoReader = thermoReader;
         this.pqState = pqState;
+        this.rabitqState = rabitqState;
         switch (fieldState.metric) {
             case L2: this.simFunc = VectorSimilarityFunction.EUCLIDEAN; break;
             case INNER_PRODUCT: this.simFunc = VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT; break;
@@ -161,6 +180,13 @@ public final class ClusterANNCentroidScanner {
             if (centroidBuf == null) centroidBuf = new float[fieldState.dimension];
             centroidReader.readCentroid(centroidIdx, centroidBuf);
             pqState.prepareCell(centroidBuf);
+            lastCentroidLoaded = centroidIdx;
+        }
+        // Flow D (RaBitQ): prepare the rotated query residual against THIS cell's raw centroid.
+        if (rabitqState != null && centroidIdx != lastCentroidLoaded) {
+            if (centroidBuf == null) centroidBuf = new float[fieldState.dimension];
+            centroidReader.readCentroid(centroidIdx, centroidBuf);
+            rabitqState.prepareCell(centroidBuf);
             lastCentroidLoaded = centroidIdx;
         }
         // Load centroid ONCE for both primary and SOAR postings (same centroidIdx)
@@ -217,6 +243,9 @@ public final class ClusterANNCentroidScanner {
         if (pqState != null) {
             return scoreScannPQ(collector, count);
         }
+        if (rabitqState != null) {
+            return scoreRaBitQ(collector, count);
+        }
         if (thermoReader != null) {
             return scoreThermometer(collector, count, validCount);
         }
@@ -271,7 +300,11 @@ public final class ClusterANNCentroidScanner {
         int pos = 0;
         while (pos < count) {
             int blockSize = Math.min(BLOCK_SIZE, count - pos);
-            if (RERANK_INT8 || INT8_ONLY) {
+            if (INT8_ONLY && !ThermometerVectorReader.STORE_COARSE) {
+                // Pure int8 layout (no coarse planes on disk): read int8 codes+corrections only.
+                thermoReader.scanBlockInt8Only(postingsInput, blockSize, pos, int8Buf, scaleBuf, sumBuf, normBuf);
+                // hamming stays MAX (unused in int8-only ranking).
+            } else if (RERANK_INT8 || INT8_ONLY) {
                 thermoReader.scanBlockCoarseAndInt8(postingsInput, blockSize, pos, hamming, int8Buf, scaleBuf, sumBuf, normBuf);
             } else {
                 thermoReader.scanBlockCoarse(postingsInput, blockSize, hamming);
@@ -451,11 +484,36 @@ public final class ClusterANNCentroidScanner {
         return scored;
     }
 
+    /**
+     * Flow D scan: read the posting's RaBitQ records and score each valid doc via the unbiased
+     * estimator (see {@link RaBitQScanState#score}). Record layout: code[dim] | gnorm | odob | resNorm.
+     */
+    private int scoreRaBitQ(KnnCollector collector, int count) throws IOException {
+        int recBytes = RaBitQScanState.recordBytes(fieldState.dimension);
+        byte[] recs = new byte[count * recBytes];
+        postingsInput.readBytes(recs, 0, recs.length);
+        float minCompetitive = collector.minCompetitiveSimilarity();
+        int scored = 0;
+        for (int i = 0; i < count; i++) {
+            if (!validBuf[i]) continue;
+            float sim = rabitqState.score(recs, i * recBytes);
+            if (sim > minCompetitive) {
+                collector.collect(docIdBuf[i], sim);
+            }
+            scored++;
+        }
+        collector.incVisitedCount(scored);
+        return scored;
+    }
+
     private void skipQuantizedBlocks(int count) throws IOException {
         long totalBytes;
         if (pqState != null) {
             // Flow C: count · codeBytes (one byte per subspace per doc).
             totalBytes = (long) count * pqState.codebook().codeBytes();
+        } else if (rabitqState != null) {
+            // Flow D: count · (dim + 12) — code bytes + gnorm/odob/resNorm floats.
+            totalBytes = (long) count * RaBitQScanState.recordBytes(fieldState.dimension);
         } else if (thermoReader != null) {
             // Flow B: sum thermometer block bytes over full blocks (matches ThermometerVectorWriter).
             totalBytes = 0;
