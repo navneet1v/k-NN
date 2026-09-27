@@ -148,11 +148,25 @@ public final class IVFIndexBuilder {
         ThreadLocal<float[]> tlFlatCandidates = ThreadLocal.withInitial(() -> new float[flatSize]);
         ThreadLocal<float[]> tlDists = ThreadLocal.withInitial(() -> new float[candidateLimit]);
 
+        // Per-thread clone of the vector values. vectorValue() reads a stateful IndexInput (shared
+        // Cipher + ByteBuffer + file position for encrypted/off-heap inputs) plus a shared scratch
+        // buffer, so it is NOT thread-safe. The parallel stream below runs on multiple ForkJoin
+        // workers; each MUST read from its own clone or the cipher/buffer/position state races
+        // (manifests as ShortBufferException / BufferOverflowException / EOF on encrypted indices,
+        // or silently-wrong vectors otherwise). copy() clones the underlying supplier's IndexInput.
+        ThreadLocal<ClusterANNVectorValues> tlVectors = ThreadLocal.withInitial(() -> {
+            try {
+                return vectors.copy();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+
         // Parallel SOAR computation
         IntStream.range(0, n).parallel().forEach(i -> {
             float[] vec;
             try {
-                vec = vectors.vectorValue(i);
+                vec = tlVectors.get().vectorValue(i);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }

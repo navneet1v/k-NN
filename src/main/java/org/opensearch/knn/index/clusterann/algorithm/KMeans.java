@@ -288,15 +288,23 @@ public final class KMeans {
             int[][] workerCounts = new int[NUM_WORKERS][k];
             AtomicInteger movedCount = new AtomicInteger(0);
 
-            // Each worker processes a contiguous slice of vectors — no shared state
+            // Each worker processes a contiguous slice of vectors. vectorValue() reads a stateful
+            // (encrypted/off-heap) IndexInput + shared scratch buffer and is NOT thread-safe, so each
+            // worker reads from its own clone (vectors.copy()) — not the shared instance.
             IntStream.range(0, NUM_WORKERS).parallel().forEach(workerId -> {
                 int start = workerId * sliceSize;
                 int end = Math.min(start + sliceSize, n);
                 float[] distBuf = new float[k];
+                final ClusterANNVectorValues localVectors;
+                try {
+                    localVectors = vectors.copy();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
                 for (int i = start; i < end; i++) {
                     float[] vec;
                     try {
-                        vec = vectors.vectorValue(i);
+                        vec = localVectors.vectorValue(i);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }

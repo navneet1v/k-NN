@@ -96,11 +96,16 @@ public final class HierarchicalKMeans {
         int[] assignments = new int[n];
         float[] flat = new float[k * dim];
         for (int i = 0; i < k; i++) System.arraycopy(donorCentroids[i], 0, flat, i * dim, dim);
+        // Per-thread clone: vectorValue() reads a stateful (encrypted/off-heap) IndexInput and is not
+        // thread-safe; each ForkJoin worker must read from its own clone.
+        ThreadLocal<ClusterANNVectorValues> tlRouteVectors = ThreadLocal.withInitial(() -> {
+            try { return vectors.copy(); } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+        });
         IntStream.range(0, n).parallel().forEach(ord -> {
             int c = carried[ord];
             if (c >= 0 && c < k) { assignments[ord] = c; return; }
             try {
-                float[] vec = vectors.vectorValue(ord);
+                float[] vec = tlRouteVectors.get().vectorValue(ord);
                 float[] distBuf = new float[k];
                 assignments[ord] = ClusterANNVectorUtil.findNearestCentroidBulk(vec, flat, k, dim, distBuf, metricOrd);
             } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
@@ -292,9 +297,13 @@ public final class HierarchicalKMeans {
             int numCentroids = centroids.length;
             assignments = new int[n];
             float[][] finalCentroids = centroids;
+            // Per-thread clone (thread-unsafe stateful IndexInput in vectorValue).
+            ThreadLocal<ClusterANNVectorValues> tlFinalVectors = ThreadLocal.withInitial(() -> {
+                try { return vectors.copy(); } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+            });
             IntStream.range(0, n).parallel().forEach(i -> {
                 try {
-                    float[] vec = vectors.vectorValue(i);
+                    float[] vec = tlFinalVectors.get().vectorValue(i);
                     float bestDist = Float.MAX_VALUE;
                     int bestC = 0;
                     for (int c = 0; c < numCentroids; c++) {
