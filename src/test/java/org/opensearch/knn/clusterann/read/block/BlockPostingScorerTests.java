@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
+import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -165,6 +166,87 @@ class BlockPostingScorerTests {
         // then
         assertFalse(firstCall, "advance() must keep returning false after exhaustion");
         assertFalse(secondCall, "advance() must keep returning false after exhaustion");
+    }
+
+    // ---------------------------------------------------------------- what the walk cost
+
+    /** An unfiltered walk scores every position of every block, so the counters are just the geometry. */
+    @ParameterizedTest(name = "{0} vectors")
+    @ValueSource(ints = { 1, 3, 4, 5, 8, 10, 12 })
+    void testCounters_whenNothingIsFilteredOrPruned_thenCountEveryPositionAndEveryBlock(int vectorCount) throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(Arrays.copyOf(ORDINALS, vectorCount), Arrays.copyOf(SCORES, vectorCount), null);
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals((long) vectorCount, ClusterANNQueryValue.VECTORS_SCORED.getValue());
+        assertEquals((long) numBlocks(vectorCount), ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
+    }
+
+    /**
+     * A filter shows up in both counters: a skipped block is never fetched, and a fetched block's rejected positions
+     * are never scored — which is the pair of savings the counters exist to make visible.
+     */
+    @ParameterizedTest(name = "accepting {0}")
+    @MethodSource("filters")
+    void testCounters_whenOrdinalsAreFiltered_thenCountOnlyWhatWasScored(
+        String description,
+        int[] acceptedPositions,
+        List<Integer> expectedAdvances,
+        List<Integer> expectedBlocks,
+        List<Integer> expectedPrefetches
+    ) throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, bitsAt(acceptedPositions));
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(
+            (long) acceptedPositions.length,
+            ClusterANNQueryValue.VECTORS_SCORED.getValue(),
+            "only the accepted positions cost a distance"
+        );
+        assertEquals(
+            (long) expectedBlocks.size(),
+            ClusterANNQueryValue.BLOCKS_FETCHED.getValue(),
+            "a block with nothing accepted is never fetched"
+        );
+    }
+
+    /**
+     * Pruning does not show up in these counters, and must not: a block is scored to learn whether it can compete, so
+     * the work is already paid for by the time the threshold rejects it. The counters are the cost, not the yield.
+     */
+    @Test
+    void testCounters_whenABlockCannotCompete_thenStillCountItsCost() throws IOException {
+        // given — 0.90 is above every block maximum, so nothing survives
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null);
+
+        // when
+        List<Hit> hits = drain(scan, 0.90f);
+
+        // then
+        assertTrue(hits.isEmpty(), "nothing could compete");
+        assertEquals(
+            (long) ORDINALS.length,
+            ClusterANNQueryValue.VECTORS_SCORED.getValue(),
+            "a pruned block was scored to find out it was pruned"
+        );
+        assertEquals((long) numBlocks(ORDINALS.length), ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
+    }
+
+    /** The counters are node-wide and never reset in production, so a test that asserts on them must start from zero. */
+    private static void resetStats() {
+        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
+            value.set(0);
+        }
     }
 
     // ---------------------------------------------------------------- helpers

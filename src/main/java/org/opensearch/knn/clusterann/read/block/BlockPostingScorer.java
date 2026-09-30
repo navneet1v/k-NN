@@ -10,6 +10,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
+import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 
@@ -77,9 +78,14 @@ public class BlockPostingScorer implements PostingScorer {
 
             int postingVectorOffset = currentBlock * blockSize;
             int vectorCount = reader.blockVectorCount();
-            if (validPos(postingVectorOffset, vectorCount) != 0) {
+            int wantedInBlock = validPos(postingVectorOffset, vectorCount);
+            if (wantedInBlock != 0) {
                 reader.fetchBlock();
                 reader.readBlockVectors();
+                // Counted here because here is where it becomes true: this block was read, and its accepted positions
+                // are about to be scored whether or not any of them ends up competitive.
+                ClusterANNQueryValue.BLOCKS_FETCHED.increment();
+                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(wantedInBlock);
 
                 float maxScore = scorer.scoreBlock(validPos, candidates);
                 scoredBlockVectorOffset = postingVectorOffset;

@@ -83,7 +83,20 @@ public class KNNStats {
         addModelStats(builder);
         addGraphStats(builder);
         addRemoteIndexBuildStats(builder);
+        addClusterANNQueryStats(builder);
         return builder.build();
+    }
+
+    private void addClusterANNQueryStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {
+        builder.put(StatNames.CLUSTER_ANN_QUERY_STATS.getName(), createNodeStat(this::createClusterANNQueryStatsMap));
+    }
+
+    private Map<String, Object> createClusterANNQueryStatsMap() {
+        Map<String, Object> statsMap = new HashMap<>();
+        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
+            statsMap.put(value.getName(), value.getValue());
+        }
+        return statsMap;
     }
 
     private void addQueryStats(ImmutableMap.Builder<String, KNNStat<?>> builder) {

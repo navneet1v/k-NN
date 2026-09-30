@@ -13,6 +13,7 @@ import org.opensearch.knn.clusterann.read.Cluster;
 import org.opensearch.knn.clusterann.read.Clusters;
 import org.opensearch.knn.clusterann.read.PostingScorer;
 import org.opensearch.knn.clusterann.read.ScanParams;
+import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -294,6 +295,50 @@ class ClusterSearcherTests {
 
         // then — 1024 is what the stubbed Clusters reports for numVectors()
         assertEquals(List.of(1024), lengths, "the composed test spans the field's vectors");
+    }
+
+    // ---------------------------------------------------------------- stats
+
+    /**
+     * The walk counts the clusters, and the probe that landed on an empty one is counted as probed but not as scanned
+     * — that gap is the whole reason both numbers exist. Blocks and distances are the scorer's to count, so they are
+     * asserted where the scorer is tested.
+     */
+    @Test
+    void testSearch_thenCountsTheClustersProbedAndScanned() throws IOException {
+        // given
+        resetStats();
+        Clusters clusters = clusters(Map.of(0, new int[] { 10, 11 }, 1, new int[0], 2, new int[] { 30 }));
+
+        // when
+        ClusterSearcher.search(clusters, new int[] { 0, 1, 2 }, ScanParams.of(QUERY), new RecordingCollector(), null);
+
+        // then
+        assertEquals(1L, ClusterANNQueryValue.SEGMENT_SCANS.getValue());
+        assertEquals(3L, ClusterANNQueryValue.CLUSTERS_PROBED.getValue(), "the empty cluster still took a probe slot");
+        assertEquals(2L, ClusterANNQueryValue.CLUSTERS_SCANNED.getValue(), "but was never walked");
+    }
+
+    /** A scan that cannot happen is not a scan, so averaging it in would only dilute the totals. */
+    @Test
+    void testSearch_whenThereIsNothingToScan_thenCountsNoScan() throws IOException {
+        // given
+        resetStats();
+        Clusters clusters = clusters(Map.of(0, new int[] { 10 }));
+
+        // when
+        ClusterSearcher.search(clusters, new int[0], ScanParams.of(QUERY), new RecordingCollector(), null);
+
+        // then
+        assertEquals(0L, ClusterANNQueryValue.SEGMENT_SCANS.getValue());
+        assertEquals(0L, ClusterANNQueryValue.CLUSTERS_PROBED.getValue());
+    }
+
+    /** The counters are node-wide and never reset in production, so a test that asserts on them must start from zero. */
+    private static void resetStats() {
+        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
+            value.set(0);
+        }
     }
 
     // ---------------------------------------------------------------- helpers

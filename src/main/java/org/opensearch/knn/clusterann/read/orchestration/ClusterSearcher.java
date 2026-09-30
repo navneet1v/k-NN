@@ -11,6 +11,7 @@ import org.opensearch.knn.clusterann.read.Cluster;
 import org.opensearch.knn.clusterann.read.Clusters;
 import org.opensearch.knn.clusterann.read.PostingScorer;
 import org.opensearch.knn.clusterann.read.ScanParams;
+import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 import java.util.BitSet;
@@ -23,7 +24,10 @@ import java.util.BitSet;
  * never reaches it. It takes the probe order as given and does not reorder it, since pruning and the
  * collector's competitive threshold both depend on visiting closest-first.
  *
- * <p>Stateless: everything is passed in, and everything it mutates is local to one call.
+ * <p>Stateless as far as a scan's result goes: every input is passed in and nothing about one call carries into the
+ * next. The exception is bookkeeping — it counts the clusters it probes and scans into {@link ClusterANNQueryValue},
+ * the node's counters, as it goes. Blocks and distances are counted where they happen, inside the scorer, so
+ * nothing has to be threaded back out.
  */
 public final class ClusterSearcher {
 
@@ -50,6 +54,7 @@ public final class ClusterSearcher {
         }
 
         if (clusters.numClusters() == 0 || probes.length == 0) {
+            // Not counted as a scan: nothing was looked at, so averaging it in would only dilute the numbers.
             return 0;
         }
 
@@ -58,11 +63,17 @@ public final class ClusterSearcher {
         BitSet visited = new BitSet(clusters.numVectors());
         Bits wanted = wanted(acceptedOrds, visited, clusters.numVectors());
 
+        // Counted before the walk rather than after it: a scan that throws or times out still probed these clusters,
+        // and leaving it out would make a failing query look cheap.
+        ClusterANNQueryValue.SEGMENT_SCANS.increment();
+        ClusterANNQueryValue.CLUSTERS_PROBED.incrementBy(probes.length);
+
         ClusterScan scan = clusters.scan();
         int scanned = 0;
         for (int probe : probes) {
             Cluster cluster = clusters.get(probe);
             if (cluster.size() != 0) {
+                ClusterANNQueryValue.CLUSTERS_SCANNED.increment();
                 scanCluster(scan, cluster, params, wanted, visited, collector);
                 scanned++;
             }
