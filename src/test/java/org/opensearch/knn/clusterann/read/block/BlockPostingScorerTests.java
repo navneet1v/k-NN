@@ -12,10 +12,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.opensearch.knn.clusterann.format.block.BlockPostingsPruner;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
-import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -58,7 +58,7 @@ class BlockPostingScorerTests {
         // then
         List<Integer> everyBlock = blocksUpTo(vectorCount);
         List<Hit> expectedHits = hitsAt(ordinals, scores, positionsUpTo(vectorCount));
-        RecordingBlockReader expectedReader = readerThatSaw(vectorCount).advanced(blocksWalked(vectorCount))
+        RecordingBlockReader expectedReader = readerThatSaw(vectorCount).advanced(everyBlock)
             .fetched(everyBlock)
             .read(everyBlock)
             .prefetched(blocksAfterFirst(vectorCount))
@@ -69,25 +69,18 @@ class BlockPostingScorerTests {
     }
 
     /**
-     * Each case gives the accepted positions and then, per rung: which blocks get positioned on, which get
-     * fetched and decoded, and which get hinted.
+     * Each case gives the accepted positions, then the blocks the walk is expected to touch and the ones it is
+     * expected to hint.
      *
-     * <p>Block 0 is always positioned on, and block 3 is the out-of-range index that ends the walk. Beyond
-     * those, a block with nothing accepted is never even positioned on, because the lookahead skips straight
-     * past it — and a hint only ever names a block that is then fetched.
+     * <p>A block with nothing accepted is pruned before any IO, so it is never even positioned on — the walk
+     * only ever advances to a block it then fetches, and a hint only ever names such a block.
      */
     private static Stream<Arguments> filters() {
         return Stream.of(
-            Arguments.of("one whole block", new int[] { 4, 5, 6, 7 }, List.of(0, 1, 3), List.of(1), List.of(1)),
-            Arguments.of(
-                "one position per block, each at a different offset",
-                new int[] { 2, 5, 11 },
-                List.of(0, 1, 2, 3),
-                List.of(0, 1, 2),
-                List.of(1, 2)
-            ),
-            Arguments.of("only the first and last positions", new int[] { 0, 11 }, List.of(0, 2, 3), List.of(0, 2), List.of(2)),
-            Arguments.of("nothing at all", new int[] {}, List.of(0, 3), List.of(), List.of())
+            Arguments.of("one whole block", new int[] { 4, 5, 6, 7 }, List.of(1), List.of()),
+            Arguments.of("one position per block, each at a different offset", new int[] { 2, 5, 11 }, List.of(0, 1, 2), List.of(1, 2)),
+            Arguments.of("only the first and last positions", new int[] { 0, 11 }, List.of(0, 2), List.of(2)),
+            Arguments.of("nothing at all", new int[] {}, List.of(), List.of())
         );
     }
 
@@ -97,7 +90,6 @@ class BlockPostingScorerTests {
     void testAdvance_whenOrdinalsAreFiltered_thenTouchesOnlyBlocksWithAnAcceptedOrdinal(
         String description,
         int[] acceptedPositions,
-        List<Integer> expectedAdvances,
         List<Integer> expectedBlocks,
         List<Integer> expectedPrefetches
     ) throws IOException {
@@ -109,7 +101,7 @@ class BlockPostingScorerTests {
 
         // then
         List<Hit> expectedHits = hitsAt(ORDINALS, SCORES, acceptedPositions);
-        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(expectedAdvances)
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(expectedBlocks)
             .fetched(expectedBlocks)
             .read(expectedBlocks)
             .prefetched(expectedPrefetches)
@@ -143,13 +135,98 @@ class BlockPostingScorerTests {
         // then
         List<Integer> everyBlock = blocksUpTo(ORDINALS.length);
         List<Hit> expectedHits = hitsAt(ORDINALS, SCORES, expectedPositions);
-        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(blocksWalked(ORDINALS.length))
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(everyBlock)
             .fetched(everyBlock)
             .read(everyBlock)
             .prefetched(blocksAfterFirst(ORDINALS.length))
             .reader();
 
         assertEquals(expectedHits, hits);
+        assertEquals(expectedReader, scan.reader);
+    }
+
+    /** A pruner's SKIP has to cost nothing: the block is not positioned on, not hinted, not fetched. */
+    @Test
+    void testAdvance_whenAPrunerSkipsABlock_thenNeverTouchesIt() throws IOException {
+        // given
+        Scan scan = scanOver(ORDINALS, SCORES, null, skipping(1));
+
+        // when
+        List<Hit> hits = drain(scan, ACCEPT_ALL);
+
+        // then
+        List<Integer> touched = List.of(0, 2);
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(touched)
+            .fetched(touched)
+            .read(touched)
+            .prefetched(List.of(2))
+            .reader();
+
+        assertEquals(hitsAt(ORDINALS, SCORES, 0, 1, 2, 3, 8, 9, 10, 11), hits);
+        assertEquals(expectedReader, scan.reader);
+    }
+
+    /**
+     * A TERMINATE found while looking ahead ends the walk, but the block already scored is still drained — the
+     * decision is about the blocks after it, not about the candidates in hand.
+     */
+    @Test
+    void testAdvance_whenAPrunerTerminatesAhead_thenDrainsTheCurrentBlockAndStops() throws IOException {
+        // given
+        Scan scan = scanOver(ORDINALS, SCORES, null, terminatingAt(2));
+
+        // when
+        List<Hit> hits = drain(scan, ACCEPT_ALL);
+
+        // then
+        List<Integer> touched = List.of(0, 1);
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(touched)
+            .fetched(touched)
+            .read(touched)
+            .prefetched(List.of(1))
+            .reader();
+
+        assertEquals(hitsAt(ORDINALS, SCORES, 0, 1, 2, 3, 4, 5, 6, 7), hits);
+        assertEquals(expectedReader, scan.reader);
+    }
+
+    @Test
+    void testAdvance_whenAPrunerTerminatesAtTheFirstBlock_thenReadsNothing() throws IOException {
+        // given
+        Scan scan = scanOver(ORDINALS, SCORES, null, terminatingAt(0));
+
+        // when
+        List<Hit> hits = drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(List.of(), hits);
+        assertEquals(readerThatSaw(ORDINALS.length).reader(), scan.reader);
+    }
+
+    /**
+     * The threshold rises as hits are collected, so a lookahead taken at a lower one can go stale: block 2 is
+     * accepted while the bar is still low, and by the time the walk reaches it block 1's hits have raised the bar
+     * past its bound. The walk trusts the lookahead rather than testing a block twice, so block 2 is still
+     * fetched and scored — its hits are withheld by the max-score check instead. That is the trade: every block
+     * is tested exactly once, at the price of the occasional fetch a re-test would have avoided.
+     */
+    @Test
+    void testAdvance_whenTheThresholdRisesPastALookahead_thenStillFetchesItAndWithholdsItsHits() throws IOException {
+        // given
+        Scan scan = scanOver(ORDINALS, SCORES, null, blockMaxPruner(0.40f, 0.85f, 0.45f));
+
+        // when
+        List<Hit> hits = drainAgainstBestSoFar(scan);
+
+        // then
+        List<Integer> everyBlock = blocksUpTo(ORDINALS.length);
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(everyBlock)
+            .fetched(everyBlock)
+            .read(everyBlock)
+            .prefetched(List.of(1, 2))
+            .reader();
+
+        assertEquals(hitsAt(ORDINALS, SCORES, 0, 1, 2, 3, 4, 5, 6, 7), hits);
         assertEquals(expectedReader, scan.reader);
     }
 
@@ -168,87 +245,6 @@ class BlockPostingScorerTests {
         assertFalse(secondCall, "advance() must keep returning false after exhaustion");
     }
 
-    // ---------------------------------------------------------------- what the walk cost
-
-    /** An unfiltered walk scores every position of every block, so the counters are just the geometry. */
-    @ParameterizedTest(name = "{0} vectors")
-    @ValueSource(ints = { 1, 3, 4, 5, 8, 10, 12 })
-    void testCounters_whenNothingIsFilteredOrPruned_thenCountEveryPositionAndEveryBlock(int vectorCount) throws IOException {
-        // given
-        resetStats();
-        Scan scan = scanOver(Arrays.copyOf(ORDINALS, vectorCount), Arrays.copyOf(SCORES, vectorCount), null);
-
-        // when
-        drain(scan, ACCEPT_ALL);
-
-        // then
-        assertEquals((long) vectorCount, ClusterANNQueryValue.VECTORS_SCORED.getValue());
-        assertEquals((long) numBlocks(vectorCount), ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
-    }
-
-    /**
-     * A filter shows up in both counters: a skipped block is never fetched, and a fetched block's rejected positions
-     * are never scored — which is the pair of savings the counters exist to make visible.
-     */
-    @ParameterizedTest(name = "accepting {0}")
-    @MethodSource("filters")
-    void testCounters_whenOrdinalsAreFiltered_thenCountOnlyWhatWasScored(
-        String description,
-        int[] acceptedPositions,
-        List<Integer> expectedAdvances,
-        List<Integer> expectedBlocks,
-        List<Integer> expectedPrefetches
-    ) throws IOException {
-        // given
-        resetStats();
-        Scan scan = scanOver(ORDINALS, SCORES, bitsAt(acceptedPositions));
-
-        // when
-        drain(scan, ACCEPT_ALL);
-
-        // then
-        assertEquals(
-            (long) acceptedPositions.length,
-            ClusterANNQueryValue.VECTORS_SCORED.getValue(),
-            "only the accepted positions cost a distance"
-        );
-        assertEquals(
-            (long) expectedBlocks.size(),
-            ClusterANNQueryValue.BLOCKS_FETCHED.getValue(),
-            "a block with nothing accepted is never fetched"
-        );
-    }
-
-    /**
-     * Pruning does not show up in these counters, and must not: a block is scored to learn whether it can compete, so
-     * the work is already paid for by the time the threshold rejects it. The counters are the cost, not the yield.
-     */
-    @Test
-    void testCounters_whenABlockCannotCompete_thenStillCountItsCost() throws IOException {
-        // given — 0.90 is above every block maximum, so nothing survives
-        resetStats();
-        Scan scan = scanOver(ORDINALS, SCORES, null);
-
-        // when
-        List<Hit> hits = drain(scan, 0.90f);
-
-        // then
-        assertTrue(hits.isEmpty(), "nothing could compete");
-        assertEquals(
-            (long) ORDINALS.length,
-            ClusterANNQueryValue.VECTORS_SCORED.getValue(),
-            "a pruned block was scored to find out it was pruned"
-        );
-        assertEquals((long) numBlocks(ORDINALS.length), ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
-    }
-
-    /** The counters are node-wide and never reset in production, so a test that asserts on them must start from zero. */
-    private static void resetStats() {
-        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
-            value.set(0);
-        }
-    }
-
     // ---------------------------------------------------------------- helpers
 
     private record Hit(int ord, float score) {
@@ -259,9 +255,13 @@ class BlockPostingScorerTests {
     }
 
     private static Scan scanOver(int[] ordinals, float[] scores, Bits acceptedOrds) {
+        return scanOver(ordinals, scores, acceptedOrds, BlockPostingsPruner.NONE);
+    }
+
+    private static Scan scanOver(int[] ordinals, float[] scores, Bits acceptedOrds, BlockPostingsPruner pruner) {
         RecordingBlockReader reader = new RecordingBlockReader(ordinals.length, BLOCK_SIZE);
         BlockVectorScorer blockScorer = new TableScorer(reader, scores);
-        return new Scan(new BlockPostingScorer(blockScorer, ordinals, acceptedOrds), reader);
+        return new Scan(new BlockPostingScorer(blockScorer, ordinals, acceptedOrds, pruner), reader);
     }
 
     /** Starts describing the reader a case expects to end up with: same geometry, and exactly these calls. */
@@ -308,6 +308,43 @@ class BlockPostingScorerTests {
         return hits;
     }
 
+    /**
+     * Drives the scan the way a top-1 collector would: every hit raises the threshold to the best score seen,
+     * so pruning decisions are made against a threshold that moves.
+     */
+    private static List<Hit> drainAgainstBestSoFar(Scan scan) throws IOException {
+        List<Hit> hits = new ArrayList<>();
+        float best = ACCEPT_ALL;
+        while (scan.scorer.advance(best)) {
+            Hit hit = new Hit(scan.scorer.ord(), scan.scorer.score());
+            hits.add(hit);
+            best = Math.max(best, hit.score());
+            if (hits.size() > 50) {
+                fail("advance() never returned false; got " + hits.size() + " hits from a sequence that cannot have that many");
+            }
+        }
+        return hits;
+    }
+
+    private static BlockPostingsPruner skipping(int skippedBlock) {
+        return (block, minCompetitiveScore) -> block == skippedBlock
+            ? BlockPostingsPruner.Decision.SKIP
+            : BlockPostingsPruner.Decision.SCORE;
+    }
+
+    private static BlockPostingsPruner terminatingAt(int lastBlock) {
+        return (block, minCompetitiveScore) -> block >= lastBlock
+            ? BlockPostingsPruner.Decision.TERMINATE
+            : BlockPostingsPruner.Decision.SCORE;
+    }
+
+    /** Stands in for a clip pruner: it knows each block's best possible score and skips the ones that can't win. */
+    private static BlockPostingsPruner blockMaxPruner(float... blockMax) {
+        return (block, minCompetitiveScore) -> minCompetitiveScore >= blockMax[block]
+            ? BlockPostingsPruner.Decision.SKIP
+            : BlockPostingsPruner.Decision.SCORE;
+    }
+
     /** What a scan should report for {@code positions}, in position order. */
     private static List<Hit> hitsAt(int[] ordinals, float[] scores, int... positions) {
         List<Hit> hits = new ArrayList<>(positions.length);
@@ -332,14 +369,6 @@ class BlockPostingScorerTests {
     /** Every block but the first — what a full walk is expected to hint, each one block ahead. */
     private static List<Integer> blocksAfterFirst(int vectorCount) {
         return IntStream.range(1, numBlocks(vectorCount)).boxed().toList();
-    }
-
-    /**
-     * Every block a full walk positions on, plus the out-of-range index that ends it — positioning is free, so
-     * a walk pays it for every block including the ones it then declines to fetch.
-     */
-    private static List<Integer> blocksWalked(int vectorCount) {
-        return IntStream.rangeClosed(0, numBlocks(vectorCount)).boxed().toList();
     }
 
     /** The ordinals living at {@code positions}, as the filter a scan is given. */

@@ -12,6 +12,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.IOSupplier;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
+import org.opensearch.knn.clusterann.format.block.BlockPostingsPruner;
 import org.opensearch.knn.clusterann.read.Centroid;
 import org.opensearch.knn.clusterann.read.Cluster;
 import org.opensearch.knn.clusterann.read.PostingScorer;
@@ -59,6 +60,13 @@ public class ScalarQuantizedCluster implements Cluster {
 
     /** Global vector ordinals, ascending by distance from the centroid. Read on the first {@link #scorer}. */
     private int[] ordinals;
+
+    /**
+     * The header's {@code sortedDistances}: {@code ‖c−v‖²} per member, parallel to {@link #ordinals}. Read only
+     * where a pruner can use it — the similarity whose member order makes it a bound — and {@code null}
+     * otherwise. What a block's worth of it means is {@link EuclideanClipPruner}'s business, not this class's.
+     */
+    private float[] sortedDistances;
 
     private final ScalarQuantizedBlockReader reader;
 
@@ -139,7 +147,19 @@ public class ScalarQuantizedCluster implements Cluster {
 
         load();
         ScalarQuantizedBlockScorer scorer = new ScalarQuantizedBlockScorer(reader, sqScanContext, encoding, similarityFunction);
-        return new BlockPostingScorer(scorer, ordinals, acceptedOrds);
+        return new BlockPostingScorer(scorer, ordinals, acceptedOrds, clipPruner(sqScanContext));
+    }
+
+    /**
+     * Pruning on how far this cluster's members sit from its centroid, which only bounds anything where the
+     * members are ordered by that distance — {@code correction()} is {@code ‖q−c‖²} on the same similarity.
+     */
+    private BlockPostingsPruner clipPruner(final SQScanContext scanContext) {
+        // TODO: return NONE for sparse filters as well so recall doesn't drop
+        if (sortedDistances == null) {
+            return BlockPostingsPruner.NONE;
+        }
+        return new EuclideanClipPruner(sortedDistances, blockSize, (float) Math.sqrt(Math.max(0f, scanContext.correction())));
     }
 
     /**
@@ -207,6 +227,9 @@ public class ScalarQuantizedCluster implements Cluster {
         if (ordinals != null) {
             bytes += RamUsageEstimator.sizeOf(ordinals);
         }
+        if (sortedDistances != null) {
+            bytes += RamUsageEstimator.sizeOf(sortedDistances);
+        }
         if (centroid != null) {
             bytes += RamUsageEstimator.shallowSizeOf(centroid) + RamUsageEstimator.sizeOf(centroid.vector());
         }
@@ -226,9 +249,22 @@ public class ScalarQuantizedCluster implements Cluster {
         int[] readOrdinals = new int[clusterSize];
         posting.readInts(readOrdinals, 0, clusterSize);
 
+        if (similarityFunction == VectorSimilarityFunction.EUCLIDEAN) {
+            sortedDistances = readSortedDistances();
+        }
+
         centroid = centroid();
 
         // Assigned last: it is the flag that says the rest is ready, so a failed read leaves nothing half-loaded.
         ordinals = readOrdinals;
+    }
+
+    /** The header's squared distances, in member order — the region after the ordinals and the SOAR bitset. */
+    private float[] readSortedDistances() throws IOException {
+        long distancesOffset = (long) clusterSize * Integer.BYTES + (long) FixedBitSet.bits2words(clusterSize) * Long.BYTES;
+        posting.seek(distancesOffset);
+        float[] distances = new float[clusterSize];
+        posting.readFloats(distances, 0, clusterSize);
+        return distances;
     }
 }

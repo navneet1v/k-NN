@@ -7,10 +7,10 @@ package org.opensearch.knn.clusterann.read.block;
 
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
+import org.opensearch.knn.clusterann.format.block.BlockPostingsPruner;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
-import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 
@@ -21,15 +21,20 @@ import java.io.IOException;
  * the {@link BlockVectorFormat.Reader}. Turning a block-local position back into an ordinal is this class's
  * own business, since the ordinal mapping belongs to the posting rather than to the block storage.
  *
- * <p>Per block it positions (free), builds the set of positions the filter accepts, and only then fetches and
- * decodes (expensive) — so a block with nothing wanted costs a position and no more.
+ * <p>Which blocks are worth anything is the {@link BlockPostingsPruner}'s business. It is consulted before any
+ * IO, and once per block ahead of the current one, so the walk steps over blocks it never positions on and a
+ * prefetch hint only ever names a block that will be fetched.
  */
 public class BlockPostingScorer implements PostingScorer {
 
+    /** No block left to visit, either because the sequence ran out or because a pruner terminated it. */
+    private static final int NO_MORE_BLOCKS = Integer.MAX_VALUE;
+
     private final BlockVectorScorer scorer;
+    private final BlockPostingsPruner pruner;
     private final BlockVectorFormat.Reader reader;
     private final int[] ordinals;
-    private final Bits acceptedOrds;
+    private final AcceptedPositions positions;
     private final int numBlocks;
     private final int blockSize;
 
@@ -38,11 +43,18 @@ public class BlockPostingScorer implements PostingScorer {
     /** Positions of the current block the filter accepts. Sized to a full block; a partial one leaves a tail unset. */
     private final FixedBitSet validPos;
 
-    /** Next block to visit. */
-    private int blockIndex = 0;
+    /**
+     * Next block to visit, already tested by the lookahead that named it, so the walk takes it as it stands.
+     * {@code -1} until the first {@link #advance}, which has no lookahead behind it and so tests block 0 itself;
+     * {@link #NO_MORE_BLOCKS} once the walk is over.
+     */
+    private int nextBlock = -1;
+
+    /** Set when a pruner says nothing later can compete. The candidates already scored are still handed out. */
+    private boolean terminated;
 
     /**
-     * Where the block in {@link #candidates} starts, so {@link #ord()} maps back after {@link #blockIndex}
+     * Where the block in {@link #candidates} starts, so {@link #ord()} maps back after {@link #nextBlock}
      * moves on.
      */
     private int scoredBlockVectorOffset;
@@ -50,14 +62,25 @@ public class BlockPostingScorer implements PostingScorer {
     /** Cursor into {@link #candidates}. */
     private int cursor = -1;
 
-    public BlockPostingScorer(final BlockVectorScorer scorer, final int[] ordinals, final Bits acceptedOrds) {
+    /**
+     * {@code pruner} is the extra pruning to apply, {@link BlockPostingsPruner#NONE} for none. The filter
+     * becomes an {@link AcceptedPositions}, which both masks the positions a block may score and contributes
+     * its own block pruning, so the blocks that get skipped and the positions that get scored cannot disagree.
+     */
+    public BlockPostingScorer(
+        final BlockVectorScorer scorer,
+        final int[] ordinals,
+        final Bits acceptedOrds,
+        final BlockPostingsPruner pruner
+    ) {
         this.scorer = scorer;
         this.reader = scorer.reader();
         this.ordinals = ordinals;
-        this.acceptedOrds = acceptedOrds;
         this.numBlocks = reader.numBlocks();
         this.blockSize = reader.blockSize();
         this.validPos = new FixedBitSet(blockSize);
+        this.positions = AcceptedPositions.of(ordinals, acceptedOrds, blockSize);
+        this.pruner = BlockPostingsPruner.of(pruner, positions.pruner());
         candidates.growNoCopy(blockSize);
     }
 
@@ -67,36 +90,42 @@ public class BlockPostingScorer implements PostingScorer {
             return true;
         }
 
-        while (reader.advance(blockIndex)) {
-            int currentBlock = blockIndex;
-            blockIndex = nextWantedBlock(currentBlock + 1);
-
-            // Prefetch only the next block in anticipation
-            if (blockIndex < numBlocks) {
-                reader.prefetchBlock(blockIndex);
+        while (!terminated) {
+            // nextBlock -1 tests the first block for pruning
+            int block = nextBlock == -1 ? seek(0, minCompetitiveSimilarity) : nextBlock;
+            if (block == NO_MORE_BLOCKS) {
+                break;
             }
 
-            int postingVectorOffset = currentBlock * blockSize;
-            int vectorCount = reader.blockVectorCount();
-            int wantedInBlock = validPos(postingVectorOffset, vectorCount);
-            if (wantedInBlock != 0) {
-                reader.fetchBlock();
-                reader.readBlockVectors();
-                // Counted here because here is where it becomes true: this block was read, and its accepted positions
-                // are about to be scored whether or not any of them ends up competitive.
-                ClusterANNQueryValue.BLOCKS_FETCHED.increment();
-                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(wantedInBlock);
+            if (!reader.advance(block)) {
+                throw new IllegalStateException("BlockPostingScorer can never ask for block outside the range");
+            }
 
-                float maxScore = scorer.scoreBlock(validPos, candidates);
-                scoredBlockVectorOffset = postingVectorOffset;
-                cursor = 0;
-                if (maxScore > minCompetitiveSimilarity) {
-                    return true;
-                }
+            int vectorCount = reader.blockVectorCount();
+
+            // One lookahead, serving as both the prefetch target and the next block to visit: issued before the
+            // fetch below so it overlaps this block's IO as well as its scoring.
+            nextBlock = seek(block + 1, minCompetitiveSimilarity);
+            if (nextBlock != NO_MORE_BLOCKS) {
+                reader.prefetchBlock(nextBlock);
+            }
+
+            int postingVectorOffset = block * blockSize;
+            positions.mask(block, vectorCount, validPos);
+
+            reader.fetchBlock();
+            reader.readBlockVectors();
+
+            float maxScore = scorer.scoreBlock(validPos, candidates);
+            scoredBlockVectorOffset = postingVectorOffset;
+            cursor = 0;
+            if (maxScore > minCompetitiveSimilarity) {
+                return true;
             }
         }
 
         candidates.setSize(0);
+        cursor = -1;
         return false;
     }
 
@@ -111,43 +140,21 @@ public class BlockPostingScorer implements PostingScorer {
     }
 
     /**
-     * First block at or after {@code from} holding an ordinal the filter accepts, or {@link #numBlocks} when
-     * none is left. Decided from {@link #ordinals} alone, so looking ahead costs no IO — which is what lets
-     * the hint go to the block that will actually be fetched rather than the adjacent one.
+     * First block at or after {@code from} the pruner wants scored, or {@link #NO_MORE_BLOCKS} when none is
+     * left. Costs no IO, which is what lets it be called for a block the walk has not reached yet.
      */
-    private int nextWantedBlock(int from) {
-        if (acceptedOrds == null) {
-            return from;
-        }
-
+    private int seek(int from, float minCompetitiveSimilarity) {
         for (int block = from; block < numBlocks; block++) {
-            int startPos = block * blockSize;
-            int endPos = Math.min(startPos + blockSize, ordinals.length);
-            for (int pos = startPos; pos < endPos; pos++) {
-                if (acceptedOrds.get(ordinals[pos])) {
-                    return block;
-                }
+            BlockPostingsPruner.Decision decision = pruner.test(block, minCompetitiveSimilarity);
+            if (decision == BlockPostingsPruner.Decision.SCORE) {
+                return block;
+            }
+            if (decision == BlockPostingsPruner.Decision.TERMINATE) {
+                terminated = true;
+                return NO_MORE_BLOCKS;
             }
         }
-        return numBlocks;
+        return NO_MORE_BLOCKS;
     }
 
-    /** Marks the positions of the current block the filter accepts, returns the cardinality. */
-    private int validPos(int postingVectorOffset, int vectorCount) {
-        validPos.clear();
-
-        if (acceptedOrds == null) {
-            validPos.set(0, vectorCount);
-            return vectorCount;
-        }
-
-        int cardinality = 0;
-        for (int pos = 0; pos < vectorCount; pos++) {
-            if (acceptedOrds.get(ordinals[postingVectorOffset + pos])) {
-                validPos.set(pos);
-                cardinality++;
-            }
-        }
-        return cardinality;
-    }
 }

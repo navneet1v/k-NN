@@ -1,0 +1,68 @@
+# 100k SIFT descriptors under L2 — the L2 suite at a size where pruning is measurable. Opt-in: not part of
+# brazil-build test, because indexing 100k vectors three times over takes minutes.
+#
+#   brazil-build single-test -DtestClass=org.opensearch.knn.vectorformats.codec.component.KNNVectorFormatsComponentTest \
+#       -Dtests.extra.jvmargs="-Dknn.suite=src/test/resources/sift-100k-suite.yml"
+#
+# Why this size. sift-1k is two or three clusters, so a posting is one or two blocks and any block-level pruning
+# has nothing to work on. At 100k a posting spans tens of 32-vector blocks, which is the regime
+# EuclideanClipPruner is for: shells far from the query on either side of it get skipped or terminate the walk.
+#
+# The corpus is NOT committed (the dataset directory is gitignored beyond the two 1k samples). Cut it from the
+# ann-benchmarks source — which is itself a 501 MB download, cached in the same directory — with:
+#
+#   brazil-build single-test -DtestClass=org.opensearch.knn.vectorformats.codec.component.corpus.Hdf5SamplerRun \
+#       -Dtests.extra.jvmargs="-Dknn.sample.source=src/test/resources/dataset/sift-128-euclidean.hdf5 \
+#           -Dknn.sample.size=100000 -Dknn.sample.queries=1000 -Dknn.sample.similarity=euclidean"
+
+defaults:
+  corpus:
+    type: hdf5
+    file: src/test/resources/dataset/sift-128-euclidean-sample100000-q1000-seed42.hdf5
+    # Required: the file's neighbours were computed under L2, and Hdf5Corpus only warns if this disagrees.
+    similarity: euclidean
+    size: 100000
+    queries: 1000
+
+  index:
+    # Four segments, so a flushed scenario spans more than one and a merged one has something to merge.
+    docsPerSegment: 25000
+    # Without this, Lucene's exact-search fallback would be reported as this format's recall.
+    expectFiles: [clap, clac]
+
+  search:
+    k: 10
+    # More queries and more passes than the 1k suites: this suite exists to be compared against itself, so the
+    # latency numbers have to be worth comparing.
+    queries: 500
+    repeat: 3
+    warmup: -1
+    # Deliberately loose, and looser than sift-1k's measured 4.0e-5. At 100k the true nearest neighbours are much
+    # closer than at 1k, so scores run to about 2e-4 instead of 6e-5, and an ADC estimate's absolute error scales
+    # with them: 6.7e-5 observed at 1 bit, 4.6e-5 at 2. This suite is a recall-and-latency measurement, not the
+    # score-accuracy gate — that stays with the 1k suites, whose bounds were measured over every hit.
+    scoreTolerance: 2.0e-4
+    # Same scale effect on the systematic component: 1.06e-6 observed at 1 bit against sift-1k's 1.0e-6 bound.
+    scoreBias: 5.0e-6
+
+  codec:
+    name: ClusterANN1030TestCodec
+    params:
+      quantization:
+        # 1, 2 or 4 only.
+        docBits: 1
+
+scenarios:
+  # Merged at every width: one segment means the largest postings, which is where block pruning shows up.
+  - name: 1bit-merged
+    index: {forceMerge: 1}
+  - name: 2bit-merged
+    index: {forceMerge: 1}
+    codec: {params: {quantization: {docBits: 2}}}
+  - name: 4bit-merged
+    index: {forceMerge: 1}
+    codec: {params: {quantization: {docBits: 4}}}
+
+  # One flushed scenario for contrast: four segments, so four smaller sets of clusters.
+  - name: 2bit-flushed
+    codec: {params: {quantization: {docBits: 2}}}
