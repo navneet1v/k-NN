@@ -152,12 +152,19 @@ public class BlockPostingScorer implements PostingScorer {
         for (int block = from; block < numBlocks; block++) {
             BlockPostingsPruner.Decision decision = pruner.test(block, minCompetitiveSimilarity);
             if (decision == BlockPostingsPruner.Decision.SCORE) {
+                ClusterANNQueryValue.PRUNER_SCORE.increment();
                 return block;
             }
             if (decision == BlockPostingsPruner.Decision.TERMINATE) {
+                ClusterANNQueryValue.PRUNER_TERMINATE.increment();
+                // The tail this decision bought: counted here because here is the only place that still knows
+                // where the walk stopped, and the blocks beyond are never tested again to be counted later.
+                ClusterANNQueryValue.BLOCKS_TERMINATED.incrementBy(numBlocks - block);
                 terminated = true;
                 return NO_MORE_BLOCKS;
             }
+            // Only SKIP reaches here, the loop's own fall-through being what steps over the block.
+            ClusterANNQueryValue.PRUNER_SKIP.increment();
         }
         return NO_MORE_BLOCKS;
     }

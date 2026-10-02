@@ -39,7 +39,36 @@ public enum ClusterANNQueryValue {
      * Stored blocks read and decoded. The scan's I/O, and the number that says whether block skipping and pruning
      * are earning their keep — against {@code vectors_scored / block_size} as the floor.
      */
-    BLOCKS_FETCHED("blocks_fetched");
+    BLOCKS_FETCHED("blocks_fetched"),
+
+    /**
+     * Blocks a pruner cleared to read. Should track {@link #BLOCKS_FETCHED} exactly — a cleared block is always
+     * fetched — so a gap between the two means a block was read without being tested, or tested twice.
+     */
+    PRUNER_SCORE("pruner_score"),
+
+    /**
+     * Blocks a pruner stepped over, which cost a test and no I/O. Pure CLIP when the query carries no filter,
+     * since the filter contributes {@link org.opensearch.knn.clusterann.format.block.BlockPostingsPruner#NONE}
+     * then; under a filter the two are summed here and cannot be told apart.
+     */
+    PRUNER_SKIP("pruner_skip"),
+
+    /**
+     * Postings cut short, one per cluster scan that ended because no later block could compete. Only ever CLIP:
+     * a filter cannot rule out the rest of a posting, so it never terminates.
+     */
+    PRUNER_TERMINATE("pruner_terminate"),
+
+    /**
+     * Blocks never reached because a posting terminated — the tail that cost neither a test nor a read, and
+     * usually where most of the saving is.
+     *
+     * <p>Together these account for every block of every scanned cluster:
+     * {@code blocks_fetched + pruner_skip + blocks_terminated = total blocks probed}. A violated sum is a
+     * bookkeeping bug, which is the point of carrying the third term rather than deriving it.
+     */
+    BLOCKS_TERMINATED("blocks_terminated");
 
     private final String name;
     private final AtomicLong value;

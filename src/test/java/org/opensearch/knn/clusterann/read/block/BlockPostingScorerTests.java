@@ -16,6 +16,7 @@ import org.opensearch.knn.clusterann.format.block.BlockPostingsPruner;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
+import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -243,6 +244,124 @@ class BlockPostingScorerTests {
         // then
         assertFalse(firstCall, "advance() must keep returning false after exhaustion");
         assertFalse(secondCall, "advance() must keep returning false after exhaustion");
+    }
+
+    // ---------------------------------------------------------------- what the walk cost
+
+    /** With nothing to prune on, every block is cleared and read, and no decision is anything else. */
+    @Test
+    void testCounters_whenThereIsNoPruner_thenEveryBlockIsScored() throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null);
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        int blocks = numBlocks(ORDINALS.length);
+        assertEquals((long) blocks, ClusterANNQueryValue.PRUNER_SCORE.getValue());
+        assertEquals((long) blocks, ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
+        assertEquals(0L, ClusterANNQueryValue.PRUNER_SKIP.getValue());
+        assertEquals(0L, ClusterANNQueryValue.PRUNER_TERMINATE.getValue());
+        assertEquals(0L, ClusterANNQueryValue.BLOCKS_TERMINATED.getValue());
+    }
+
+    /** A SKIP is counted as a skip and not as a fetch — the whole point of the decision. */
+    @Test
+    void testCounters_whenAPrunerSkipsABlock_thenCountsTheSkipAndNotAFetch() throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, skipping(1));
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then — blocks 0 and 2 scored, block 1 skipped
+        assertEquals(2L, ClusterANNQueryValue.PRUNER_SCORE.getValue());
+        assertEquals(2L, ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
+        assertEquals(1L, ClusterANNQueryValue.PRUNER_SKIP.getValue());
+        assertEquals(0L, ClusterANNQueryValue.PRUNER_TERMINATE.getValue());
+    }
+
+    /**
+     * A TERMINATE is counted once, and the tail it bought is counted as the blocks from the terminating one to the
+     * end — those are never tested again, so this is the only chance to count them.
+     */
+    @Test
+    void testCounters_whenAPrunerTerminates_thenCountsTheTailItAvoided() throws IOException {
+        // given — 3 blocks of 4; terminate on reaching block 2, so block 2 is the tail
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, terminatingAt(2));
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(2L, ClusterANNQueryValue.BLOCKS_FETCHED.getValue(), "blocks 0 and 1 were read");
+        assertEquals(1L, ClusterANNQueryValue.PRUNER_TERMINATE.getValue());
+        assertEquals(1L, ClusterANNQueryValue.BLOCKS_TERMINATED.getValue(), "block 2 was never reached");
+        assertEquals(0L, ClusterANNQueryValue.PRUNER_SKIP.getValue());
+    }
+
+    /** Terminating on the first block means the whole posting is the avoided tail, and nothing is read. */
+    @Test
+    void testCounters_whenAPrunerTerminatesAtTheFirstBlock_thenTheWholePostingIsTheTail() throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, terminatingAt(0));
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(0L, ClusterANNQueryValue.BLOCKS_FETCHED.getValue());
+        assertEquals(1L, ClusterANNQueryValue.PRUNER_TERMINATE.getValue());
+        assertEquals((long) numBlocks(ORDINALS.length), ClusterANNQueryValue.BLOCKS_TERMINATED.getValue());
+    }
+
+    /**
+     * The invariant the counters are carried for: fetched, skipped and terminated partition every block of the
+     * posting. Asserted over each pruner shape, since a decision counted in the wrong arm would still leave the
+     * individual totals looking plausible.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("prunerShapes")
+    void testCounters_thenFetchedSkippedAndTerminatedAccountForEveryBlock(String description, BlockPostingsPruner pruner)
+        throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, pruner);
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        long accounted = ClusterANNQueryValue.BLOCKS_FETCHED.getValue() + ClusterANNQueryValue.PRUNER_SKIP.getValue()
+            + ClusterANNQueryValue.BLOCKS_TERMINATED.getValue();
+        assertEquals((long) numBlocks(ORDINALS.length), accounted, "every block must be fetched, skipped or terminated past");
+        assertEquals(
+            ClusterANNQueryValue.BLOCKS_FETCHED.getValue(),
+            ClusterANNQueryValue.PRUNER_SCORE.getValue(),
+            "a cleared block is always fetched"
+        );
+    }
+
+    private static Stream<Arguments> prunerShapes() {
+        return Stream.of(
+            Arguments.of("no pruner", BlockPostingsPruner.NONE),
+            Arguments.of("skips the middle block", skipping(1)),
+            Arguments.of("terminates partway", terminatingAt(2)),
+            Arguments.of("terminates immediately", terminatingAt(0)),
+            Arguments.of("block maxima", blockMaxPruner(0.40f, 0.85f, 0.45f))
+        );
+    }
+
+    /** The counters are node-wide and never reset in production, so a test that asserts on them must start from zero. */
+    private static void resetStats() {
+        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
+            value.set(0);
+        }
     }
 
     // ---------------------------------------------------------------- helpers
