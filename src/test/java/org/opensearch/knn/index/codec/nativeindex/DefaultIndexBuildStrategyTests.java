@@ -7,14 +7,18 @@ package org.opensearch.knn.index.codec.nativeindex;
 
 import lombok.SneakyThrows;
 import org.apache.lucene.index.DocsWithFieldSet;
+import org.apache.lucene.store.IndexOutput;
 import org.junit.Before;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.opensearch.core.common.unit.ByteSizeValue;
+import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
+import org.opensearch.knn.index.codec.transfer.OffHeapFloatVectorTransfer;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
 import org.opensearch.knn.index.engine.KNNEngine;
@@ -29,10 +33,19 @@ import org.opensearch.knn.quantization.models.quantizationOutput.QuantizationOut
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 import org.opensearch.test.OpenSearchTestCase;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
@@ -291,5 +304,87 @@ public class DefaultIndexBuildStrategyTests extends OpenSearchTestCase {
                 prev = vector;
             }
         }
+    }
+
+    /**
+     * Repro for the NMSLIB double free seen as a SIGSEGV in {@code JNICommons.freeVectorData} during merges.
+     *
+     * <p>NMSLIB's native {@code CreateIndex} takes ownership of the off-heap vectors and runs {@code delete inputVectors}
+     * right after copying them, before the graph is built and serialized. If serialization then fails (e.g. the merge
+     * {@link IndexOutput} throws because the merge was aborted), the exception reaches Java before
+     * {@code vectorTransfer.reset()} runs, so try-with-resources {@code close()} calls {@code deallocate()} on the
+     * already-freed address.</p>
+     *
+     * <p>This test runs the real native NMSLIB build with an {@link IndexOutput} that fails on write and stubs out
+     * {@code deallocate()} so the JVM does not crash. On the buggy code it fails because {@code deallocate()} is invoked
+     * after native has already freed the vectors.</p>
+     */
+    @SneakyThrows
+    public void testBuildAndWrite_nmslib_whenWriteFailsAfterNativeTookOwnership_thenVectorsAreNotFreedTwice() {
+        final KNNVectorValues<?> knnVectorValues = randomFloatVectorValues(100, 8);
+
+        try (
+            MockedStatic<KNNSettings> mockedKNNSettings = mockStatic(KNNSettings.class, CALLS_REAL_METHODS);
+            MockedStatic<OffHeapVectorTransferFactory> mockedFactory = mockStatic(OffHeapVectorTransferFactory.class)
+        ) {
+            mockedKNNSettings.when(KNNSettings::getVectorStreamingMemoryLimit).thenReturn(new ByteSizeValue(1024 * 1024));
+            final OffHeapFloatVectorTransfer vectorTransfer = spy(new OffHeapFloatVectorTransfer(8 * Float.BYTES, 100));
+            // Prevent the real double free so the JVM survives; we only want to observe that it would have happened.
+            doNothing().when(vectorTransfer).deallocate();
+            mockedFactory.when(() -> OffHeapVectorTransferFactory.getVectorTransfer(any(), anyInt(), anyInt())).thenReturn(vectorTransfer);
+
+            expectThrows(
+                RuntimeException.class,
+                () -> DefaultIndexBuildStrategy.getInstance().buildAndWriteIndex(nmslibParams(knnVectorValues))
+            );
+
+            // Native already deleted the vectors inside CreateIndex, so Java must not free them again.
+            verify(vectorTransfer, never()).deallocate();
+        }
+    }
+
+    /**
+     * Same scenario as above but lets {@code deallocate()} run for real. On the buggy code this double frees the native
+     * {@code std::vector<float>} and crashes the test JVM (SIGSEGV with jemalloc, SIGABRT "pointer being freed was not
+     * allocated" with macOS libmalloc), reproducing the production crash. Run it on its own.
+     */
+    @SneakyThrows
+    public void testBuildAndWrite_nmslib_whenWriteFailsAfterNativeTookOwnership_thenNoNativeCrash() {
+        final KNNVectorValues<?> knnVectorValues = randomFloatVectorValues(100, 8);
+
+        try (MockedStatic<KNNSettings> mockedKNNSettings = mockStatic(KNNSettings.class, CALLS_REAL_METHODS)) {
+            mockedKNNSettings.when(KNNSettings::getVectorStreamingMemoryLimit).thenReturn(new ByteSizeValue(1024 * 1024));
+            expectThrows(
+                RuntimeException.class,
+                () -> DefaultIndexBuildStrategy.getInstance().buildAndWriteIndex(nmslibParams(knnVectorValues))
+            );
+        }
+    }
+
+    private static KNNVectorValues<?> randomFloatVectorValues(final int count, final int dimension) {
+        final List<float[]> vectors = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            final float[] vector = new float[dimension];
+            for (int j = 0; j < dimension; j++) {
+                vector[j] = randomFloat();
+            }
+            vectors.add(vector);
+        }
+        return KNNVectorValuesFactory.getVectorValues(VectorDataType.FLOAT, new TestVectorValues.PreDefinedFloatVectorValues(vectors));
+    }
+
+    private static BuildIndexParams nmslibParams(final KNNVectorValues<?> knnVectorValues) throws IOException {
+        // Simulates the merge IndexOutput failing (e.g. MergeAbortedException) while NMSLIB serializes the graph.
+        final IndexOutput failingIndexOutput = mock(IndexOutput.class);
+        doThrow(new IOException("simulated merge abort while writing NMSLIB index")).when(failingIndexOutput)
+            .writeBytes(any(byte[].class), anyInt(), anyInt());
+        return BuildIndexParams.builder()
+            .indexOutputWithBuffer(new IndexOutputWithBuffer(failingIndexOutput))
+            .knnEngine(KNNEngine.NMSLIB)
+            .vectorDataType(VectorDataType.FLOAT)
+            .indexParameters(Map.of(KNNConstants.SPACE_TYPE, SpaceType.L2.getValue()))
+            .knnVectorValuesSupplier(() -> knnVectorValues)
+            .totalLiveDocs((int) knnVectorValues.totalLiveDocs())
+            .build();
     }
 }
