@@ -80,7 +80,7 @@ public final class ClusterFactory {
             ordinal,
             fieldMeta.clusterSizes()[ordinal],
             centroid,
-            fieldMeta.blockSize(),
+            fieldMeta.ioFetchBytes(),
             fieldMeta.dimension(),
             scalarEncoding(fieldMeta.docBits()),
             ScalarQuantizers.forSimilarity(fieldMeta.similarityFunction()),

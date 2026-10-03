@@ -80,7 +80,8 @@ public class ScalarQuantizedCluster implements Cluster {
      * @param clusterSize entries in the posting, primary and SOAR together
      * @param centroidSupplier reads this cluster's centroid and ‖c‖² from {@code .clac}, called at most once and
      *     only if this cluster is actually scanned
-     * @param blockSize vectors per block, the last block excepted
+     * @param ioFetchBytes the field's byte budget for one block; this cluster sizes its own blocks from it, by
+     *     the same arithmetic the writer used, so nothing above it handles a vector count
      * @param dimension the field's vector dimension
      * @param encoding stored code width, which also fixes the packed bytes per vector
      * @param quantizer quantizes the query into the same space as the stored codes
@@ -92,7 +93,7 @@ public class ScalarQuantizedCluster implements Cluster {
         int ordinal,
         int clusterSize,
         IOSupplier<Centroid> centroidSupplier,
-        int blockSize,
+        int ioFetchBytes,
         int dimension,
         ScalarEncoding encoding,
         OptimizedScalarQuantizer quantizer,
@@ -102,11 +103,11 @@ public class ScalarQuantizedCluster implements Cluster {
         this.ordinal = ordinal;
         this.clusterSize = clusterSize;
         this.centroidSupplier = centroidSupplier;
-        this.blockSize = blockSize;
         this.dimension = dimension;
         this.encoding = encoding;
         this.quantizer = quantizer;
         this.similarityFunction = similarityFunction;
+        this.blockSize = ScalarBlockLayout.blockSize(ioFetchBytes, encoding, dimension);
 
         this.headerBytes = (long) clusterSize * Integer.BYTES              // ordinals
             + (long) FixedBitSet.bits2words(clusterSize) * Long.BYTES      // soarBitset

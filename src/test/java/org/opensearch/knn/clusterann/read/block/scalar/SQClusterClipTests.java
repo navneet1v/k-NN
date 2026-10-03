@@ -36,6 +36,11 @@ class SQClusterClipTests {
     private static final int DIMENSION = 64;
     private static final int PACKED_BYTES = ENCODING.getDocPackedLength(DIMENSION);
     private static final int BLOCK_SIZE = 4;
+    /**
+     * The budget that yields exactly {@link #BLOCK_SIZE} vectors: the cluster is handed bytes and derives the
+     * count itself, so a test that wants a known block size has to state it in bytes.
+     */
+    private static final int IO_FETCH_BYTES = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(ENCODING, DIMENSION);
     private static final int CLUSTER_SIZE = 10;
     private static final int CENTROID_ORDINAL = 7;
     private static final String FILE = "posting";
@@ -126,7 +131,7 @@ class SQClusterClipTests {
             CENTROID_ORDINAL,
             CLUSTER_SIZE,
             () -> new Centroid(new float[DIMENSION], 1.0f),
-            BLOCK_SIZE,
+            IO_FETCH_BYTES,
             DIMENSION,
             ENCODING,
             new OptimizedScalarQuantizer(VectorSimilarityFunction.EUCLIDEAN),

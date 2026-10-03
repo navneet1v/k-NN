@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.write.block.scalar;
 
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -33,6 +34,11 @@ class OptimizedScalarQuantizedBlockWriterTest {
     private static final VectorSimilarityFunction METRIC = VectorSimilarityFunction.EUCLIDEAN;
     private static final float[] CENTROID = { 0.5f, 0.5f };
     private static final ScalarEncoding ENCODING = ScalarEncoding.fromNumBits(DOC_BITS);
+    /**
+     * The budget that yields exactly {@link #BLOCK_SIZE} vectors. The writer takes bytes and sizes its own
+     * blocks, so a test wanting a known block shape states it in bytes and lets the layout reach the count.
+     */
+    private static final int IO_FETCH_BYTES = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(ENCODING, DIMENSION);
     private static final int DISCRETE_DIMS = ENCODING.getDiscreteDimensions(DIMENSION);
     private static final int CODE_LENGTH = ENCODING.getDocPackedLength(DISCRETE_DIMS);
 
@@ -80,8 +86,14 @@ class OptimizedScalarQuantizedBlockWriterTest {
     private static void writeToFile(final Directory dir, final float[][] vectors) throws IOException {
         try (IndexOutput out = dir.createOutput("blk", IOContext.DEFAULT)) {
             // clones: the writer centers each vector in place per the writeBlocks contract.
-            new OptimizedScalarQuantizedBlockWriter(out, BLOCK_SIZE, DIMENSION, new OptimizedScalarQuantizer(METRIC), ENCODING, CENTROID)
-                .writeBlocks(FloatVectorValues.fromFloats(Arrays.stream(vectors).map(float[]::clone).toList(), DIMENSION));
+            new OptimizedScalarQuantizedBlockWriter(
+                out,
+                IO_FETCH_BYTES,
+                DIMENSION,
+                new OptimizedScalarQuantizer(METRIC),
+                ENCODING,
+                CENTROID
+            ).writeBlocks(FloatVectorValues.fromFloats(Arrays.stream(vectors).map(float[]::clone).toList(), DIMENSION));
         }
     }
 
@@ -142,12 +154,19 @@ class OptimizedScalarQuantizedBlockWriterTest {
         final ScalarEncoding nibble = ScalarEncoding.PACKED_NIBBLE;
         final int discrete = nibble.getDiscreteDimensions(DIMENSION);
         final int codeLength = nibble.getDocPackedLength(discrete);
+        final int nibbleFetchBytes = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(nibble, DIMENSION);
         final float[][] vectors = { vector(0.25f), vector(-0.5f) };
 
         try (Directory dir = new ByteBuffersDirectory()) {
             try (IndexOutput out = dir.createOutput("nibble", IOContext.DEFAULT)) {
-                new OptimizedScalarQuantizedBlockWriter(out, BLOCK_SIZE, DIMENSION, new OptimizedScalarQuantizer(METRIC), nibble, CENTROID)
-                    .writeBlocks(FloatVectorValues.fromFloats(Arrays.stream(vectors).map(float[]::clone).toList(), DIMENSION));
+                new OptimizedScalarQuantizedBlockWriter(
+                    out,
+                    nibbleFetchBytes,
+                    DIMENSION,
+                    new OptimizedScalarQuantizer(METRIC),
+                    nibble,
+                    CENTROID
+                ).writeBlocks(FloatVectorValues.fromFloats(Arrays.stream(vectors).map(float[]::clone).toList(), DIMENSION));
             }
 
             try (IndexInput in = dir.openInput("nibble", IOContext.DEFAULT)) {
