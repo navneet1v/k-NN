@@ -58,7 +58,6 @@ class ClusterANNFieldMetaWriteTest {
             // Read the raw bytes directly (no ClusterANNFieldMeta.read) to pin the on-disk layout write() emits.
             try (IndexInput in = dir.openInput("meta", IOContext.DEFAULT)) {
                 assertEquals(128, in.readVInt(), "dimension");
-                assertEquals(IO_FETCH_BYTES, in.readVInt(), "ioFetchBytes");
                 assertEquals(100, in.readVInt(), "vectorCount");
                 assertEquals(2, in.readVInt(), "centroidCount");
                 assertEquals((byte) 0, in.readByte(), "similarity code (L2)");
@@ -108,7 +107,6 @@ class ClusterANNFieldMetaWriteTest {
             writeEntry(dir, meta, /* maxDoc, dense */ 40, denseDocs(40));
             try (IndexInput in = dir.openInput("meta", IOContext.DEFAULT)) {
                 assertEquals(64, in.readVInt(), "dimension");
-                assertEquals(IO_FETCH_BYTES, in.readVInt(), "ioFetchBytes");
                 assertEquals(40, in.readVInt(), "vectorCount");
                 assertEquals(1, in.readVInt(), "centroidCount");
                 assertEquals((byte) 1, in.readByte(), "similarity code (maximum inner product)");
@@ -158,7 +156,7 @@ class ClusterANNFieldMetaWriteTest {
         try (Directory dir = new ByteBuffersDirectory()) {
             writeEntry(dir, sparseField(), /* maxDoc */ 10, docs);
             try (ChecksumIndexInput in = dir.openChecksumInput("meta")) {
-                ClusterANNFieldMeta actual = ClusterANNFieldMeta.read(in);
+                ClusterANNFieldMeta actual = ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
                 assertEquals(sparseField(), actual);
                 assertFalse(actual.ordToDoc().isDense(), "not every doc has the vector -> sparse");
                 assertFalse(actual.ordToDoc().isEmpty(), "the field has vectors");
@@ -385,7 +383,7 @@ class ClusterANNFieldMetaWriteTest {
         try (Directory dir = new ByteBuffersDirectory()) {
             writeEntry(dir, meta, maxDoc, docs);
             try (ChecksumIndexInput in = dir.openChecksumInput("meta")) {
-                return ClusterANNFieldMeta.read(in);
+                return ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
             }
         }
     }

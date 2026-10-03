@@ -73,7 +73,7 @@ class ClusterANNFieldMetaTests {
         ClusterANNFieldMeta meta = read(encoder);
 
         // then
-        assertEquals(IO_FETCH_BYTES, meta.ioFetchBytes(), "ioFetchBytes is read from the field's own entry");
+        assertEquals(IO_FETCH_BYTES, meta.ioFetchBytes(), "ioFetchBytes comes from the file header, not the entry");
         assertEquals(16, meta.dimension());
         assertEquals(30, meta.vectorCount());
         assertEquals(3, meta.centroidCount());
@@ -183,7 +183,7 @@ class ClusterANNFieldMetaTests {
 
             // when
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in);
+                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
 
                 // then
                 assertFalse(meta.hasRotation());
@@ -507,7 +507,7 @@ class ClusterANNFieldMetaTests {
         try (Directory directory = new ByteBuffersDirectory()) {
             write(directory, encoder, null);
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                return ClusterANNFieldMeta.read(in);
+                return ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
             }
         }
     }

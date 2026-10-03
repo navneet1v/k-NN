@@ -325,9 +325,10 @@ public class KNN1030ClusterANNVectorsWriterFlushTest extends LuceneTestCase {
                 readSegmentId(dir, file),
                 ""
             );
+            final int ioFetchBytes = meta.readVInt();
             for (int fieldNumber = meta.readInt(); fieldNumber != KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS; fieldNumber = meta
                 .readInt()) {
-                entries.put(fieldNumber, ClusterANNFieldMeta.read(meta));
+                entries.put(fieldNumber, ClusterANNFieldMeta.read(meta, ioFetchBytes));
             }
             CodecUtil.checkFooter(meta);
         }

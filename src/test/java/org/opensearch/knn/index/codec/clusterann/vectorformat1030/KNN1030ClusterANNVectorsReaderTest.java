@@ -70,7 +70,7 @@ class KNN1030ClusterANNVectorsReaderTest {
     private static final String SEGMENT = "_0";
     private static final int FIELD_NUMBER = 0;
     private static final int DIMENSION = 8;
-    private static final int BLOCK_SIZE = 32;
+    private static final int IO_FETCH_BYTES = 32 * 1024;
     private static final int MAX_DOC = 100;
     private static final VectorSimilarityFunction SIMILARITY = VectorSimilarityFunction.EUCLIDEAN;
 
@@ -527,6 +527,7 @@ class KNN1030ClusterANNVectorsReaderTest {
                 state.segmentInfo.getId(),
                 state.segmentSuffix
             );
+            out.writeVInt(IO_FETCH_BYTES);
             out.writeInt(entryFieldNumber);
             entry.write(out);
             out.writeInt(-1);

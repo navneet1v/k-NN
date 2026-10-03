@@ -128,6 +128,8 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
             clac = openOutput(CENTROIDS_EXTENSION, CENTROIDS_CODEC_NAME);
             clap = openOutput(POSTINGS_EXTENSION, POSTINGS_CODEC_NAME);
             // .clar is opened lazily on the first rotated field, so an all-unrotated segment writes none.
+            // One budget for the segment: every field's blocks are cut to the same fetch unit.
+            clam.writeVInt(ioFetchBytes);
             success = true;
         } finally {
             if (!success) {
@@ -346,6 +348,7 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
 
         if (vectors.size() == 0) {
             ClusterANNFieldMeta.empty(
+                ioFetchBytes,
                 dimension,
                 metric,
                 quantizationParams.docBits(),

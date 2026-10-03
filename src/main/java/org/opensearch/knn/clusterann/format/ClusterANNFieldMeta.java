@@ -29,7 +29,6 @@ import org.opensearch.knn.clusterann.format.rotation.RotationScheme;
  *
  * <pre>
  * dimension                    vInt
- * ioFetchBytes                 vInt                     // byte budget of one code block; 0 for an empty field
  * vectorCount                  vInt
  * centroidCount                vInt
  * similarityFunction           byte                     // L2 = 0, IP = 1, cosine = 2
@@ -80,8 +79,6 @@ public final class ClusterANNFieldMeta {
     private static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
     /** Sentinel for a rotation offset/length that is absent on an unrotated field. */
     private static final long NO_ROTATION = -1L;
-    /** Budget of an empty field, which has no postings and so no blocks to size. */
-    private static final int NO_BLOCKS = 0;
 
     private final int ioFetchBytes;
     private final int dimension;
@@ -186,6 +183,7 @@ public final class ClusterANNFieldMeta {
      * the region offsets pointing at the current (empty) positions. It is written like any other entry so the
      * reader opens it uniformly; {@link #isEmpty()} then short-circuits before any region is consulted.
      *
+     * @param ioFetchBytes       the segment's block byte budget, shared by every field
      * @param dimension          the field's vector dimension
      * @param similarityFunction the field's similarity function
      * @param docBits            the doc-side quantization bit width
@@ -194,6 +192,7 @@ public final class ClusterANNFieldMeta {
      * @param clapOffset         the current {@code .clap} position (this field writes no postings)
      */
     public static ClusterANNFieldMeta empty(
+        int ioFetchBytes,
         int dimension,
         VectorSimilarityFunction similarityFunction,
         int docBits,
@@ -202,7 +201,7 @@ public final class ClusterANNFieldMeta {
         long clapOffset
     ) {
         return new ClusterANNFieldMeta(
-            NO_BLOCKS,
+            ioFetchBytes,
             dimension,
             0,
             0,
@@ -230,12 +229,12 @@ public final class ClusterANNFieldMeta {
      * Reads one field's entry from {@code meta}, positioned just past the field number.
      *
      * @param meta the metadata input, advanced past this entry on return
+     * @param ioFetchBytes the block byte budget from the file header, shared by every field
      * @throws CorruptIndexException if the entry describes a field that cannot exist
      * @throws CorruptIndexException if the entry describes a field that cannot exist
      */
-    public static ClusterANNFieldMeta read(ChecksumIndexInput meta) throws IOException {
+    public static ClusterANNFieldMeta read(ChecksumIndexInput meta, int ioFetchBytes) throws IOException {
         int dimension = meta.readVInt();
-        int ioFetchBytes = meta.readVInt();
         int vectorCount = meta.readVInt();
         int centroidCount = meta.readVInt();
         VectorSimilarityFunction similarityFunction = similarityFunction(meta.readByte(), meta);
@@ -246,7 +245,7 @@ public final class ClusterANNFieldMeta {
         byte[] quantizerParams = readQuantizerParams(meta);
 
         // The counts have to make sense before anything derived from them is read.
-        checkShape(meta, dimension, ioFetchBytes, vectorCount, centroidCount);
+        checkShape(meta, dimension, vectorCount, centroidCount);
 
         // Centroid geometry. Rotated centroids exist only for a rotated field; otherwise they would be the
         // centroids already located by clacCentroidsOffset, so the entry does not carry the offset at all.
@@ -310,7 +309,8 @@ public final class ClusterANNFieldMeta {
 
     /**
      * Writes this entry to {@code .clam} in the exact byte layout {@link #read} consumes (documented at the
-     * class level), positioned just past the field number (which the caller writes).
+     * class level), positioned just past the field number (which the caller writes). {@code ioFetchBytes} is a
+     * file-header field shared by every entry, so it is not written here.
      *
      * <p>The entry closes with the ord&rarr;doc mapping via the stock {@link OrdToDocDISIReaderConfiguration}:
      * its config is appended here to {@code meta}, and — for a sparse field — its {@code IndexedDISI} +
@@ -327,7 +327,6 @@ public final class ClusterANNFieldMeta {
      */
     public void write(IndexOutput meta, IndexOutput data, int maxDoc, DocsWithFieldSet docsWithField) throws IOException {
         meta.writeVInt(dimension);
-        meta.writeVInt(ioFetchBytes);
         meta.writeVInt(vectorCount);
         meta.writeVInt(centroidCount);
         meta.writeByte(similarityCode(similarityFunction));
@@ -439,16 +438,12 @@ public final class ClusterANNFieldMeta {
      * A cluster needs at least one vector, so {@code centroidCount} can never exceed {@code vectorCount}.
      * Checking that here also bounds the three arrays sized by it.
      */
-    private static void checkShape(ChecksumIndexInput meta, int dimension, int ioFetchBytes, int vectorCount, int centroidCount)
-        throws IOException {
+    private static void checkShape(ChecksumIndexInput meta, int dimension, int vectorCount, int centroidCount) throws IOException {
         if (dimension <= 0) {
             throw new CorruptIndexException("Dimension must be positive, got: " + dimension, meta);
         }
         if (vectorCount < 0) {
             throw new CorruptIndexException("Negative vectorCount: " + vectorCount, meta);
-        }
-        if (ioFetchBytes < 0 || (vectorCount > 0 && ioFetchBytes == NO_BLOCKS)) {
-            throw new CorruptIndexException("ioFetchBytes must be positive for a field with vectors, got: " + ioFetchBytes, meta);
         }
         if (centroidCount < 0 || centroidCount > vectorCount) {
             throw new CorruptIndexException("centroidCount must be in [0, " + vectorCount + "], got: " + centroidCount, meta);
