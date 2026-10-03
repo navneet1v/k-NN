@@ -155,6 +155,7 @@ class KNN1030ClusterANNVectorsWriterTest {
                 state.segmentInfo.getId(),
                 state.segmentSuffix
             );
+            assertEquals(KNN1030ClusterANNVectorsFormat.DEFAULT_IO_FETCH_BYTES, meta.readVInt(), "segment-level block budget");
             assertEquals(KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS, meta.readInt(), "no field entries yet");
             CodecUtil.checkFooter(meta);
         }

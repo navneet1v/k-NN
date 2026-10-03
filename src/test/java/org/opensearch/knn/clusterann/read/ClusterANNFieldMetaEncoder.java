@@ -206,7 +206,6 @@ public final class ClusterANNFieldMetaEncoder {
     /** Writes the entry, in the order {@link ClusterANNFieldMeta#read} reads it. */
     public void write(DataOutput out) throws IOException {
         out.writeVInt(dimension);
-        out.writeVInt(ioFetchBytes);
         out.writeVInt(vectorCount);
         out.writeVInt(declaredCentroidCount == null ? centroidCount : declaredCentroidCount);
         out.writeByte(similarityFunction);
