@@ -10,6 +10,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.IOSupplier;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.opensearch.knn.clusterann.format.block.BlockPostingsPruner;
@@ -63,8 +64,8 @@ public class ScalarQuantizedCluster implements Cluster {
 
     /**
      * The header's {@code sortedDistances}: {@code ‖c−v‖²} per member, parallel to {@link #ordinals}. Read only
-     * where a pruner can use it — the similarity whose member order makes it a bound — and {@code null}
-     * otherwise. What a block's worth of it means is {@link EuclideanClipPruner}'s business, not this class's.
+     * where a pruner can use it — the similarities whose member order makes it a bound — and {@code null}
+     * otherwise. What a block's worth of it means is the pruner's business, not this class's.
      */
     private float[] sortedDistances;
 
@@ -153,14 +154,44 @@ public class ScalarQuantizedCluster implements Cluster {
 
     /**
      * Pruning on how far this cluster's members sit from its centroid, which only bounds anything where the
-     * members are ordered by that distance — {@code correction()} is {@code ‖q−c‖²} on the same similarity.
+     * members are ordered by that distance. Which bound that is, and what {@code correction()} holds, both
+     * follow from the similarity:
+     *
+     * <ul>
+     *   <li><b>EUCLIDEAN</b> — {@code correction()} is {@code ‖q−c‖²}, members are nearest-first, and the
+     *       bound is a V-shaped floor that skips on one arm and terminates on the other.
+     *   <li><b>MAXIMUM_INNER_PRODUCT</b> — {@code correction()} is {@code ⟨q,c⟩}, members are farthest-first,
+     *       and the bound is a ceiling that only falls along the walk, so it terminates and never skips.
+     * </ul>
+     *
+     * <p>Anything else prunes nothing: {@link #sortedDistances} is only read where the member order makes it a
+     * bound, so there is nothing here to bound with.
      */
     private BlockPostingsPruner clipPruner(final SQScanContext scanContext) {
         // TODO: return NONE for sparse filters as well so recall doesn't drop
         if (sortedDistances == null) {
             return BlockPostingsPruner.NONE;
         }
-        return new EuclideanClipPruner(sortedDistances, blockSize, (float) Math.sqrt(Math.max(0f, scanContext.correction())));
+        return switch (similarityFunction) {
+            case EUCLIDEAN -> new EuclideanClipPruner(
+                sortedDistances,
+                blockSize,
+                (float) Math.sqrt(Math.max(0f, scanContext.correction()))
+            );
+            // correction() is ⟨q,c⟩ here, and ‖q‖ turns a shell's radius into the most its residual can add.
+            case MAXIMUM_INNER_PRODUCT -> new MaximumInnerProductClipPruner(
+                sortedDistances,
+                blockSize,
+                scanContext.correction(),
+                queryNorm(scanContext.query())
+            );
+            default -> BlockPostingsPruner.NONE;
+        };
+    }
+
+    /** {@code ‖q‖}, from the query as it arrived — the same space the stored residuals were measured in. */
+    private static float queryNorm(final float[] query) {
+        return (float) Math.sqrt(VectorUtil.dotProduct(query, query));
     }
 
     /**
@@ -250,7 +281,9 @@ public class ScalarQuantizedCluster implements Cluster {
         int[] readOrdinals = new int[clusterSize];
         posting.readInts(readOrdinals, 0, clusterSize);
 
-        if (similarityFunction == VectorSimilarityFunction.EUCLIDEAN) {
+        // Read only where the member order makes it a bound: ascending for L2, descending for inner product.
+        if (similarityFunction == VectorSimilarityFunction.EUCLIDEAN
+            || similarityFunction == VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT) {
             sortedDistances = readSortedDistances();
         }
 
