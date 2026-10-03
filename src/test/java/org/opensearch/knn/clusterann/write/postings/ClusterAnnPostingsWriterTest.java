@@ -5,6 +5,8 @@
 
 package org.opensearch.knn.clusterann.write.postings;
 
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -46,6 +48,11 @@ class ClusterAnnPostingsWriterTest {
     private static final int DOC_BITS = 1;
     private static final VectorSimilarityFunction METRIC = VectorSimilarityFunction.EUCLIDEAN;
     private static final ScalarEncoding ENCODING = ScalarEncoding.fromNumBits(DOC_BITS);
+    /**
+     * The budget that yields exactly {@link #BLOCK_SIZE} vectors. The writer is handed bytes and the block
+     * layout derives the count, so a test wanting a known block shape has to state it in bytes.
+     */
+    private static final int IO_FETCH_BYTES = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(ENCODING, DIMENSION);
     private static final int DISCRETE_DIMS = ENCODING.getDiscreteDimensions(DIMENSION);
     private static final int CODE_LENGTH = ENCODING.getDocPackedLength(DISCRETE_DIMS);
 
@@ -69,12 +76,8 @@ class ClusterAnnPostingsWriterTest {
         final PostingsRegions layout;
         try (Directory dir = new ByteBuffersDirectory()) {
             try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                layout = new ClusterAnnPostingsWriter(BLOCK_SIZE, quantization(), RotationFormats.create(ROTATION_NONE, DIMENSION)).write(
-                    out,
-                    clustering(),
-                    source(),
-                    METRIC
-                );
+                layout = new ClusterAnnPostingsWriter(IO_FETCH_BYTES, quantization(), RotationFormats.create(ROTATION_NONE, DIMENSION))
+                    .write(out, clustering(), source(), METRIC);
             }
 
             // Two clusters were written: two distinct, non-empty regions laid out back to back, together
@@ -128,7 +131,7 @@ class ClusterAnnPostingsWriterTest {
         final PostingsRegions layout;
         try (Directory dir = new ByteBuffersDirectory()) {
             try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                layout = new ClusterAnnPostingsWriter(BLOCK_SIZE, quantization(), rotation).write(out, clustering(), source(), METRIC);
+                layout = new ClusterAnnPostingsWriter(IO_FETCH_BYTES, quantization(), rotation).write(out, clustering(), source(), METRIC);
             }
 
             final float[][] rotatedVectors = new float[VECTORS.length][];

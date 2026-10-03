@@ -33,32 +33,33 @@ import java.io.IOException;
  *   ordinals                    clusterSize x int              one int per member, in array order
  *   secondaryAssignmentBitSet   bits2words(clusterSize) x long bit i set =&gt; ordinals[i] is a spill member
  *   distances                   clusterSize x float            parallel to ordinals
- *   code blocks                 SoA blocks of blockSize        (see OptimizedScalarQuantizedBlockWriter)
+ *   code blocks                 SoA blocks sized by the budget (see OptimizedScalarQuantizedBlockWriter)
  * </pre>
  */
 public final class OptimizedScalarQuantizedClusterWriter implements ClusterWriter {
 
-    private final int blockSize;
+    private final int ioFetchBytes;
     private final int dimension;
     private final OptimizedScalarQuantizer quantizer;
     private final ScalarEncoding encoding;
     private final float[] centroid;
 
     /**
-     * @param blockSize vectors per code block
+     * @param ioFetchBytes the byte budget of one code block, handed to the block writer as it stands; what it
+     *     works out to in vectors is that writer's business, since it is the one that knows what a vector costs
      * @param dimension the field's vector dimension
      * @param metric    the field's similarity function, driving the scalar quantizer
      * @param docBits   bits per quantized coordinate, driving the scalar code width
      * @param centroid  this cluster's centre, already rotation-prepared, that members are quantized against
      */
     public OptimizedScalarQuantizedClusterWriter(
-        final int blockSize,
+        final int ioFetchBytes,
         final int dimension,
         final VectorSimilarityFunction metric,
         final int docBits,
         final float[] centroid
     ) {
-        this.blockSize = blockSize;
+        this.ioFetchBytes = ioFetchBytes;
         this.dimension = dimension;
         this.quantizer = ScalarQuantizers.forSimilarity(metric);
         this.encoding = ScalarEncoding.fromNumBits(docBits);
@@ -78,7 +79,7 @@ public final class OptimizedScalarQuantizedClusterWriter implements ClusterWrite
         final long start = out.getFilePointer();
 
         writeHeader(out, members);
-        new OptimizedScalarQuantizedBlockWriter(out, blockSize, dimension, quantizer, encoding, centroid).writeBlocks(vectors);
+        new OptimizedScalarQuantizedBlockWriter(out, ioFetchBytes, dimension, quantizer, encoding, centroid).writeBlocks(vectors);
 
         return new ClusterRegion(start, out.getFilePointer() - start);
     }

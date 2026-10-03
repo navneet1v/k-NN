@@ -28,12 +28,12 @@ import java.io.IOException;
  */
 public final class ClusterAnnPostingsWriter implements PostingsWriter {
 
-    private final int blockSize;
+    private final int ioFetchBytes;
     private final QuantizationParams quantizationParams;
     private final Rotation rotation;
 
-    public ClusterAnnPostingsWriter(final int blockSize, final QuantizationParams quantizationParams, final Rotation rotation) {
-        this.blockSize = blockSize;
+    public ClusterAnnPostingsWriter(final int ioFetchBytes, final QuantizationParams quantizationParams, final Rotation rotation) {
+        this.ioFetchBytes = ioFetchBytes;
         this.quantizationParams = quantizationParams;
         this.rotation = rotation;
     }
@@ -94,7 +94,7 @@ public final class ClusterAnnPostingsWriter implements PostingsWriter {
         final float[] preparedCentroid = rotateCentroid(rotation, centroid, dimension);
         final ClusterWriter clusterWriter = ClusterWriterFactory.newWriter(
             quantizationParams,
-            blockSize,
+            ioFetchBytes,
             dimension,
             metric,
             preparedCentroid

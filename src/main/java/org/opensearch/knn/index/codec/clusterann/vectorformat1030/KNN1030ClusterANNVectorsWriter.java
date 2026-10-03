@@ -50,7 +50,6 @@ import java.util.Optional;
 
 import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.CENTROIDS_CODEC_NAME;
 import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.CENTROIDS_EXTENSION;
-import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.DEFAULT_BLOCK_SIZE;
 import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.META_CODEC_NAME;
 import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.META_EXTENSION;
 import static org.opensearch.knn.index.codec.clusterann.vectorformat1030.KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS;
@@ -85,6 +84,7 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
 
     private final SegmentWriteState segmentWriteState;
     private final QuantizationParams quantizationParams;
+    private final int ioFetchBytes;
     private final FlatVectorsFormat rawFlatVectorsFormat;
     private final FlatVectorsWriter rawFlatVectorsWriter;
     private final List<FieldEntry> fields = new ArrayList<>();
@@ -109,14 +109,17 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
      * @param rawFlatVectorsFormat delegate flat-vectors format; supplies the writer that persists the raw
      *     vectors and, on merge, the reader reopened over them
      * @param quantizationParams         the encoding (backend + bit width) to quantize each field with
+     * @param ioFetchBytes               the byte budget of one code block, recorded per field in {@code .clam}
      */
     public KNN1030ClusterANNVectorsWriter(
         final SegmentWriteState segmentWriteState,
         final FlatVectorsFormat rawFlatVectorsFormat,
-        final QuantizationParams quantizationParams
+        final QuantizationParams quantizationParams,
+        final int ioFetchBytes
     ) throws IOException {
         this.rawFlatVectorsFormat = rawFlatVectorsFormat;
         this.quantizationParams = quantizationParams;
+        this.ioFetchBytes = ioFetchBytes;
         this.segmentWriteState = segmentWriteState;
         boolean success = false;
         try {
@@ -125,7 +128,6 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
             clac = openOutput(CENTROIDS_EXTENSION, CENTROIDS_CODEC_NAME);
             clap = openOutput(POSTINGS_EXTENSION, POSTINGS_CODEC_NAME);
             // .clar is opened lazily on the first rotated field, so an all-unrotated segment writes none.
-            clam.writeVInt(DEFAULT_BLOCK_SIZE);
             success = true;
         } finally {
             if (!success) {
@@ -344,7 +346,6 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
 
         if (vectors.size() == 0) {
             ClusterANNFieldMeta.empty(
-                DEFAULT_BLOCK_SIZE,
                 dimension,
                 metric,
                 quantizationParams.docBits(),
@@ -365,7 +366,7 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
         final ClusteringResult clusters = ClusterBuilder.build(vectors, metric, executor);
         log.debug("field [{}]: clustered into {} centroid(s)", name, clusters.numCentroids());
 
-        final PostingsRegions postings = new ClusterAnnPostingsWriter(DEFAULT_BLOCK_SIZE, quantizationParams, rotation).write(
+        final PostingsRegions postings = new ClusterAnnPostingsWriter(ioFetchBytes, quantizationParams, rotation).write(
             clap,
             clusters,
             vectors,
@@ -376,7 +377,7 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
         final long clacLength = clac.getFilePointer() - centroids.clacOffset();
 
         final ClusterANNFieldMeta meta = new ClusterANNFieldMeta(
-            DEFAULT_BLOCK_SIZE,
+            ioFetchBytes,
             dimension,
             vectors.size(),
             clusters.numCentroids(),

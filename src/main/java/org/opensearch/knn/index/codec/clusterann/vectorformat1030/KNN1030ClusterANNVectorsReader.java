@@ -102,8 +102,7 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
                     state.segmentInfo.getId(),
                     state.segmentSuffix
                 );
-                int blockSize = meta.readVInt();
-                readFieldMetadata(meta, blockSize);
+                readFieldMetadata(meta);
             } catch (Throwable exception) {
                 priorE = exception;
             } finally {
@@ -311,13 +310,13 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
         IOUtils.close(rawFlatVectorsReader, postings, centroids, rotation);
     }
 
-    private void readFieldMetadata(ChecksumIndexInput meta, int blockSize) throws IOException {
+    private void readFieldMetadata(ChecksumIndexInput meta) throws IOException {
         for (int fieldNumber = meta.readInt(); fieldNumber != KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS; fieldNumber = meta.readInt()) {
             FieldInfo info = fieldInfos.fieldInfo(fieldNumber);
             if (info == null) {
                 throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
             }
-            final ClusterANNFieldMeta field = ClusterANNFieldMeta.read(meta, blockSize);
+            final ClusterANNFieldMeta field = ClusterANNFieldMeta.read(meta);
             validateFieldEntry(info, field, segmentReadState.segmentInfo.maxDoc(), meta);
             if (!field.isEmpty()) {
                 fields.put(fieldNumber, field);

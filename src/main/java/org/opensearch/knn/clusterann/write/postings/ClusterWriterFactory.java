@@ -24,21 +24,21 @@ public final class ClusterWriterFactory {
      * Returns the cluster writer for {@code quantizationParams}'s backend, bound to one cluster's {@code centroid}.
      *
      * @param quantizationParams the field's encoding and code width
-     * @param blockSize    vectors per code block
+     * @param ioFetchBytes the byte budget of one code block, handed to the block layout as it stands
      * @param dimension    the field's vector dimension
      * @param metric       the field's similarity function, used to build the quantizer
      * @param centroid     this cluster's centre, already rotation-prepared, that members are quantized against
      */
     public static ClusterWriter newWriter(
         final QuantizationParams quantizationParams,
-        final int blockSize,
+        final int ioFetchBytes,
         final int dimension,
         final VectorSimilarityFunction metric,
         final float[] centroid
     ) {
         return switch (quantizationParams.encoding()) {
             case OPTIMIZED_SCALAR_QUANTIZATION -> new OptimizedScalarQuantizedClusterWriter(
-                blockSize,
+                ioFetchBytes,
                 dimension,
                 metric,
                 quantizationParams.docBits(),

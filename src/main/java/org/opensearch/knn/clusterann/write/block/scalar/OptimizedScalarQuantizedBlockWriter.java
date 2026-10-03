@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.write.block.scalar;
 
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.store.IndexOutput;
@@ -76,27 +77,26 @@ public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFor
 
     public OptimizedScalarQuantizedBlockWriter(
         final IndexOutput out,
-        final int blockSize,
+        final int ioFetchBytes,
         final int dimension,
         final OptimizedScalarQuantizer quantizer,
         final ScalarEncoding encoding,
         final float[] centroid
     ) {
         this.out = out;
-        this.blockSize = blockSize;
         this.dimension = dimension;
         this.quantizer = quantizer;
         this.encoding = encoding;
         this.centroid = centroid;
+        // The budget is resolved here because this is what knows a vector's cost: the layout below is this
+        // class's own, so nothing above it has to agree about how many vectors a block holds.
+        this.blockSize = ScalarBlockLayout.blockSize(ioFetchBytes, encoding, dimension);
         this.lower = new float[blockSize];
         this.upper = new float[blockSize];
         this.add = new float[blockSize];
         this.sum = new int[blockSize];
         this.quantized = new byte[encoding.getDiscreteDimensions(dimension)];
-        this.packed = switch (encoding) {
-            case SINGLE_BIT_QUERY_NIBBLE, DIBIT_QUERY_NIBBLE, PACKED_NIBBLE -> new byte[encoding.getDocPackedLength(quantized.length)];
-            default -> throw new UnsupportedOperationException(UNSUPPORTED_ENCODING + encoding);
-        };
+        this.packed = new byte[ScalarBlockLayout.packedLength(encoding, dimension)];
         this.codeLength = packed.length;
         this.codes = new byte[blockSize * codeLength];
     }

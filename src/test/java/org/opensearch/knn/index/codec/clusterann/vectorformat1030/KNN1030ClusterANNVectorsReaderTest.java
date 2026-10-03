@@ -527,7 +527,6 @@ class KNN1030ClusterANNVectorsReaderTest {
                 state.segmentInfo.getId(),
                 state.segmentSuffix
             );
-            out.writeVInt(BLOCK_SIZE);
             out.writeInt(entryFieldNumber);
             entry.write(out);
             out.writeInt(-1);

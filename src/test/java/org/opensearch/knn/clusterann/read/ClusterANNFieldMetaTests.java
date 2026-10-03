@@ -44,7 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ClusterANNFieldMetaTests {
 
-    private static final int BLOCK_SIZE = 32;
+    /** An arbitrary positive budget: these tests round-trip the recorded value, not what it sizes. */
+    private static final int IO_FETCH_BYTES = 32 * 1024;
 
     // ---------------------------------------------------------------- round trip
 
@@ -72,7 +73,7 @@ class ClusterANNFieldMetaTests {
         ClusterANNFieldMeta meta = read(encoder);
 
         // then
-        assertEquals(BLOCK_SIZE, meta.blockSize(), "blockSize comes from the file header, not the entry");
+        assertEquals(IO_FETCH_BYTES, meta.ioFetchBytes(), "ioFetchBytes is read from the field's own entry");
         assertEquals(16, meta.dimension());
         assertEquals(30, meta.vectorCount());
         assertEquals(3, meta.centroidCount());
@@ -182,7 +183,7 @@ class ClusterANNFieldMetaTests {
 
             // when
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in, BLOCK_SIZE);
+                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in);
 
                 // then
                 assertFalse(meta.hasRotation());
@@ -506,7 +507,7 @@ class ClusterANNFieldMetaTests {
         try (Directory directory = new ByteBuffersDirectory()) {
             write(directory, encoder, null);
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                return ClusterANNFieldMeta.read(in, BLOCK_SIZE);
+                return ClusterANNFieldMeta.read(in);
             }
         }
     }
@@ -532,7 +533,7 @@ class ClusterANNFieldMetaTests {
         long clarLength
     ) {
         return new ClusterANNFieldMeta(
-            BLOCK_SIZE,
+            IO_FETCH_BYTES,
             8,
             30,
             centroidCount,

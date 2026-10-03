@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.clusterann.write.postings;
 
+import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -52,8 +53,14 @@ class OptimizedScalarQuantizedClusterWriterTest {
     private static final int DISCRETE_DIMS = ENCODING.getDiscreteDimensions(DIMENSION);
     private static final int CODE_LENGTH = ENCODING.getDocPackedLength(DISCRETE_DIMS);
 
+    /**
+     * A writer whose blocks hold exactly {@code blockSize} vectors. The writer takes a byte budget and sizes its
+     * own blocks, so a test that wants a known block shape states it in bytes and lets the layout arrive back at
+     * the count.
+     */
     private static OptimizedScalarQuantizedClusterWriter writer(final int blockSize, final float[] centroid) {
-        return new OptimizedScalarQuantizedClusterWriter(blockSize, DIMENSION, METRIC, DOC_BITS, centroid);
+        final int ioFetchBytes = blockSize * ScalarBlockLayout.bytesPerVector(ScalarEncoding.fromNumBits(DOC_BITS), DIMENSION);
+        return new OptimizedScalarQuantizedClusterWriter(ioFetchBytes, DIMENSION, METRIC, DOC_BITS, centroid);
     }
 
     @ParameterizedTest(name = "count={0}, blockSize={1}")

@@ -86,7 +86,12 @@ class KNN1030ClusterANNVectorsWriterTest {
             IOContext.DEFAULT
         );
         when(rawFormat.fieldsWriter(state)).thenReturn(raw);
-        writer = new KNN1030ClusterANNVectorsWriter(state, rawFormat, QuantizationParams.DEFAULT);
+        writer = new KNN1030ClusterANNVectorsWriter(
+            state,
+            rawFormat,
+            QuantizationParams.DEFAULT,
+            KNN1030ClusterANNVectorsFormat.DEFAULT_IO_FETCH_BYTES
+        );
     }
 
     @AfterEach
@@ -150,7 +155,6 @@ class KNN1030ClusterANNVectorsWriterTest {
                 state.segmentInfo.getId(),
                 state.segmentSuffix
             );
-            assertEquals(32, meta.readVInt());
             assertEquals(KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS, meta.readInt(), "no field entries yet");
             CodecUtil.checkFooter(meta);
         }
