@@ -364,6 +364,68 @@ class BlockPostingScorerTests {
         }
     }
 
+    // ---------------------------------------------------------------- the code-read gate
+
+    /**
+     * A block whose ceiling cannot reach the bar costs its corrections and nothing else: positioned on,
+     * fetched, never read. That is the whole point of the gate — the codes are the bulk of a block.
+     */
+    @Test
+    void testAdvance_whenNoVectorInABlockCanReachTheBar_thenNeverReadsItsCodes() throws IOException {
+        // given — every block's ceiling is below the bar the drain is run at
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, BlockPostingsPruner.NONE, 0.2f);
+
+        // when
+        List<Hit> hits = drain(scan, 0.5f);
+
+        // then
+        List<Integer> everyBlock = blocksUpTo(ORDINALS.length);
+        RecordingBlockReader expectedReader = readerThatSaw(ORDINALS.length).advanced(everyBlock)
+            .fetched(everyBlock)
+            .prefetched(blocksAfterFirst(ORDINALS.length))
+            .reader();
+
+        assertEquals(List.of(), hits, "nothing could compete, so nothing is handed out");
+        assertEquals(expectedReader, scan.reader, "every block fetched, none read");
+        assertEquals((long) everyBlock.size(), ClusterANNQueryValue.CODE_READS_SKIPPED.getValue());
+        assertEquals((long) everyBlock.size(), ClusterANNQueryValue.BLOCKS_FETCHED.getValue(), "a gated block still counts as fetched");
+        assertEquals(0L, ClusterANNQueryValue.VECTORS_SCORED.getValue(), "a gated block scores nothing");
+    }
+
+    /** A ceiling above the bar decides nothing, so the walk reads and scores exactly as it would without one. */
+    @Test
+    void testAdvance_whenTheCeilingClearsTheBar_thenReadsTheCodes() throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, BlockPostingsPruner.NONE, 1.0f);
+
+        // when
+        List<Hit> hits = drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(hitsAt(ORDINALS, SCORES, positionsUpTo(ORDINALS.length)), hits);
+        assertEquals(0L, ClusterANNQueryValue.CODE_READS_SKIPPED.getValue());
+        assertEquals((long) ORDINALS.length, ClusterANNQueryValue.VECTORS_SCORED.getValue());
+    }
+
+    /**
+     * The gate is a ceiling, so equality gates: the scan keeps a block only on a score strictly above the bar,
+     * and a block whose best possible score merely ties it cannot produce one.
+     */
+    @Test
+    void testAdvance_whenTheCeilingExactlyTiesTheBar_thenStillSkipsTheCodes() throws IOException {
+        // given
+        resetStats();
+        Scan scan = scanOver(ORDINALS, SCORES, null, BlockPostingsPruner.NONE, 0.5f);
+
+        // when
+        drain(scan, 0.5f);
+
+        // then
+        assertEquals((long) numBlocks(ORDINALS.length), ClusterANNQueryValue.CODE_READS_SKIPPED.getValue());
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private record Hit(int ord, float score) {
@@ -378,8 +440,14 @@ class BlockPostingScorerTests {
     }
 
     private static Scan scanOver(int[] ordinals, float[] scores, Bits acceptedOrds, BlockPostingsPruner pruner) {
+        return scanOver(ordinals, scores, acceptedOrds, pruner, Float.POSITIVE_INFINITY);
+    }
+
+    /** As above, with the scorer reporting {@code ceiling} for every block, to drive the code-read gate. */
+    private static Scan scanOver(int[] ordinals, float[] scores, Bits acceptedOrds, BlockPostingsPruner pruner, float ceiling) {
         RecordingBlockReader reader = new RecordingBlockReader(ordinals.length, BLOCK_SIZE);
-        BlockVectorScorer blockScorer = new TableScorer(reader, scores);
+        TableScorer blockScorer = new TableScorer(reader, scores);
+        blockScorer.ceiling = ceiling;
         return new Scan(new BlockPostingScorer(blockScorer, ordinals, acceptedOrds, pruner), reader);
     }
 
@@ -623,6 +691,12 @@ class BlockPostingScorerTests {
         private final RecordingBlockReader reader;
         private final float[] scoreByPosition;
 
+        /**
+         * What {@link #blockCeiling} reports. Infinity by default — "cannot bound" — so a case that is not
+         * about the ceiling gate behaves as though there were none.
+         */
+        private float ceiling = Float.POSITIVE_INFINITY;
+
         private TableScorer(RecordingBlockReader reader, float[] scoreByPosition) {
             this.reader = reader;
             this.scoreByPosition = scoreByPosition;
@@ -631,6 +705,13 @@ class BlockPostingScorerTests {
         @Override
         public BlockVectorFormat.Reader reader() {
             return reader;
+        }
+
+        @Override
+        public float blockCeiling(FixedBitSet validPos) {
+            assertTrue(reader.fetched, "blockCeiling() before fetchBlock()");
+            assertFalse(reader.loaded, "blockCeiling() must be answerable without the codes");
+            return ceiling;
         }
 
         @Override

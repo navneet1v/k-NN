@@ -39,6 +39,24 @@ public interface BlockVectorScorer {
      */
     float scoreBlock(FixedBitSet validPos, BlockCandidates out);
 
+    /**
+     * The most any position set in {@code validPos} could score, from the current block's corrective terms
+     * alone — so a caller can decide whether the codes are worth reading at all.
+     *
+     * <p>This is the one bound in the scan that costs part of a block to compute and is still worth it: the
+     * corrections sit ahead of the codes and are a few percent of the bytes, so a block ruled out here saves
+     * nearly all of its I/O. A {@code BlockPostingsPruner} cannot do this, because its contract is to read
+     * nothing.
+     *
+     * <p>It is also the only bound here that needs no quantization margin. A geometric bound is exact and has
+     * to be compared against an approximate threshold; this ceiling is on the <em>estimate</em> the scorer
+     * would produce, which is the same kind of number as the threshold it is compared with.
+     *
+     * <p>Must be an over-estimate: a ceiling below a score the block can actually produce would drop a hit.
+     * {@link Float#POSITIVE_INFINITY} is the correct answer for an implementation that cannot bound.
+     */
+    float blockCeiling(FixedBitSet validPos);
+
     /** Scores from one block, in ascending position order. A caller-owned buffer the scorer fills. */
     @Getter
     @Setter

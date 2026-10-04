@@ -117,10 +117,19 @@ public class BlockPostingScorer implements PostingScorer {
             if (validPos.cardinality() != 0) {
                 reader.fetchBlock();
                 ClusterANNQueryValue.BLOCKS_FETCHED.increment();
+
+                // The corrections are in hand and the codes are not, which is the one point where a bound can
+                // still save almost the whole block. Checked here rather than in a pruner because a pruner
+                // promises to read nothing, and this had to read the prefix to say anything at all.
+                if (scorer.blockCeiling(validPos) <= minCompetitiveSimilarity) {
+                    ClusterANNQueryValue.CODE_READS_SKIPPED.increment();
+                    continue;
+                }
+
                 reader.readBlockVectors();
 
                 float maxScore = scorer.scoreBlock(validPos, candidates);
-                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(validPos.cardinality());
+                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(candidates.getSize());
                 scoredBlockVectorOffset = postingVectorOffset;
                 cursor = 0;
                 if (maxScore > minCompetitiveSimilarity) {

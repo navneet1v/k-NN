@@ -167,6 +167,81 @@ public class ScalarQuantizedBlockScorer implements BlockVectorScorer {
         return Int4DotProduct.nibble(quantizedQuery.transposed(), codes, offset, packedBytes);
     }
 
+    /**
+     * The ceiling over the block's corrective terms, with only the code dot product left unknown.
+     *
+     * <p>Of the four terms the estimate is assembled from, three are already exact here: {@code lower} and
+     * {@code upper} give the document's interval, {@code sum} gives {@code Σᵢaᵢ}, and the query contributes
+     * {@code Σᵢbᵢ} and its own interval. Only {@code Σᵢaᵢbᵢ} needs the codes, and it is bounded two ways —
+     * all of the document's code mass landing on the query's largest component, or the reverse — so the
+     * smaller of the two is used.
+     *
+     * <p>That is the loose part: it assumes an alignment between query and document codes that a real pair
+     * almost never has, so this ceiling sits well above what the block will really score. Sound, but how often
+     * it is low enough to act on is an empirical question, which is what the skip counter measures.
+     */
+    @Override
+    public float blockCeiling(final FixedBitSet validPos) {
+        if (validPos == null) {
+            throw new IllegalArgumentException("validPos must not be null");
+        }
+
+        final float[] lower = reader.lower();
+        final float[] upper = reader.upper();
+        final float[] addCor = reader.addCor();
+        final int[] sum = reader.sum();
+
+        final float qLower = quantizedQuery.lower();
+        final float qScale = quantizedQuery.scale();
+        final float qComponentSum = quantizedQuery.componentSum();
+        final float qLowerDim = qLower * dimension;
+        final float qScaleCompSum = qScale * qComponentSum;
+        final float centroidDotProductMinusNorm = quantizedQuery.correction() - quantizedQuery.centroidNormSq();
+
+        // Largest value a single code can take on each side, which is what caps the unknown dot product.
+        final int maxDocCode = (1 << docBits) - 1;
+        final int maxQueryCode = (1 << quantizedQuery.queryBitsPerDimension()) - 1;
+
+        float ceiling = Float.NEGATIVE_INFINITY;
+        int index = validPos.nextSetBit(0);
+        while (index != DocIdSetIterator.NO_MORE_DOCS) {
+            final float docScale = (upper[index] - lower[index]) * step();
+            // Σᵢaᵢbᵢ ≤ Σᵢaᵢ · max(b), and ≤ max(a) · Σᵢbᵢ; neither needs a code read.
+            final float maxRawDot = Math.min((float) sum[index] * maxQueryCode, (float) maxDocCode * qComponentSum);
+
+            final float maxScore = lower[index] * qLowerDim + qLower * docScale * sum[index] + lower[index] * qScaleCompSum + docScale
+                * qScale * maxRawDot;
+
+            ceiling = Math.max(ceiling, similarityCeiling(maxScore, addCor[index], centroidDotProductMinusNorm));
+            index = index + 1 >= validPos.length() ? DocIdSetIterator.NO_MORE_DOCS : validPos.nextSetBit(index + 1);
+        }
+        return ceiling;
+    }
+
+    /**
+     * The best similarity a residual dot of at most {@code maxScore} can turn into, in the same space
+     * {@link #scoreBlock} reports. L2 inverts, so the largest dot gives the smallest distance; the geometric
+     * floor still applies, since the scorer clamps to it and so can never report above it.
+     */
+    private float similarityCeiling(final float maxScore, final float addCor, final float centroidDotProductMinusNorm) {
+        return switch (sim) {
+            case EUCLIDEAN -> {
+                float distance = quantizedQuery.correction() + addCor - 2f * maxScore;
+                final float gap = queryNorm - (float) Math.sqrt(addCor);
+                yield 1.0f / (1.0f + Math.max(distance, gap * gap));
+            }
+            case MAXIMUM_INNER_PRODUCT -> {
+                final float dot = maxScore + addCor + centroidDotProductMinusNorm;
+                yield dot >= 0 ? dot + 1 : 1f / (1f - dot);
+            }
+            case COSINE -> {
+                final float dot = maxScore + addCor + centroidDotProductMinusNorm;
+                yield Math.max((1.0f + dot) / 2.0f, 0f);
+            }
+            case DOT_PRODUCT -> throw new IllegalStateException("ClusterANN does not support DOT_PRODUCT; use MAXIMUM_INNER_PRODUCT");
+        };
+    }
+
     private float step() {
         return 1f / ((1 << docBits) - 1);
     }

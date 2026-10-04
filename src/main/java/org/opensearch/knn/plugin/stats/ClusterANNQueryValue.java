@@ -68,7 +68,18 @@ public enum ClusterANNQueryValue {
      * {@code blocks_fetched + pruner_skip + blocks_terminated = total blocks probed}. A violated sum is a
      * bookkeeping bug, which is the point of carrying the third term rather than deriving it.
      */
-    BLOCKS_TERMINATED("blocks_terminated");
+    BLOCKS_TERMINATED("blocks_terminated"),
+
+    /**
+     * Blocks whose corrective terms were read but whose codes were not, because no vector in the block could
+     * reach the threshold on the scorer's own ceiling. Counted against {@link #BLOCKS_FETCHED}, which still
+     * includes them: the prefix was read either way, and the prefix is a few percent of a block. So this is the
+     * share of fetched blocks that cost their corrections and nothing more.
+     *
+     * <p>Unlike the pruner counters this measures a bound in estimate space rather than a geometric one, so it
+     * is the one saving here that needs no quantization margin to be sound.
+     */
+    CODE_READS_SKIPPED("code_reads_skipped");
 
     private final String name;
     private final AtomicLong value;
