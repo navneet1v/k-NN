@@ -81,7 +81,7 @@ public class ScalarQuantizedCluster implements Cluster {
      * builds already, and a switch on the read path is not something worth carrying into production to settle a
      * benchmark question.
      */
-    static final boolean CLIP_PRUNING_ENABLED = false;
+    static final boolean CLIP_PRUNING_ENABLED = true;
 
     private final ScalarQuantizedBlockReader reader;
 

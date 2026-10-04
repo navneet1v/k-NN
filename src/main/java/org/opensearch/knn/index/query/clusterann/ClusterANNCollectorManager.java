@@ -14,8 +14,6 @@ import org.apache.lucene.search.join.BitSetProducer;
 import org.apache.lucene.search.join.DiversifyingNearestChildrenKnnCollectorManager;
 import org.apache.lucene.search.knn.KnnCollectorManager;
 import org.apache.lucene.search.knn.KnnSearchStrategy;
-import org.apache.lucene.search.knn.MultiLeafKnnCollector;
-import org.apache.lucene.util.hnsw.BlockingFloatHeap;
 import org.opensearch.common.Nullable;
 
 import java.io.IOException;
@@ -27,9 +25,11 @@ import java.io.IOException;
  * <p>The two compose rather than compete, because parent dedup is a collector and so can sit inside the one that shares
  * the threshold. Without that, a nested query would have to choose between correct semantics and useful pruning.
  *
- * <p><b>Why the threshold is shared.</b> A segment that starts late learns the score it has to beat from the segments
- * already finished, so it prunes from its first cluster rather than rediscovering the same bar. Segment-local heaps leave
- * every bound uselessly loose until each one has filled its own.
+ * <p><b>The threshold is deliberately not shared on this branch.</b> Each segment gets its own collector and its own
+ * bar, so a score found in one segment does nothing for the others and every segment starts from scratch. That is the
+ * opposite of what the design wants — a segment that starts late should learn the bar from the ones already finished
+ * and prune from its first cluster — and it is switched off here only to measure what the sharing was worth. A pruner
+ * is only as strong as the bar it is handed, so this arm is the floor that sharing is measured against.
  *
  * <p><b>Why parent dedup belongs here.</b> A parent holds many child vectors, and plain top-k over children can return k
  * children of one parent. Nested asks for k <em>parents</em>, each represented by its nearest child — which is a decision
@@ -45,16 +45,12 @@ final class ClusterANNCollectorManager implements KnnCollectorManager {
 
     private final int k;
 
-    /** Shared across every segment of one query, which is the whole point. */
-    private final BlockingFloatHeap globalThreshold;
-
     /** Builds the per-parent-best-child collectors, or {@code null} when the field is not nested. */
     @Nullable
     private final DiversifyingNearestChildrenKnnCollectorManager diversifying;
 
     ClusterANNCollectorManager(final int k, @Nullable final BitSetProducer parentsFilter, final IndexSearcher searcher) {
         this.k = k;
-        this.globalThreshold = new BlockingFloatHeap(k);
         this.diversifying = parentsFilter == null ? null : new DiversifyingNearestChildrenKnnCollectorManager(k, parentsFilter, searcher);
     }
 
@@ -66,11 +62,9 @@ final class ClusterANNCollectorManager implements KnnCollectorManager {
     @Nullable
     public KnnCollector newCollector(final int visitedLimit, final KnnSearchStrategy searchStrategy, final LeafReaderContext context)
         throws IOException {
-        final AbstractKnnCollector perSegment = perSegmentCollector(visitedLimit, searchStrategy, context);
-        if (perSegment == null) {
-            return null;
-        }
-        return new MultiLeafKnnCollector(k, globalThreshold, perSegment);
+        // Deliberately unwrapped: no MultiLeafKnnCollector, so each segment keeps its own threshold and a bar
+        // raised in one is invisible to the rest. See the class note on why this branch does that.
+        return perSegmentCollector(visitedLimit, searchStrategy, context);
     }
 
     /**
@@ -79,7 +73,7 @@ final class ClusterANNCollectorManager implements KnnCollectorManager {
      * <p>The cast is against a type Lucene keeps package-private and hands out only through its manager, so it cannot be
      * named here. It holds because that manager documents what it returns, and it is worth taking: the alternative is
      * giving up either the shared threshold or parent dedup, since only an {@link AbstractKnnCollector} can sit inside
-     * {@link MultiLeafKnnCollector}.
+     * the per-segment collector this returns.
      */
     @Nullable
     private AbstractKnnCollector perSegmentCollector(
