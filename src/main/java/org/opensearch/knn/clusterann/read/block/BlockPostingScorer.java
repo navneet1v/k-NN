@@ -129,6 +129,7 @@ public class BlockPostingScorer implements PostingScorer {
                 // Nothing that can compete. The corrections are a few percent of the block, so dropping it here
                 // still saves nearly all of its IO.
                 ClusterANNQueryValue.CODE_READS_SKIPPED.increment();
+                ClusterANNQueryValue.VECTORS_SKIPPED.incrementBy(validPos.cardinality());
                 continue;
             }
 

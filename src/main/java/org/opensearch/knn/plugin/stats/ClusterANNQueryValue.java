@@ -79,7 +79,18 @@ public enum ClusterANNQueryValue {
      * <p>Unlike the pruner counters this measures a bound in estimate space rather than a geometric one, so it
      * is the one saving here that needs no quantization margin to be sound.
      */
-    CODE_READS_SKIPPED("code_reads_skipped");
+    CODE_READS_SKIPPED("code_reads_skipped"),
+
+    /**
+     * Positions in those blocks that would have been scored had the codes been read — what
+     * {@link #CODE_READS_SKIPPED} actually bought, in the unit the cost is paid in.
+     *
+     * <p>Carried so a run checks itself instead of being differenced against another build:
+     * {@code vectors_scored + vectors_skipped} is every accepted position in every fetched block, which is
+     * exactly what a scan with no gate would report as {@code vectors_scored}. A violated sum means the gate is
+     * dropping something it is not counting, and no second run is needed to see it.
+     */
+    VECTORS_SKIPPED("vectors_skipped");
 
     private final String name;
     private final AtomicLong value;
