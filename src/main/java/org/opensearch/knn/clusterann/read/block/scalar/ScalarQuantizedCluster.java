@@ -69,6 +69,20 @@ public class ScalarQuantizedCluster implements Cluster {
      */
     private float[] sortedDistances;
 
+    /**
+     * Whether to inject the geometric CLIP pruners at all.
+     *
+     * <p>Off leaves the scan with only its two in-hand guards — the filter's accepted positions and the
+     * corrections ceiling — which is what isolates block-based pruning for a measurement. The accepted-docs
+     * pruner is unaffected either way: {@code BlockPostingScorer} composes that one in itself, so a filtered
+     * query still steps over blocks the filter rejects.
+     *
+     * <p>A compile-time constant rather than a query knob on purpose. The arms of a comparison are separate
+     * builds already, and a switch on the read path is not something worth carrying into production to settle a
+     * benchmark question.
+     */
+    static final boolean CLIP_PRUNING_ENABLED = false;
+
     private final ScalarQuantizedBlockReader reader;
 
     private Centroid centroid;
@@ -169,6 +183,9 @@ public class ScalarQuantizedCluster implements Cluster {
      */
     private BlockPostingsPruner clipPruner(final SQScanContext scanContext) {
         // TODO: return NONE for sparse filters as well so recall doesn't drop
+        if (!CLIP_PRUNING_ENABLED) {
+            return BlockPostingsPruner.NONE;
+        }
         if (sortedDistances == null) {
             return BlockPostingsPruner.NONE;
         }

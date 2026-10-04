@@ -13,6 +13,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.opensearch.knn.clusterann.read.Centroid;
 import org.opensearch.knn.clusterann.read.PostingScorer;
@@ -30,6 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>The shells are far apart on purpose — block 0 at 0.5 from the centroid, block 1 at 10, block 2 at 20 — so
  * the bound each block carries is unmistakable and the threshold that separates them is wide.
  */
+@Disabled("ScalarQuantizedCluster.CLIP_PRUNING_ENABLED is false, so no clip pruner is injected and these cases cannot "
+    + "observe one. Flip both together. The bounds themselves stay covered by EuclideanClipPrunerTests and "
+    + "MaximumInnerProductClipPrunerTests, which build the pruners directly.")
 class SQClusterClipTests {
 
     private static final ScalarEncoding ENCODING = ScalarEncoding.SINGLE_BIT_QUERY_NIBBLE;

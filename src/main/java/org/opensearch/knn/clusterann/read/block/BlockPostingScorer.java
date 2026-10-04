@@ -114,27 +114,32 @@ public class BlockPostingScorer implements PostingScorer {
             int postingVectorOffset = block * blockSize;
             positions.mask(block, vectorCount, validPos);
 
-            if (validPos.cardinality() != 0) {
-                reader.fetchBlock();
-                ClusterANNQueryValue.BLOCKS_FETCHED.increment();
+            // Two guards on whether the next read is worth doing, one before each of the block's two reads.
+            // Both are skips, and neither is a BlockPostingsPruner: a pruner answers about blocks the walk may
+            // never reach and so must read nothing, while these answer about the block in hand.
+            if (validPos.cardinality() == 0) {
+                // Nothing the filter wants, so not even the corrections are worth reading.
+                continue;
+            }
 
-                // The corrections are in hand and the codes are not, which is the one point where a bound can
-                // still save almost the whole block. Checked here rather than in a pruner because a pruner
-                // promises to read nothing, and this had to read the prefix to say anything at all.
-                if (scorer.blockCeiling(validPos) <= minCompetitiveSimilarity) {
-                    ClusterANNQueryValue.CODE_READS_SKIPPED.increment();
-                    continue;
-                }
+            reader.fetchBlock();
+            ClusterANNQueryValue.BLOCKS_FETCHED.increment();
 
-                reader.readBlockVectors();
+            if (scorer.blockCeiling(validPos) <= minCompetitiveSimilarity) {
+                // Nothing that can compete. The corrections are a few percent of the block, so dropping it here
+                // still saves nearly all of its IO.
+                ClusterANNQueryValue.CODE_READS_SKIPPED.increment();
+                continue;
+            }
 
-                float maxScore = scorer.scoreBlock(validPos, candidates);
-                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(candidates.getSize());
-                scoredBlockVectorOffset = postingVectorOffset;
-                cursor = 0;
-                if (maxScore > minCompetitiveSimilarity) {
-                    return true;
-                }
+            reader.readBlockVectors();
+
+            float maxScore = scorer.scoreBlock(validPos, candidates);
+            ClusterANNQueryValue.VECTORS_SCORED.incrementBy(candidates.getSize());
+            scoredBlockVectorOffset = postingVectorOffset;
+            cursor = 0;
+            if (maxScore > minCompetitiveSimilarity) {
+                return true;
             }
         }
 
