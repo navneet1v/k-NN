@@ -28,6 +28,15 @@ import java.io.IOException;
  */
 public class BlockPostingScorer implements PostingScorer {
 
+    /**
+     * Whether to apply the corrections ceiling before reading a block's codes.
+     *
+     * <p>Off leaves the pruners as the only thing deciding block fates, which is what isolates them for a
+     * measurement. A compile-time constant for the same reason {@code CLIP_PRUNING_ENABLED} is one: the arms of a
+     * comparison are separate builds, and neither switch is worth carrying into production.
+     */
+    static final boolean CODE_GATE_ENABLED = false;
+
     /** No block left to visit, either because the sequence ran out or because a pruner terminated it. */
     private static final int NO_MORE_BLOCKS = Integer.MAX_VALUE;
 
@@ -125,7 +134,7 @@ public class BlockPostingScorer implements PostingScorer {
             reader.fetchBlock();
             ClusterANNQueryValue.BLOCKS_FETCHED.increment();
 
-            if (scorer.blockCeiling(validPos) <= minCompetitiveSimilarity) {
+            if (CODE_GATE_ENABLED && scorer.blockCeiling(validPos) <= minCompetitiveSimilarity) {
                 // Nothing that can compete. The corrections are a few percent of the block, so dropping it here
                 // still saves nearly all of its IO.
                 ClusterANNQueryValue.CODE_READS_SKIPPED.increment();

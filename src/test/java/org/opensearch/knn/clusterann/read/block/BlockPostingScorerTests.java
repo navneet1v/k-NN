@@ -7,6 +7,7 @@ package org.opensearch.knn.clusterann.read.block;
 
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -371,6 +372,7 @@ class BlockPostingScorerTests {
      * fetched, never read. That is the whole point of the gate — the codes are the bulk of a block.
      */
     @Test
+    @Disabled("BlockPostingScorer.CODE_GATE_ENABLED is false on this branch; flip both together")
     void testAdvance_whenNoVectorInABlockCanReachTheBar_thenNeverReadsItsCodes() throws IOException {
         // given — every block's ceiling is below the bar the drain is run at
         resetStats();
@@ -395,6 +397,7 @@ class BlockPostingScorerTests {
 
     /** A ceiling above the bar decides nothing, so the walk reads and scores exactly as it would without one. */
     @Test
+    @Disabled("BlockPostingScorer.CODE_GATE_ENABLED is false on this branch; flip both together")
     void testAdvance_whenTheCeilingClearsTheBar_thenReadsTheCodes() throws IOException {
         // given
         resetStats();
@@ -414,6 +417,7 @@ class BlockPostingScorerTests {
      * and a block whose best possible score merely ties it cannot produce one.
      */
     @Test
+    @Disabled("BlockPostingScorer.CODE_GATE_ENABLED is false on this branch; flip both together")
     void testAdvance_whenTheCeilingExactlyTiesTheBar_thenStillSkipsTheCodes() throws IOException {
         // given
         resetStats();
