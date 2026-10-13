@@ -650,6 +650,38 @@ class FaissService {
     );
 
     /**
+     * Computes a page-locality permutation using <b>greedy page-growing with a borrowed Gorder
+     * co-visitation (shared-neighbor) score plus an affinity/degree containment tiebreak</b>, and
+     * writes it into the caller-allocated {@code ordering} array.
+     *
+     * <p>Same output contract, hub export, and dense packing as
+     * {@link #buildOrderingOfVectorsUsingIndexStructure}; the only difference is the candidate scoring:
+     * {@code score(node) = affinity(node) + siblingWeight * sibling(node) + affinity(node)/degree(node)},
+     * where {@code sibling(node)} is the number of shared neighbors the node has with already-placed
+     * page members (2-hop paths from the page). Because HNSW beam search co-visits siblings of a common
+     * hub even without a direct edge, this aligns the on-disk layout with the traversed sub-graph and
+     * lowers pages/query (read amplification). In simulation (M=16, ef=256, 1M) this beat the plain
+     * greedy layout, Gorder and METIS on pages/query at both 32 KB and 8 KB pages.
+     *
+     * <p>Provided as a separate entry point so callers can A/B against the plain-affinity greedy without
+     * touching that validated path. The 2-hop bump makes it {@code O(degree^2)} per placement (cheap at
+     * M=16 where degree &le; 32).
+     *
+     * @param indexMemoryAddress pointer to the native Faiss SQ index (returned by {@link #initFaissSQIndex})
+     * @param ordering           output array of length {@code ntotal}; filled with the dense forward permutation
+     * @param pageCapacity       number of records per physical page ({@code pageSizeBytes / recordSizeBytes}); must be >= 1
+     * @param hubs               output array (length <= ~32); filled with the top-degree hub ordinals, {@code -1}-padded
+     * @param siblingWeight      weight on the shared-neighbor (co-visitation) term; 0.5 was best in simulation
+     */
+    public static native void buildOrderingOfVectorsUsingSiblingGreedy(
+        long indexMemoryAddress,
+        int[] ordering,
+        int pageCapacity,
+        int[] hubs,
+        double siblingWeight
+    );
+
+    /**
      * Computes a BFS-based page-locality permutation of vectors from the HNSW index structure and
      * writes it into the caller-allocated {@code ordering} array.
      *

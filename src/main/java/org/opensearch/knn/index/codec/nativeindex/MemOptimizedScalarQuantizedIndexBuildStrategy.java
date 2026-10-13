@@ -79,6 +79,18 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
 
     private static MemOptimizedScalarQuantizedIndexBuildStrategy INSTANCE = new MemOptimizedScalarQuantizedIndexBuildStrategy();
 
+    // Experimental switch for the layer-0 locality ordering. Default = the shipped, AOSS-validated
+    // plain-affinity greedy (buildOrderingOfVectorsUsingIndexStructure). Set -Dknn.locality.ordering=sibling
+    // to use the greedy + shared-neighbor (Gorder co-visitation) + affinity/degree variant
+    // (buildOrderingOfVectorsUsingSiblingGreedy); tune its weight with -Dknn.locality.sibling.weight
+    // (default 0.5). Read once at class-load so it can be flipped per JVM without a code change.
+    private static final boolean USE_SIBLING_GREEDY = "sibling".equalsIgnoreCase(
+        System.getProperty("knn.locality.ordering", "greedy")
+    );
+    private static final double SIBLING_WEIGHT = Double.parseDouble(
+        System.getProperty("knn.locality.sibling.weight", "0.5")
+    );
+
     public static MemOptimizedScalarQuantizedIndexBuildStrategy getInstance() {
         return INSTANCE;
     }
@@ -192,15 +204,28 @@ public class MemOptimizedScalarQuantizedIndexBuildStrategy implements NativeInde
             // in layer0LocalityOrdering. The locality writer persists these (see writeHubs), and the reader
             // uses the closest one as the search entry point (selectBestHubOrdinal / maybeSeedWithClosestHub).
             AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-                JNIService.buildOrderingOfVectorsUsingIndexStructure(
-                    indexMemoryAddress,
-                    layer0LocalityOrdering.getPhysicalOrdinals(),
-                    pageCapacity,
-                    layer0LocalityOrdering.getHubs(),
-                    indexInfo.getKnnEngine()
-                );
+                if (USE_SIBLING_GREEDY) {
+                    // Greedy + shared-neighbor (Gorder co-visitation) + affinity/degree variant.
+                    JNIService.buildOrderingOfVectorsUsingSiblingGreedy(
+                        indexMemoryAddress,
+                        layer0LocalityOrdering.getPhysicalOrdinals(),
+                        pageCapacity,
+                        layer0LocalityOrdering.getHubs(),
+                        SIBLING_WEIGHT,
+                        indexInfo.getKnnEngine()
+                    );
+                } else {
+                    JNIService.buildOrderingOfVectorsUsingIndexStructure(
+                        indexMemoryAddress,
+                        layer0LocalityOrdering.getPhysicalOrdinals(),
+                        pageCapacity,
+                        layer0LocalityOrdering.getHubs(),
+                        indexInfo.getKnnEngine()
+                    );
+                }
                 return null;
             });
+            log.info("layer-0 locality ordering used: {}", USE_SIBLING_GREEDY ? "sibling-greedy (b=" + SIBLING_WEIGHT + ")" : "greedy");
             stopwatch.stop();
             log.info(
                 "The total time to get ordering of vectors from HNSW graph is : {} ms, total vectors: {}",

@@ -333,6 +333,14 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfV
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    buildOrderingOfVectorsUsingSiblingGreedy
+ * Signature: (J[II[ID)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfVectorsUsingSiblingGreedy
+  (JNIEnv *, jclass, jlong, jintArray, jint, jintArray, jdouble);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
  * Method:    buildOrderingOfVectorsUsingBFS
  * Signature: (J[I[I)V
  */

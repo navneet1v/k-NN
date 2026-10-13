@@ -589,6 +589,39 @@ public class JNIService {
     }
 
     /**
+     * Computes the graph-derived page-locality permutation using greedy page-growing with a borrowed
+     * Gorder co-visitation (shared-neighbor) score plus an affinity/degree containment tiebreak, and
+     * writes it into the caller-allocated {@code ordering} array (length {@code ntotal}, dense forward
+     * map). Drop-in alternative to {@link #buildOrderingOfVectorsUsingIndexStructure} for A/B testing;
+     * {@code siblingWeight} scales the shared-neighbor term (0.5 was best in simulation). See
+     * {@link FaissService#buildOrderingOfVectorsUsingSiblingGreedy(long, int[], int, int[], double)}.
+     */
+    public static void buildOrderingOfVectorsUsingSiblingGreedy(
+        final long indexMemoryAddress,
+        final int[] ordering,
+        final int pageCapacity,
+        final int[] hubs,
+        final double siblingWeight,
+        final KNNEngine knnEngine
+    ) {
+        Objects.requireNonNull(ordering);
+        Objects.requireNonNull(hubs);
+
+        if (KNNEngine.FAISS == knnEngine) {
+            FaissService.buildOrderingOfVectorsUsingSiblingGreedy(indexMemoryAddress, ordering, pageCapacity, hubs, siblingWeight);
+            return;
+        }
+
+        throw new IllegalArgumentException(
+            String.format(
+                Locale.ROOT,
+                "buildOrderingOfVectorsUsingSiblingGreedy not supported for provided engine : %s",
+                knnEngine.getName()
+            )
+        );
+    }
+
+    /**
      * Computes a BFS-based (dense) page-locality permutation from the SQ index's HNSW structure and
      * writes it into the caller-allocated {@code ordering} array (length {@code ntotal}); on return
      * this is the forward map {@code ordering[originalOrdinal] = physicalPosition}, contiguous with no

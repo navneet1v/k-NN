@@ -16,6 +16,8 @@
 #include <vector>
 #include <algorithm>
 #include <queue>
+#include <cmath>
+#include <utility>
 
 #include "faiss_wrapper.h"
 #include "jni_util.h"
@@ -1017,6 +1019,252 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfV
         if (nextOrd != n) {
             throw std::runtime_error(
                 "buildOrderingOfVectorsUsingIndexStructure: emitted " + std::to_string(nextOrd)
+                + " physical slots for " + std::to_string(n) + " nodes (expected dense 0..n-1)");
+        }
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+// ============================================================================================
+// buildOrderingOfVectorsUsingSiblingGreedy — greedy page-growing with the Gorder co-visitation
+// (shared-neighbor) score + an affinity/degree containment tiebreak, on top of the plain-affinity
+// greedy above.
+//
+// WHY A SEPARATE FUNCTION: the plain greedy scores candidates by an INTEGER affinity (#edges to the
+// page) and can therefore use an O(1) integer bucket queue. This variant scores by a FLOAT
+//
+//     score(node) = affinity(node) + siblingWeight * sibling(node) + affinity(node)/degree(node)
+//                   └ direct edges ┘   └ Gorder shared-neighbor score ┘  └ containment tiebreak ┘
+//
+// so it needs a float priority queue instead of buckets. Kept as a distinct entry point so callers
+// can A/B the two orderings without touching the validated plain-greedy path.
+//
+//   affinity(node) : #of node's neighbors already placed on the current page (as in plain greedy).
+//   sibling(node)  : #of 2-hop paths from the page to node = how many shared neighbors it has with
+//                    already-placed nodes. In HNSW beam search two siblings of a common hub are
+//                    co-visited even without a direct edge, and pages/query (read amplification) is a
+//                    co-visitation metric — so this term aligns the layout with what a search
+//                    actually traverses. This is Gorder's "sibling score" used inside greedy packing.
+//   containment    : at equal affinity, prefer the LOWER-degree candidate (its neighborhood is more
+//                    contained on the page). affinity/degree in (0,1], a pure tiebreak.
+//
+// Simulation (M=16, ef=256, 1M x 768, full 10k queries) had this beat plain greedy, Gorder and METIS
+// on pages/query at both 32 KB and 8 KB pages (see design doc §10.1.1). siblingWeight=0.5 was best.
+//
+// The 2-hop bump makes placing a node O(degree^2); at M=16 (degree <= 32) this is cheap. Output
+// contract, hub export, dense packing and scratch reset are all identical to the plain greedy above.
+// COMPLEXITY: O(n) scratch (+ sibling[n]); build O(sum over placed nodes of degree^2) + heap ops.
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_buildOrderingOfVectorsUsingSiblingGreedy(
+    JNIEnv * env, jclass cls, jlong indexMemoryAddress, jintArray orderingJ, jint pageCapacityJ,
+    jintArray hubsJ, jdouble siblingWeightJ) {
+    try {
+        if (indexMemoryAddress == 0) {
+            throw std::runtime_error("buildOrderingOfVectorsUsingSiblingGreedy: null index address");
+        }
+        auto* indexBinary = reinterpret_cast<faiss::IndexBinary*>(indexMemoryAddress);
+        auto* binaryIdMap = dynamic_cast<faiss::IndexBinaryIDMap*>(indexBinary);
+        if (binaryIdMap == nullptr) {
+            throw std::runtime_error("buildOrderingOfVectorsUsingSiblingGreedy: index is not a faiss::IndexBinaryIDMap");
+        }
+        auto* faissSQHnsw = dynamic_cast<knn_jni::FaissSQHnsw*>(binaryIdMap->index);
+        if (faissSQHnsw == nullptr) {
+            throw std::runtime_error("buildOrderingOfVectorsUsingSiblingGreedy: wrapped index is not a knn_jni::FaissSQHnsw");
+        }
+        faiss::HNSW & hnsw = faissSQHnsw->hnsw;
+
+        const int pageCapacity = (int) pageCapacityJ;
+        if (pageCapacity < 1) {
+            throw std::runtime_error(
+                "buildOrderingOfVectorsUsingSiblingGreedy: pageCapacity must be >= 1, got "
+                + std::to_string(pageCapacity));
+        }
+        const double siblingWeight = (double) siblingWeightJ;
+
+        const jsize outLen = env->GetArrayLength(orderingJ);
+        if ((int64_t) outLen != (int64_t) faissSQHnsw->ntotal) {
+            throw std::runtime_error(
+                "buildOrderingOfVectorsUsingSiblingGreedy: ordering length " + std::to_string((int64_t) outLen)
+                + " != ntotal (" + std::to_string((int64_t) faissSQHnsw->ntotal) + ")");
+        }
+        const int n = (int) outLen;
+        if (n == 0) {
+            return;
+        }
+
+        // Reads a node's valid layer-0 neighbors in place (zero-copy), bounds-checked. Same as greedy.
+        auto forEachNeighbor = [&](int node, auto&& fn) {
+            size_t begin = 0, end = 0;
+            hnsw.neighbor_range(node, 0, &begin, &end);
+            for (size_t e = begin; e < end; ++e) {
+                const int nb = hnsw.neighbors[e];
+                if (nb >= 0 && nb < n) {
+                    fn(nb);
+                }
+            }
+        };
+
+        // Per-node layer-0 out-degree; used for hub seeding and the affinity/degree tiebreak.
+        std::vector<int> degree(n, 0);
+        for (int i = 0; i < n; ++i) {
+            int d = 0;
+            forEachNeighbor(i, [&](int) { ++d; });
+            degree[i] = d;
+        }
+
+        // Hub seed order: highest degree first, ties by ascending node id (deterministic) — same as greedy.
+        std::vector<int> hubs(n);
+        for (int i = 0; i < n; ++i) {
+            hubs[i] = i;
+        }
+        std::sort(hubs.begin(), hubs.end(), [&degree](int a, int b) {
+            if (degree[a] != degree[b]) {
+                return degree[a] > degree[b];
+            }
+            return a < b;
+        });
+
+        // Export top hubs as entry-point candidates (identical contract to the plain greedy variant).
+        if (hubsJ != nullptr) {
+            const jsize hubsLen = env->GetArrayLength(hubsJ);
+            const int numHubs = std::min((int) hubsLen, n);
+            jint* hubOut = static_cast<jint*>(env->GetPrimitiveArrayCritical(hubsJ, nullptr));
+            knn_jni::JNIReleaseElements hubRelease([=]{ env->ReleasePrimitiveArrayCritical(hubsJ, hubOut, 0); });
+            for (int i = 0; i < numHubs; ++i) {
+                hubOut[i] = hubs[i];
+            }
+            for (jsize i = numHubs; i < hubsLen; ++i) {
+                hubOut[i] = -1;
+            }
+        }
+
+        // ---- Working state (O(n), reused across pages) --------------------------------------------
+        jint* out = static_cast<jint*>(env->GetPrimitiveArrayCritical(orderingJ, nullptr));
+        knn_jni::JNIReleaseElements release([=]{ env->ReleasePrimitiveArrayCritical(orderingJ, out, 0); });
+
+        std::vector<bool> assigned(n, false);
+        std::vector<bool> isCandidate(n, false);
+        std::vector<int> affinity(n, 0);       // #neighbors already on the current page
+        std::vector<int> sibling(n, 0);        // #2-hop paths from the current page (shared-neighbor count)
+
+        std::vector<int> page;                 // nodes placed on the page being grown
+        std::vector<int> candidatesToClear;    // every node that became a candidate this page (for reset)
+        page.reserve(pageCapacity);
+        int nextOrd = 0;
+
+        // Float score. affinity/degree is a pure tiebreak in (0,1]; siblingWeight scales the co-visitation term.
+        auto score = [&](int node) -> double {
+            const int a = affinity[node];
+            double s = (double) a + siblingWeight * (double) sibling[node];
+            if (degree[node] > 0) {
+                s += (double) a / (double) degree[node];
+            }
+            return s;
+        };
+
+        // Max-heap on score; ties broken by SMALLER node id (matches the simulation's ordering). Lazy
+        // deletion: a fresh entry is pushed on every score bump (scores only rise), and popBest discards
+        // any popped entry whose stored score no longer equals the node's current score, or that is no
+        // longer a candidate. A fresh heap is used per page (drained on close via the local scope).
+        auto cmp = [](const std::pair<double,int>& x, const std::pair<double,int>& y) {
+            if (x.first != y.first) {
+                return x.first < y.first;   // larger score on top
+            }
+            return x.second > y.second;     // smaller node id on top (tie)
+        };
+        using PQ = std::priority_queue<std::pair<double,int>, std::vector<std::pair<double,int>>, decltype(cmp)>;
+
+        // Grow one full page from `seed` using a fresh priority queue.
+        auto growPage = [&](int seed) {
+            if (assigned[seed]) {
+                return;
+            }
+            page.clear();
+            candidatesToClear.clear();
+            PQ pq(cmp);
+
+            // Enroll `x` as a candidate (first time) and (re)push it at its current score.
+            auto enroll = [&](int x) {
+                if (!isCandidate[x]) {
+                    isCandidate[x] = true;
+                    candidatesToClear.push_back(x);
+                }
+                pq.push({score(x), x});
+            };
+
+            // Place `node`: assign its slot, bump affinity of unplaced direct neighbors and sibling of
+            // unplaced 2-hop nodes (traverse each neighbor `w` even if placed, to reach its neighbors).
+            auto addToPage = [&](int node) {
+                assigned[node] = true;
+                page.push_back(node);
+                out[node] = nextOrd;
+                ++nextOrd;
+                isCandidate[node] = false;
+                forEachNeighbor(node, [&](int w) {
+                    if (!assigned[w]) {
+                        ++affinity[w];
+                        enroll(w);
+                    }
+                    forEachNeighbor(w, [&](int u) {
+                        if (!assigned[u]) {
+                            ++sibling[u];
+                            enroll(u);
+                        }
+                    });
+                });
+            };
+
+            auto popBest = [&]() -> int {
+                while (!pq.empty()) {
+                    const std::pair<double,int> top = pq.top();
+                    pq.pop();
+                    const int cand = top.second;
+                    if (isCandidate[cand] && std::fabs(score(cand) - top.first) < 1e-9) {
+                        return cand;
+                    }
+                }
+                return -1;
+            };
+
+            addToPage(seed);
+            while ((int) page.size() < pageCapacity) {
+                const int best = popBest();
+                if (best < 0) {
+                    break;
+                }
+                isCandidate[best] = false;
+                addToPage(best);
+            }
+
+            // Dense packing (no padding) — same as plain greedy. Reset scratch touched this page: every
+            // bumped node became a candidate, so candidatesToClear covers all nonzero affinity/sibling.
+            for (int c : candidatesToClear) {
+                isCandidate[c] = false;
+                affinity[c] = 0;
+                sibling[c] = 0;
+            }
+        };
+
+        for (int hub : hubs) {
+            if (!assigned[hub]) {
+                growPage(hub);
+            }
+        }
+        for (int i = 0; i < n; ++i) {
+            if (!assigned[i]) {
+                growPage(i);
+            }
+        }
+
+        for (int i = 0; i < n; ++i) {
+            if (!assigned[i]) {
+                throw std::runtime_error(
+                    "buildOrderingOfVectorsUsingSiblingGreedy: node " + std::to_string(i) + " was left unassigned");
+            }
+        }
+        if (nextOrd != n) {
+            throw std::runtime_error(
+                "buildOrderingOfVectorsUsingSiblingGreedy: emitted " + std::to_string(nextOrd)
                 + " physical slots for " + std::to_string(n) + " nodes (expected dense 0..n-1)");
         }
     } catch (...) {

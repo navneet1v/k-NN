@@ -177,7 +177,7 @@ def delete_index(host, index):
         raise RuntimeError(f"delete {index} -> {r.status_code}: {r.text[:300]}")
 
 
-def create_index(host, index, dim, field, space_type, shards, reordering_enabled):
+def create_index(host, index, dim, field, space_type, shards, reordering_enabled, compression="32x"):
     body = {
         "settings": {
             "index.knn": True,
@@ -192,7 +192,7 @@ def create_index(host, index, dim, field, space_type, shards, reordering_enabled
                     "dimension": dim,
                     "space_type": space_type,
                     "mode": "on_disk",
-                    "compression_level": "32x",
+                    "compression_level": compression,
                 }
             }
         },
@@ -255,14 +255,16 @@ def segment_count(host, index):
     return stats["indices"][index]["primaries"]["segments"]["count"]
 
 
-def knn_search(host, index, field, query, k, rescore, ef_search=None):
+def knn_search(host, index, field, query, k, rescore, ef_search=None, size=None):
+    # k = neighbors requested from the ANN (knn clause); size = hits the query returns. They are
+    # independent knobs — size defaults to k when unset.
     knn_clause = {"vector": query.tolist(), "k": k, "rescore": rescore}
     # ef_search is a per-query knob passed via method_parameters; when None the index/engine default
     # is used. Higher ef_search visits more nodes (better recall, more pages touched).
     if ef_search is not None:
         knn_clause["method_parameters"] = {"ef_search": ef_search}
     body = {
-        "size": k,
+        "size": size if size is not None else k,
         "_source": False,
         "query": {"knn": {field: knn_clause}},
     }
@@ -270,14 +272,14 @@ def knn_search(host, index, field, query, k, rescore, ef_search=None):
     return [hit["_id"] for hit in r.json()["hits"]["hits"]]
 
 
-def evaluate_recall(host, index, field, queries, gt, k, num_docs, rescore, truth_map=None, ef_search=None):
+def evaluate_recall(host, index, field, queries, gt, k, num_docs, rescore, truth_map=None, ef_search=None, size=None):
     if gt is None:
         log("  no ground-truth neighbors in dataset; skipping recall")
         return None
     total = 0.0
     t0 = time.time()
     for q in range(queries.shape[0]):
-        returned = set(knn_search(host, index, field, queries[q], k, rescore, ef_search=ef_search))
+        returned = set(knn_search(host, index, field, queries[q], k, rescore, ef_search=ef_search, size=size))
         # Only ground-truth ids that were actually ingested count (matters for subset runs). When
         # shuffle-ingest is active, a train index t was stored under doc id truth_map[t], so remap.
         truth_ids = [
@@ -294,23 +296,24 @@ def evaluate_recall(host, index, field, queries, gt, k, num_docs, rescore, truth
 
 def run_config(
     host, index, field, train, queries, gt, k, space_type, shards, batch_size, reordering, rescore, search_only, num_docs,
-    page_touch=False, log_file=None, ingest_perm=None, truth_map=None, ef_search=None,
+    page_touch=False, log_file=None, ingest_perm=None, truth_map=None, ef_search=None, compression="32x", size=None,
 ):
-    log(f"=== {index} (reordering_enabled={reordering}) ===")
+    log(f"=== {index} (reordering_enabled={reordering}, compression={compression}) ===")
     if search_only:
         log("  search-only: skipping delete/create/ingest, using the existing index")
     else:
         delete_index(host, index)
-        create_index(host, index, train.shape[1], field, space_type, shards, reordering)
+        create_index(host, index, train.shape[1], field, space_type, shards, reordering, compression=compression)
         shuffle_note = " (shuffle-ingest: doc id decorrelated from vector space)" if ingest_perm is not None else ""
         log(f"  ingesting {train.shape[0]} vectors (dim={train.shape[1]}){shuffle_note} ...")
         bulk_ingest(host, index, field, train, batch_size, perm=ingest_perm)
         refresh(host, index)
     log(f"  doc count: {count(host, index)}, segments: {segment_count(host, index)} (no force-merge)")
-    log(f"  running {queries.shape[0]} queries (k={k}, rescore={rescore}, ef_search={ef_search or 'default'}) ...")
+    log(f"  running {queries.shape[0]} queries (k={k}, size={size if size is not None else k}, "
+        f"rescore={rescore}, ef_search={ef_search or 'default'}) ...")
     # Mark the log position so the summary only counts lines this run appends.
     start_offset = log_offset(log_file) if page_touch else 0
-    recall = evaluate_recall(host, index, field, queries, gt, k, num_docs, rescore, truth_map=truth_map, ef_search=ef_search)
+    recall = evaluate_recall(host, index, field, queries, gt, k, num_docs, rescore, truth_map=truth_map, ef_search=ef_search, size=size)
     if page_touch:
         summarize_page_touch(log_file, start_offset, index)
     return recall
@@ -322,7 +325,8 @@ def main():
     p.add_argument("--dataset", default="scripts/documents-1m.hdf5")
     p.add_argument("--num-docs", type=int, default=0, help="base vectors to ingest (0 = all)")
     p.add_argument("--num-queries", type=int, default=1000, help="test queries (0 = all)")
-    p.add_argument("--k", type=int, default=10)
+    p.add_argument("--k", type=int, default=10, help="neighbors requested from the ANN (knn clause k)")
+    p.add_argument("--size", type=int, default=None, help="hits the query returns (defaults to k when unset)")
     p.add_argument(
         "--ef-search",
         type=int,
@@ -331,6 +335,12 @@ def main():
     )
     p.add_argument("--field", default="test_field")
     p.add_argument("--space-type", default="innerproduct", help="innerproduct | cosinesimil | l2")
+    p.add_argument(
+        "--compression",
+        default="32x",
+        choices=["1x", "2x", "4x", "8x", "16x", "32x"],
+        help="on_disk compression_level (default 32x = SQ 1-bit)",
+    )
     p.add_argument("--shards", type=int, default=1)
     p.add_argument("--batch-size", type=int, default=500)
     p.add_argument("--index-prefix", default="reorder-recall")
@@ -405,6 +415,7 @@ def main():
                 args.rescore, args.search_only, num_train,
                 page_touch=args.page_touch, log_file=args.log_file,
                 ingest_perm=ingest_perm, truth_map=truth_map, ef_search=args.ef_search,
+                compression=args.compression, size=args.size,
             )
     finally:
         if args.page_touch:

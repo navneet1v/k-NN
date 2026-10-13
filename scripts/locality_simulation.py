@@ -346,6 +346,68 @@ def rcm_permutation(neighbors: list[list[int]], n: int) -> np.ndarray:
     return permutation
 
 
+def gorder_permutation(neighbors: list[list[int]], n: int, window: int = 5) -> np.ndarray:
+    """Gorder (Wei et al. 2016): greedily label nodes so each window of `window` consecutive
+    labels shares as many edges as possible. Score of a candidate v against the current window =
+    sum over window nodes u of [1 if (u,v) is an edge] (neighbor score) + [#common neighbors]
+    (sibling score). Placing a node bumps the keys of its neighbors (neighbor score) and of the
+    neighbors-of-its-neighbors (sibling score); a node leaving the window reverses those bumps.
+    Lazy max-heap for O(1)-amortized best-candidate selection. Returns permutation[oldOrd] = newOrd.
+    Cost ~O(n * avg_degree^2); fine at 100k, slow at 1M.
+    """
+    import heapq
+
+    placed = np.zeros(n, dtype=bool)
+    key = np.zeros(n, dtype=np.int64)   # incremental gain of placing this node next
+    heap: list[tuple[int, int]] = []    # (-key, node), lazy (stale entries filtered on pop)
+    order: list[int] = []
+
+    def bump(v: int, sign: int) -> None:
+        # neighbor score: direct neighbors of v
+        for nb in neighbors[v]:
+            key[nb] += sign
+            if sign > 0 and not placed[nb]:
+                heapq.heappush(heap, (-key[nb], nb))
+            # sibling score: nodes that share neighbor nb with v
+            for u in neighbors[nb]:
+                key[u] += sign
+                if sign > 0 and not placed[u]:
+                    heapq.heappush(heap, (-key[u], u))
+
+    # Seed with the highest-degree node.
+    degree = np.array([len(nbrs) for nbrs in neighbors], dtype=np.int64)
+    seed = int(np.argmax(degree))
+    next_unplaced = 0
+
+    def place(v: int) -> None:
+        placed[v] = True
+        order.append(v)
+        bump(v, +1)
+        if len(order) > window:
+            bump(order[-window - 1], -1)   # node leaving the window
+
+    place(seed)
+    for _ in range(n - 1):
+        best = -1
+        while heap:
+            negk, cand = heapq.heappop(heap)
+            if placed[cand] or -negk != key[cand]:
+                continue   # stale
+            best = cand
+            break
+        if best < 0:
+            # window/component exhausted (all remaining keys 0) — take next unplaced by id
+            while next_unplaced < n and placed[next_unplaced]:
+                next_unplaced += 1
+            best = next_unplaced
+        place(best)
+
+    permutation = np.empty(n, dtype=np.int32)
+    for new_ord, old_ord in enumerate(order):
+        permutation[old_ord] = new_ord
+    return permutation
+
+
 def greedy_page_growing_permutation(
     neighbors: list[list[int]],
     levels: np.ndarray,
@@ -390,6 +452,7 @@ def greedy_page_growing_permutation(
         candidates_to_clear = []
         buckets = [[] for _ in range(max_bucket)]
         top_bucket = 0
+        expand_cursor = 0  # page nodes [0, expand_cursor) already used as two-hop bridge bases
 
         def add_candidate(node):
             is_candidate[node] = True
@@ -434,6 +497,27 @@ def greedy_page_growing_permutation(
                 top_bucket -= 1
             return -1
 
+        def two_hop_expand():
+            # Called when the 1-hop candidate queue is empty but the page has room. Bridge through
+            # the page's 1-hop neighbors (assigned-elsewhere or not) to reach unassigned 2-hop nodes
+            # and add them as fresh candidates. These 2-hop nodes have no edge to the page (else they
+            # would already be candidates), so their affinity is 0 -> they enter bucket 0, which
+            # add_candidate re-arms top_bucket for. Each page node is used as a bridge base at most
+            # once (expand_cursor advances), bounding total work to O(pageSize * degree^2).
+            nonlocal expand_cursor
+            added = 0
+            while expand_cursor < len(page):
+                bridge_base = page[expand_cursor]
+                expand_cursor += 1
+                for nbr in neighbors[bridge_base]:          # 1-hop bridge
+                    for m in neighbors[nbr]:                 # 2-hop node
+                        if not assigned[m] and not is_candidate[m]:
+                            add_candidate(m)                 # affinity[m] == 0 here
+                            added += 1
+                if added > 0:
+                    break  # let pop_best consume this batch before bridging further
+            return added
+
         # Start of this page must be page-aligned
         page_start = next_ord
         assert page_start % page_capacity == 0, "page must start on a boundary"
@@ -443,7 +527,11 @@ def greedy_page_growing_permutation(
         while len(page) < page_capacity:
             best = pop_best()
             if best < 0:
-                # No affine candidates left — close the page early (partial_page)
+                # 1-hop queue is empty. In two_hop mode, try to refill from 2-hop neighbors before
+                # closing; only close when even 2-hop is exhausted (component genuinely stuck).
+                if expansion == "two_hop" and two_hop_expand() > 0:
+                    continue
+                # No candidates left — close the page early (partial_page).
                 break
             is_candidate[best] = False
             add_to_page(best)
@@ -548,18 +636,32 @@ def run_simulation(args):
     permutations["Reverse Cuthill-McKee"] = rcm_permutation(neighbors_list, n)
     print(f"  RCM: {time.time() - t0:.3f}s")
 
+    if not args.skip_gorder:
+        t0 = time.time()
+        permutations["Gorder"] = gorder_permutation(neighbors_list, n, args.gorder_window)
+        print(f"  Gorder (window={args.gorder_window}): {time.time() - t0:.3f}s")
+    else:
+        print("  Gorder: skipped (--skip-gorder)")
+
     t0 = time.time()
     permutations["Greedy (strict pages)"] = greedy_page_growing_permutation(
         neighbors_list, levels, n, page_capacity, "partial_page"
     )
     print(f"  Greedy (strict pages): {time.time() - t0:.3f}s")
 
-    # Report padding overhead from strict page boundaries
-    greedy_perm = permutations["Greedy (strict pages)"]
-    num_pages_used = int(greedy_perm.max()) // page_capacity + 1
-    padding_slots = num_pages_used * page_capacity - n
-    print(f"  Strict pages: {num_pages_used} pages, {padding_slots} padded slots "
-          f"({100*padding_slots/(num_pages_used*page_capacity):.1f}% overhead)")
+    t0 = time.time()
+    permutations["Greedy (2-hop refill)"] = greedy_page_growing_permutation(
+        neighbors_list, levels, n, page_capacity, "two_hop"
+    )
+    print(f"  Greedy (2-hop refill): {time.time() - t0:.3f}s")
+
+    # Report padding overhead from strict page boundaries (fewer pads == fuller pages)
+    for label in ("Greedy (strict pages)", "Greedy (2-hop refill)"):
+        perm = permutations[label]
+        num_pages_used = int(perm.max()) // page_capacity + 1
+        padding_slots = num_pages_used * page_capacity - n
+        print(f"  {label}: {num_pages_used} pages, {padding_slots} padded slots "
+              f"({100*padding_slots/(num_pages_used*page_capacity):.1f}% overhead)")
 
     print()
 
@@ -721,6 +823,8 @@ if __name__ == "__main__":
     parser.add_argument("--ef-search", type=int, default=64, help="HNSW efSearch")
     parser.add_argument("--page-size", type=int, default=32768, help="Page size in bytes")
     parser.add_argument("--num-entry-points", type=int, default=1, help="Hub entry points for flat search")
+    parser.add_argument("--gorder-window", type=int, default=5, help="Gorder window size w (Wei et al. use 5)")
+    parser.add_argument("--skip-gorder", action="store_true", help="skip Gorder (it is O(n*degree^2), slow at 1M)")
     parser.add_argument(
         "--no-shuffle",
         action="store_true",
