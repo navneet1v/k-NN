@@ -5,6 +5,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
+import org.opensearch.knn.clusterann.stats.ClusterANNStat;
 
 import java.io.IOException;
 
@@ -85,8 +86,12 @@ public class BlockPostingScorer implements PostingScorer {
             if (validPos(postingVectorOffset, vectorCount) != 0) {
                 reader.fetchBlock();
                 reader.readBlockVectors();
+                ClusterANNStat.BLOCKS_FETCHED.increment();
 
                 float maxScore = scorer.scoreBlock(validPos, candidates);
+                // Counted here rather than at the collector: every position in `candidates` cost a decode and a
+                // distance, including the whole block's worth that the threshold check below may discard.
+                ClusterANNStat.VECTORS_SCORED.record(candidates.getSize());
                 scoredBlockVectorOffset = postingVectorOffset;
                 cursor = 0;
                 if (maxScore > minCompetitiveSimilarity) {

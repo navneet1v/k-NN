@@ -7,6 +7,7 @@ package org.opensearch.knn.plugin.stats;
 
 import com.google.common.cache.CacheStats;
 import com.google.common.collect.ImmutableMap;
+import org.opensearch.knn.clusterann.stats.ClusterANNStat;
 import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
@@ -23,6 +24,7 @@ import org.opensearch.knn.plugin.stats.suppliers.NativeMemoryCacheManagerSupplie
 
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -30,6 +32,23 @@ import java.util.function.Supplier;
  * Class represents all stats the plugin keeps track of
  */
 public class KNNStats {
+
+    /** The {@link ClusterANNStat} metrics the scan path records, published under {@code cluster_ann_query_stats}. */
+    private static final List<ClusterANNStat> CLUSTER_ANN_SEARCH_STATS = List.of(
+        ClusterANNStat.QUERY_REQUESTS,
+        ClusterANNStat.QUERY_WITH_FILTER_REQUESTS,
+        ClusterANNStat.QUERY_ERRORS,
+        ClusterANNStat.QUERY_LATENCY_US,
+        ClusterANNStat.PROBES_PLANNED,
+        ClusterANNStat.CLUSTERS_SCANNED,
+        ClusterANNStat.EMPTY_PROBES_SKIPPED,
+        ClusterANNStat.CENTROID_KNEE_EARLY_STOP,
+        ClusterANNStat.FILTER_ELIGIBLE_CLUSTERS,
+        ClusterANNStat.FILTER_EXTENDED_PAST_MAX_PROBES,
+        ClusterANNStat.BLOCKS_FETCHED,
+        ClusterANNStat.VECTORS_SCORED,
+        ClusterANNStat.VECTORS_COLLECTED_PER_QUERY
+    );
 
     private final Map<String, KNNStat<?>> knnStats;
 
@@ -91,10 +110,21 @@ public class KNNStats {
         builder.put(StatNames.CLUSTER_ANN_QUERY_STATS.getName(), createNodeStat(this::createClusterANNQueryStatsMap));
     }
 
+    /**
+     * The ClusterANN search counters, read straight off {@link ClusterANNStat} — the registry the scan itself
+     * writes to. Each metric reports its cumulative {@code total} plus the {@code count} of observations behind
+     * it, so a reader can recover the per-event average ({@code total / count}) without a second scrape: for
+     * {@code clusterann_vectors_scored} that is the mean positions per scored block, for
+     * {@code clusterann_probes_planned} the mean probes per leaf scan.
+     *
+     * <p>Only the search-path metrics appear here. The flush/merge counters in {@link ClusterANNStat} have no
+     * call sites on this branch, so publishing them would report a permanent zero.
+     */
     private Map<String, Object> createClusterANNQueryStatsMap() {
         Map<String, Object> statsMap = new HashMap<>();
-        for (ClusterANNQueryValue value : ClusterANNQueryValue.values()) {
-            statsMap.put(value.getName(), value.getValue());
+        for (ClusterANNStat stat : CLUSTER_ANN_SEARCH_STATS) {
+            statsMap.put(stat.getName(), stat.getTotal());
+            statsMap.put(stat.getName() + "_count", stat.getCount());
         }
         return statsMap;
     }

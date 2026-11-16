@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
+import org.opensearch.knn.clusterann.stats.ClusterANNStat;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -145,6 +146,48 @@ class BlockPostingScorerTests {
 
         assertEquals(expectedHits, hits);
         assertEquals(expectedReader, scan.reader);
+    }
+
+    /**
+     * The scored count is the scan's CPU cost, so it has to count every position of every decoded block —
+     * including the blocks the threshold then drops. Counting hits instead would under-report by exactly the
+     * work that pruning failed to avoid, which is the number the pruning is judged on.
+     */
+    @Test
+    void testAdvance_whenBlocksArePruned_thenCountsEveryScoredPositionNotOnlyTheHits() throws IOException {
+        // given
+        Scan scan = scanOver(ORDINALS, SCORES, null);
+        final long scoredBefore = ClusterANNStat.VECTORS_SCORED.getTotal();
+        final long blocksBefore = ClusterANNStat.BLOCKS_FETCHED.getTotal();
+
+        // when: of the block maxima 0.40, 0.85 and 0.45, only block 1 competes — the other two are decoded,
+        // scored in full, and dropped.
+        List<Hit> hits = drain(scan, 0.50f);
+
+        // then
+        assertEquals(4, hits.size(), "only the competitive block's positions reach the caller");
+        assertEquals(
+            ORDINALS.length,
+            ClusterANNStat.VECTORS_SCORED.getTotal() - scoredBefore,
+            "every position of every decoded block is scored, pruned or not"
+        );
+        assertEquals(3, ClusterANNStat.BLOCKS_FETCHED.getTotal() - blocksBefore, "all three blocks were fetched");
+    }
+
+    /** A block the filter empties is never decoded, so it must not be counted as scored. */
+    @Test
+    void testAdvance_whenAFilterEmptiesABlock_thenCountsOnlyTheAcceptedPositions() throws IOException {
+        // given: positions 4 and 5 only, so block 1 is the only one with anything accepted
+        Scan scan = scanOver(ORDINALS, SCORES, bitsAt(4, 5));
+        final long scoredBefore = ClusterANNStat.VECTORS_SCORED.getTotal();
+        final long blocksBefore = ClusterANNStat.BLOCKS_FETCHED.getTotal();
+
+        // when
+        drain(scan, ACCEPT_ALL);
+
+        // then
+        assertEquals(2, ClusterANNStat.VECTORS_SCORED.getTotal() - scoredBefore, "only accepted positions are scored");
+        assertEquals(1, ClusterANNStat.BLOCKS_FETCHED.getTotal() - blocksBefore, "only the one block with hits was fetched");
     }
 
     @Test

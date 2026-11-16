@@ -75,7 +75,24 @@ public enum ClusterANNStat {
     PROBES_PLANNED("clusterann_probes_planned"),
     CLUSTERS_SCANNED("clusterann_clusters_scanned"),
     EMPTY_PROBES_SKIPPED("clusterann_empty_probes_skipped"),
-    VECTORS_SCORED_PER_QUERY("clusterann_vectors_scored_per_query"),
+    /**
+     * Positions whose score was actually computed: every accepted position of every block the scan decoded,
+     * counted where {@code scoreBlock} runs. One observation per scored block, so the average is the mean
+     * number of positions a scored block contributed.
+     *
+     * <p>This is the scan's real CPU cost, and it is strictly larger than
+     * {@link #VECTORS_COLLECTED_PER_QUERY}: a block whose best score cannot beat the collector's threshold is
+     * scored in full and then dropped without a single position reaching the collector.
+     */
+    VECTORS_SCORED("clusterann_vectors_scored"),
+    /**
+     * Distinct ordinals handed to the collector, one observation per query. Not a scoring count — it is what
+     * survived the competitive threshold, after SOAR dedup and the filter. Compare against
+     * {@link #VECTORS_SCORED} to see what the per-block pruning is worth.
+     */
+    VECTORS_COLLECTED_PER_QUERY("clusterann_vectors_collected_per_query"),
+    /** Blocks whose codes were fetched and decoded, which is the scan's IO. */
+    BLOCKS_FETCHED("clusterann_blocks_fetched"),
     EXACT_FALLBACK("clusterann_exact_fallback"),
     CENTROID_KNEE_EARLY_STOP("clusterann_centroid_knee_early_stop"),
 

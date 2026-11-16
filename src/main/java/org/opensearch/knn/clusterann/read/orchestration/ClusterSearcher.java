@@ -63,8 +63,10 @@ public final class ClusterSearcher {
                 scanned++;
             }
         }
-        // Distinct ordinals actually scored this query (SOAR dedup already applied via `visited`).
-        ClusterANNStat.VECTORS_SCORED_PER_QUERY.record(visited.cardinality());
+        // Distinct ordinals the collector took this query (SOAR dedup already applied via `visited`). Not the
+        // scoring count: blocks dropped on the threshold were scored in full without reaching the collector, and
+        // ClusterANNStat.VECTORS_SCORED counts those.
+        ClusterANNStat.VECTORS_COLLECTED_PER_QUERY.record(visited.cardinality());
         return scanned;
     }
 

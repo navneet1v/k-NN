@@ -38,6 +38,7 @@ import org.opensearch.knn.clusterann.read.ScanParams;
 import org.opensearch.knn.clusterann.read.orchestration.CentroidPlanner;
 import org.opensearch.knn.clusterann.read.orchestration.ClusterSearcher;
 import org.opensearch.knn.clusterann.read.orchestration.PlanParams;
+import org.opensearch.knn.clusterann.stats.ClusterANNStat;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -251,6 +252,14 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
             return;
         }
 
+        // One "query" is one leaf scan: a shard-level query over N segments records N of these, which is the unit
+        // the probe and cluster counts below are per.
+        ClusterANNStat.QUERY_REQUESTS.increment();
+        if (acceptDocs.bits() != null) {
+            ClusterANNStat.QUERY_WITH_FILTER_REQUESTS.increment();
+        }
+        final long startNanos = System.nanoTime();
+
         final OrdToDocDISIReaderConfiguration ordToDocConfig = fieldClusters.clusterMeta().ordToDoc();
         final LongValues ordToDoc = ordToDoc(ordToDocConfig, postings);
         final OrdinalTranslatedKnnCollector translatedKnnCollector = new OrdinalTranslatedKnnCollector(
@@ -259,19 +268,37 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
         );
         Bits acceptedOrds = buildAcceptedOrds(acceptDocs, ordToDoc, fieldClusters.numVectors());
 
-        int[] probes = CentroidPlanner.plan(
-            fieldClusters,
-            query,
-            PlanParams.of(fieldClusters.numClusters()),
-            knnCollector.k(),
-            acceptDocs,
-            () -> IndexedDISI.asDocIndexIterator(ordToDocConfig.getIndexedDISI(postings))
-        );
+        try {
+            int[] probes = CentroidPlanner.plan(
+                fieldClusters,
+                query,
+                PlanParams.of(fieldClusters.numClusters()),
+                knnCollector.k(),
+                acceptDocs,
+                () -> IndexedDISI.asDocIndexIterator(ordToDocConfig.getIndexedDISI(postings))
+            );
 
-        float[] scanQuery = new float[query.length];
-        fieldClusters.rotation().rotate(query, scanQuery);
+            float[] scanQuery = new float[query.length];
+            fieldClusters.rotation().rotate(query, scanQuery);
 
-        ClusterSearcher.search(fieldClusters, probes, ScanParams.of(scanQuery), translatedKnnCollector, acceptedOrds);
+            final int scanned = ClusterSearcher.search(
+                fieldClusters,
+                probes,
+                ScanParams.of(scanQuery),
+                translatedKnnCollector,
+                acceptedOrds
+            );
+
+            ClusterANNStat.PROBES_PLANNED.record(probes.length);
+            ClusterANNStat.CLUSTERS_SCANNED.record(scanned);
+            // Probes the planner ranked that held nothing to scan; the gap between the two above.
+            ClusterANNStat.EMPTY_PROBES_SKIPPED.record(probes.length - scanned);
+        } catch (RuntimeException | IOException e) {
+            ClusterANNStat.QUERY_ERRORS.increment();
+            throw e;
+        } finally {
+            ClusterANNStat.QUERY_LATENCY_US.record((System.nanoTime() - startNanos) / 1000L);
+        }
     }
 
     private Bits buildAcceptedOrds(AcceptDocs acceptDocs, LongValues ordToDoc, int numVectors) throws IOException {
