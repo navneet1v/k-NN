@@ -16,7 +16,8 @@ import org.apache.lucene.util.VectorUtil;
  *
  * <p>{@link #transposeDibit} is copied from Lucene's {@code OptimizedScalarQuantizer} so the on-disk layout is Lucene's,
  * byte for byte: two stripes of {@code packed.length / 2}, the low bit of every dimension then the high bit, most
- * significant bit first within a byte. {@link Int4DotProduct#dibit} reads exactly this.
+ * significant bit first within a byte. {@link org.opensearch.knn.quantization.Int4DotProduct#dibit} reads exactly
+ * this.
  */
 public final class Lucene104Backports {
 
