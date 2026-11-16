@@ -1,15 +1,10 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format.rotation;
 
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
 
-import org.opensearch.common.Nullable;
+import javax.annotation.Nullable;
 import java.io.IOException;
 
 /**
@@ -38,6 +33,7 @@ public final class RotationFormats {
         return switch (rotationId) {
             case ClusterANNFormatConstants.ROTATION_NONE -> IdentityRotationFormat.INSTANCE;
             case ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN -> BlockDiagonalRotationFormat.INSTANCE;
+            case ClusterANNFormatConstants.ROTATION_HADAMARD -> HadamardRotationFormat.INSTANCE;
             default -> throw new IllegalArgumentException("Unsupported rotationId: " + rotationId);
         };
     }

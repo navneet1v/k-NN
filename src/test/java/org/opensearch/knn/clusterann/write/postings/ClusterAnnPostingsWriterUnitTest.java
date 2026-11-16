@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.write.postings;
 
 import org.apache.lucene.index.FloatVectorValues;
@@ -12,11 +7,8 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.opensearch.knn.clusterann.format.rotation.RotationFormats;
-import org.opensearch.knn.clusterann.format.ClusterANNEncoding;
-import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterMembers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterRegion;
 import org.opensearch.knn.clusterann.ClusteringResult;
@@ -30,25 +22,25 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 
 /**
  * Unit test for {@link ClusterAnnPostingsWriter}'s orchestration, isolated from real quantization: the cluster
- * writer factory {@code ClusterWriterFactory#newWriter} is stubbed with a static mock that returns a recording
- * writer, so the assertions cover only what the orchestrator owns — the partition (primary + secondary assignment per
- * centroid, unassigned ordinals skipped), the nearest-first ordering handed to each cluster, and the {@link
- * PostingsRegions} bookkeeping (contiguous regions summing to the whole {@code .clap}). How a cluster region is
- * laid out is out of scope here and covered end-to-end in {@link ClusterAnnPostingsWriterTest}.
+ * writer factory handed to it is a mock whose {@code newWriter} returns recording writers, so the assertions cover
+ * only what the orchestrator owns — the partition (primary + secondary assignment per centroid, unassigned ordinals
+ * skipped), the nearest-first ordering handed to each cluster, and the {@link PostingsRegions} bookkeeping
+ * (contiguous regions summing to the whole {@code .clap}). How a cluster region is laid out is out of scope here
+ * and covered end-to-end in {@link ClusterAnnPostingsWriterTest}.
  */
 class ClusterAnnPostingsWriterUnitTest {
 
     private static final int DIMENSION = 2;
-    private static final int BLOCK_SIZE = 2;
     private static final VectorSimilarityFunction METRIC = VectorSimilarityFunction.EUCLIDEAN;
 
     // vectorValue[i] = {i*10, 0}, so a recorded first component maps back to its ordinal (component / 10).
     private static final float[][] VECTORS = { { 0f, 0f }, { 10f, 0f }, { 20f, 0f }, { 30f, 0f } };
     private static final float[][] CENTROIDS = { { 0f, 0f }, { 20f, 0f }, { 99f, 0f } };
+
+    private final List<RecordingClusterWriter> created = new ArrayList<>();
 
     /**
      * c0 primary: v0,v1. c1 primary: v2, secondary: v0. c2: empty. v3: unassigned (skipped).
@@ -67,24 +59,11 @@ class ClusterAnnPostingsWriterUnitTest {
 
     @Test
     void write_partitionsSortsAndReportsRegions() throws IOException {
-        final List<RecordingClusterWriter> created = new ArrayList<>();
         final PostingsRegions layout;
 
-        try (MockedStatic<ClusterWriterFactory> mocked = Mockito.mockStatic(ClusterWriterFactory.class)) {
-            mocked.when(() -> ClusterWriterFactory.newWriter(any(), anyInt(), anyInt(), any(), any())).thenAnswer(inv -> {
-                final RecordingClusterWriter w = new RecordingClusterWriter();
-                created.add(w);
-                return w;
-            });
-
-            try (Directory dir = new ByteBuffersDirectory()) {
-                try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                    layout = new ClusterAnnPostingsWriter(
-                        BLOCK_SIZE,
-                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
-                        RotationFormats.create(ROTATION_NONE, DIMENSION)
-                    ).write(out, clustering(), source(), METRIC);
-                }
+        try (Directory dir = new ByteBuffersDirectory()) {
+            try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
+                layout = postingsWriter().write(out, clustering(), source(), METRIC);
             }
         }
 
@@ -120,23 +99,10 @@ class ClusterAnnPostingsWriterUnitTest {
      */
     @Test
     void write_ordersFarthestFirstForInnerProduct() throws IOException {
-        final List<RecordingClusterWriter> created = new ArrayList<>();
 
-        try (MockedStatic<ClusterWriterFactory> mocked = Mockito.mockStatic(ClusterWriterFactory.class)) {
-            mocked.when(() -> ClusterWriterFactory.newWriter(any(), anyInt(), anyInt(), any(), any())).thenAnswer(inv -> {
-                final RecordingClusterWriter w = new RecordingClusterWriter();
-                created.add(w);
-                return w;
-            });
-
-            try (Directory dir = new ByteBuffersDirectory()) {
-                try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                    new ClusterAnnPostingsWriter(
-                        BLOCK_SIZE,
-                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
-                        RotationFormats.create(ROTATION_NONE, DIMENSION)
-                    ).write(out, clustering(), source(), VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
-                }
+        try (Directory dir = new ByteBuffersDirectory()) {
+            try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
+                postingsWriter().write(out, clustering(), source(), VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
             }
         }
 
@@ -156,19 +122,10 @@ class ClusterAnnPostingsWriterUnitTest {
         final int prefix = 64; // bytes a previous field already wrote, so the region starts past 0
         final PostingsRegions layout;
 
-        try (MockedStatic<ClusterWriterFactory> mocked = Mockito.mockStatic(ClusterWriterFactory.class)) {
-            mocked.when(() -> ClusterWriterFactory.newWriter(any(), anyInt(), anyInt(), any(), any()))
-                .thenAnswer(inv -> new RecordingClusterWriter());
-
-            try (Directory dir = new ByteBuffersDirectory()) {
-                try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                    out.writeBytes(new byte[prefix], prefix); // advance past a non-zero region start
-                    layout = new ClusterAnnPostingsWriter(
-                        BLOCK_SIZE,
-                        QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 1),
-                        RotationFormats.create(ROTATION_NONE, DIMENSION)
-                    ).write(out, clustering(), source(), METRIC);
-                }
+        try (Directory dir = new ByteBuffersDirectory()) {
+            try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
+                out.writeBytes(new byte[prefix], prefix); // advance past a non-zero region start
+                layout = postingsWriter().write(out, clustering(), source(), METRIC);
             }
         }
 
@@ -183,6 +140,17 @@ class ClusterAnnPostingsWriterUnitTest {
             expected += layout.centroidLengths()[c];
         }
         assertEquals(expected, layout.clapLength(), "relative offsets and lengths span the field's region");
+    }
+
+    private ClusterAnnPostingsWriter postingsWriter() {
+        // Every newWriter call hands out a fresh recording writer, collected in created.
+        final ClusterWriterFactory factory = Mockito.mock(ClusterWriterFactory.class);
+        Mockito.when(factory.newWriter(any())).thenAnswer(inv -> {
+            final RecordingClusterWriter w = new RecordingClusterWriter();
+            created.add(w);
+            return w;
+        });
+        return new ClusterAnnPostingsWriter(factory, RotationFormats.create(ROTATION_NONE, DIMENSION));
     }
 
     private static FloatVectorValues source() {

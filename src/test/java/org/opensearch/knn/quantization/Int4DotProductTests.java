@@ -1,10 +1,6 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
+package org.opensearch.knn.quantization;
 
-package org.opensearch.knn.clusterann.read.block.scalar;
-
+import org.opensearch.knn.clusterann.read.block.scalar.Lucene104Backports;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;

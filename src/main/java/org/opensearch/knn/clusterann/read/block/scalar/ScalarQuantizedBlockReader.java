@@ -1,14 +1,10 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block.scalar;
 
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 
+import javax.annotation.concurrent.NotThreadSafe;
 import java.io.IOException;
 
 /**
@@ -19,17 +15,31 @@ import java.io.IOException;
  * <p>Every block occupies the same byte stride, the last and partial one included, so positioning a block is
  * arithmetic rather than a walk. Every buffer is sized once at construction and refilled in place, which is
  * what keeps a scan free of per-block allocation.
+ *
+ * <p><b>Reused across clusters.</b> The buffers depend only on the field's geometry ({@code blockSize},
+ * {@code dimension}, {@code encoding}), which every cluster of a field shares, so one reader serves a whole scan:
+ * the constructor sizes the buffers and {@link #reset} points them at the next cluster's blocks. A scan holds one
+ * of these (see {@link SQScanBuffers}) rather than allocating a block's worth of buffers per probed cluster.
  */
+@NotThreadSafe
 public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
 
     private static final long BASE_RAM_USAGE = RamUsageEstimator.shallowSizeOfInstance(ScalarQuantizedBlockReader.class);
 
-    private final IndexInput in;
     private final int blockSize;
-    private final int vectorCount;
-    private final int numOfBlocks;
     private final int packedBytesPerVector;
     private final long fixedBlockBytes;
+
+    /** The cluster this reader currently points at. Null until the first {@link #reset}. */
+    private IndexInput in;
+    private int vectorCount;
+    private int numOfBlocks;
+
+    /**
+     * Bumped by every {@link #reset}, so a scorer built against one cluster can tell that the reader has since been
+     * pointed at another. See {@link ScalarQuantizedBlockScorer}.
+     */
+    private int generation;
 
     // buffer for floats
     private final int[] intScratch;
@@ -44,12 +54,16 @@ public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
 
     private int blockCursor = -1;
 
-    public ScalarQuantizedBlockReader(IndexInput quantizedSlice, int blockSize, int vectorCount, int dimension, ScalarEncoding encoding) {
-        this.in = quantizedSlice;
+    /**
+     * Sizes the block buffers for one field's geometry. Reads nothing and points at no cluster — call
+     * {@link #reset} before any other method.
+     *
+     * @param blockSize vectors per block, the last block of a cluster excepted
+     * @param dimension the field's vector dimension
+     * @param encoding the stored code width, which fixes the packed bytes per vector
+     */
+    public ScalarQuantizedBlockReader(int blockSize, int dimension, ScalarEncoding encoding) {
         this.blockSize = blockSize;
-
-        this.vectorCount = vectorCount;
-        this.numOfBlocks = (vectorCount + blockSize - 1) / blockSize;
 
         this.packedBytesPerVector = encoding.getDocPackedLength(dimension);
 
@@ -66,6 +80,36 @@ public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
 
     }
 
+    /**
+     * Points this reader at another cluster's blocks, keeping the buffers. The cursor rewinds, so the next
+     * {@link #advance} starts that cluster from the top.
+     *
+     * <p>Every scorer already built against this reader is invalidated: its {@link #generation} no longer matches,
+     * and it will refuse to score rather than read a mixture of two clusters. So reset only between clusters, never
+     * while a scorer is still being drained.
+     *
+     * @param blocks a slice covering exactly this cluster's blocks, block 0 first
+     * @param vectorCount entries in the cluster, primary and SOAR together
+     */
+    public void reset(IndexInput blocks, int vectorCount) {
+        if (blocks == null) {
+            throw new IllegalArgumentException("blocks must not be null");
+        }
+        if (vectorCount < 0) {
+            throw new IllegalArgumentException("vectorCount must not be negative, got " + vectorCount);
+        }
+        this.in = blocks;
+        this.vectorCount = vectorCount;
+        this.numOfBlocks = (vectorCount + blockSize - 1) / blockSize;
+        this.blockCursor = -1;
+        this.generation++;
+    }
+
+    /** Which cluster this reader is on, as an opaque counter. Changes on every {@link #reset}. */
+    int generation() {
+        return generation;
+    }
+
     @Override
     public int numBlocks() {
         return numOfBlocks;
@@ -78,6 +122,7 @@ public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
 
     @Override
     public boolean advance(int blockPos) throws IOException {
+        ensureReset();
         if (blockPos >= numOfBlocks) {
             in.seek(in.length());
             blockCursor = numOfBlocks;
@@ -116,6 +161,7 @@ public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
 
     @Override
     public void prefetchBlock(int blockPos) throws IOException {
+        ensureReset();
         if (blockPos < 0 || blockPos >= numOfBlocks) {
             return;
         }
@@ -169,6 +215,12 @@ public class ScalarQuantizedBlockReader implements BlockVectorFormat.Reader {
         in.readInts(intScratch, 0, n);
         for (int i = 0; i < n; i++) {
             out[i] = Float.intBitsToFloat(intScratch[i]);
+        }
+    }
+
+    private void ensureReset() {
+        if (in == null) {
+            throw new IllegalStateException("reset(blocks, vectorCount) must be called before reading a cluster");
         }
     }
 

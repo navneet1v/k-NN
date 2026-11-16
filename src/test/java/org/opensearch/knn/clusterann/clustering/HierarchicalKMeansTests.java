@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.clustering;
 
 import org.apache.lucene.index.FloatVectorValues;

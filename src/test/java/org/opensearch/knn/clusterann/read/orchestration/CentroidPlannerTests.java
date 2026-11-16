@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.orchestration;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -178,10 +173,7 @@ class CentroidPlannerTests {
         assertArrayEquals(new int[] { 1, 2, 3, 0 }, probes);
     }
 
-    /**
-     * The floor holds when the field can supply it. Nothing cuts below it yet, so this asserts the invariant rather
-     * than a behaviour — the point being that a pruner added later cannot quietly violate it.
-     */
+    /** The floor holds when the field can supply it, whatever {@link CentroidKneePruner} makes of the curve. */
     @Test
     void testPlan_thenNamesAtLeastMinProbes() throws IOException {
         // given
@@ -206,6 +198,41 @@ class CentroidPlannerTests {
 
         // then
         assertEquals(3, probes.length, "three occupied clusters, and a floor of four does not invent a fourth");
+    }
+
+    // ---------------------------------------------------------------- knee pruning
+
+    /**
+     * The ceiling is a budget, not a quota: a plan allowed six clusters names five when the sixth sits past the knee.
+     * These centroids are strung along one axis at 1, 2, 3, 4, 5 and 100 from a query at the origin, so the squared
+     * distances are 1, 4, 9, 16, 25 and 10000 — a neighbourhood and then one outlier. See
+     * {@link CentroidKneePrunerTests} for the arithmetic; here the point is that {@code plan} applies it.
+     */
+    @Test
+    void testPlan_whenTheDistanceCurveBreaks_thenCutsThePlanAtTheKnee() throws IOException {
+        // given
+        float[][] centroids = { { 1f, 0f }, { 2f, 0f }, { 3f, 0f }, { 4f, 0f }, { 5f, 0f }, { 100f, 0f } };
+        Clusters clusters = clusters(VectorSimilarityFunction.EUCLIDEAN, centroids, new int[] { 4, 4, 4, 4, 4, 4 });
+
+        // when
+        int[] probes = CentroidPlanner.plan(clusters, new float[] { 0f, 0f }, new PlanParams(1, 6));
+
+        // then
+        assertArrayEquals(new int[] { 0, 1, 2, 3, 4 }, probes, "the outlier is not worth a posting read");
+    }
+
+    /** A query whose neighbours rise smoothly has no knee to cut on, and spends the whole ceiling. */
+    @Test
+    void testPlan_whenTheDistanceCurveIsSmooth_thenNamesEveryRankedCluster() throws IOException {
+        // given — squared distances of 1, 4, 9, 16, 25 and 36, whose gaps never break family
+        float[][] centroids = { { 1f, 0f }, { 2f, 0f }, { 3f, 0f }, { 4f, 0f }, { 5f, 0f }, { 6f, 0f } };
+        Clusters clusters = clusters(VectorSimilarityFunction.EUCLIDEAN, centroids, new int[] { 4, 4, 4, 4, 4, 4 });
+
+        // when
+        int[] probes = CentroidPlanner.plan(clusters, new float[] { 0f, 0f }, new PlanParams(1, 6));
+
+        // then
+        assertArrayEquals(new int[] { 0, 1, 2, 3, 4, 5 }, probes);
     }
 
     // ---------------------------------------------------------------- empty clusters

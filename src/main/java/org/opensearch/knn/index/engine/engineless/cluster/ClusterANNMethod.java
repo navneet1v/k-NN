@@ -38,6 +38,8 @@ public final class ClusterANNMethod implements EnginelessMethod {
 
     public static final ClusterANNMethod INSTANCE = new ClusterANNMethod();
 
+    private static final int DATA_BLIND_INT8_BITS = 8;
+
     private static final Set<VectorDataType> SUPPORTED_DATA_TYPES = ImmutableSet.of(VectorDataType.FLOAT);
     private static final ClusterANNSQEncoder SQ_ENCODER = new ClusterANNSQEncoder();
     public static final Map<String, Encoder> SUPPORTED_ENCODERS = Map.of(SQ_ENCODER.getName(), SQ_ENCODER);
@@ -83,9 +85,10 @@ public final class ClusterANNMethod implements EnginelessMethod {
 
     @Override
     public KnnVectorsFormat resolveKnnVectorsFormat(int bits) {
-        return new KNN1030ClusterANNVectorsFormat(
-            KNN1030ClusterANNVectorsFormat.FORMAT_NAME,
-            QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, bits)
-        );
+        // 8 bits names the data-blind int8 backend (4x); 1/2/4 are optimized scalar quantization.
+        final ClusterANNEncoding encoding = bits == DATA_BLIND_INT8_BITS
+            ? ClusterANNEncoding.DATA_BLIND_INT8
+            : ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION;
+        return new KNN1030ClusterANNVectorsFormat(KNN1030ClusterANNVectorsFormat.FORMAT_NAME, QuantizationParams.of(encoding, bits));
     }
 }

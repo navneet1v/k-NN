@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block.scalar;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -16,9 +11,12 @@ import org.opensearch.knn.clusterann.read.Centroid;
 import org.opensearch.knn.clusterann.read.Cluster;
 import org.opensearch.knn.clusterann.read.PostingScorer;
 import org.opensearch.knn.clusterann.read.ScanParams;
+import org.opensearch.knn.clusterann.read.ScoreComputer;
 import org.opensearch.knn.clusterann.read.block.BlockPostingScorer;
+import org.opensearch.knn.clusterann.read.orchestration.ScanBuffers;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 
+import javax.annotation.concurrent.NotThreadSafe;
 import java.io.IOException;
 
 /**
@@ -39,7 +37,14 @@ import java.io.IOException;
  * visit, but nothing is read until the cluster is actually scanned.
  *
  * <p>One instance per query; not thread-safe.
+ *
+ * <p><b>Block buffers belong to the scan.</b> They are sized by the field's geometry, so one set serves every cluster
+ * a query probes: {@link org.opensearch.knn.clusterann.read.ClusterFactory#newScanBuffers()} makes them
+ * from the field's metadata and {@link #scorer} resets them onto this cluster. The consequence is that the scorer
+ * {@link #scorer} hands out must be drained before the next cluster is scanned, and
+ * {@link ScalarQuantizedBlockScorer} throws rather than score on if it is not.
  */
+@NotThreadSafe
 public class ScalarQuantizedCluster implements Cluster {
 
     private static final long BASE_RAM_USAGE = RamUsageEstimator.shallowSizeOfInstance(ScalarQuantizedCluster.class);
@@ -53,14 +58,13 @@ public class ScalarQuantizedCluster implements Cluster {
     private final ScalarEncoding encoding;
     private final OptimizedScalarQuantizer quantizer;
     private final VectorSimilarityFunction similarityFunction;
+    private final ScoreComputer computer;
 
     /** Bytes before block 0. Arithmetic, not measured, which is what keeps the constructor free of IO. */
     private final long headerBytes;
 
     /** Global vector ordinals, ascending by distance from the centroid. Read on the first {@link #scorer}. */
     private int[] ordinals;
-
-    private final ScalarQuantizedBlockReader reader;
 
     private Centroid centroid;
 
@@ -72,12 +76,12 @@ public class ScalarQuantizedCluster implements Cluster {
      * @param clusterSize entries in the posting, primary and SOAR together
      * @param centroidSupplier reads this cluster's centroid and ‖c‖² from {@code .clac}, called at most once and
      *     only if this cluster is actually scanned
-     * @param ioFetchBytes the field's byte budget for one block; this cluster sizes its own blocks from it, by
-     *     the same arithmetic the writer used, so nothing above it handles a vector count
+     * @param blockSize vectors per block, the last block excepted
      * @param dimension the field's vector dimension
      * @param encoding stored code width, which also fixes the packed bytes per vector
      * @param quantizer quantizes the query into the same space as the stored codes
      * @param similarityFunction the field's similarity, which selects the ADC transform
+     * @param computer scores each block's accepted positions; the field's choice at reader open
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public ScalarQuantizedCluster(
@@ -85,28 +89,33 @@ public class ScalarQuantizedCluster implements Cluster {
         int ordinal,
         int clusterSize,
         IOSupplier<Centroid> centroidSupplier,
-        int ioFetchBytes,
+        int blockSize,
         int dimension,
         ScalarEncoding encoding,
         OptimizedScalarQuantizer quantizer,
-        VectorSimilarityFunction similarityFunction
+        VectorSimilarityFunction similarityFunction,
+        ScoreComputer computer
     ) throws IOException {
+        this.computer = computer;
         this.posting = posting;
         this.ordinal = ordinal;
         this.clusterSize = clusterSize;
         this.centroidSupplier = centroidSupplier;
+        this.blockSize = blockSize;
         this.dimension = dimension;
         this.encoding = encoding;
         this.quantizer = quantizer;
         this.similarityFunction = similarityFunction;
-        this.blockSize = ScalarBlockLayout.blockSize(ioFetchBytes, encoding, dimension);
 
         this.headerBytes = (long) clusterSize * Integer.BYTES              // ordinals
             + (long) FixedBitSet.bits2words(clusterSize) * Long.BYTES      // soarBitset
             + (long) clusterSize * Float.BYTES;                            // sortedDistances
 
-        IndexInput blocks = posting.slice("blocks", headerBytes, posting.length() - headerBytes);
-        this.reader = new ScalarQuantizedBlockReader(blocks, blockSize, clusterSize, dimension, encoding);
+        if (posting.length() < headerBytes) {
+            throw new IllegalArgumentException(
+                "posting is " + posting.length() + " bytes, too short for a " + clusterSize + "-entry header needing " + headerBytes
+            );
+        }
     }
 
     @Override
@@ -120,27 +129,37 @@ public class ScalarQuantizedCluster implements Cluster {
     }
 
     @Override
-    public void prefetch(boolean partial) throws IOException {
-        if (partial) {
-            posting.prefetch(0, headerBytes);
-            reader.prefetchBlock(0);
-            return;
-        }
-        posting.prefetch(0, posting.length());
-    }
-
-    @Override
-    public PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds) throws IOException {
+    public PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds, ScanBuffers scanBuffers) throws IOException {
         if (!(scanContext instanceof SQScanContext sqScanContext)) {
             throw new IllegalArgumentException(
                 "A scalar quantized cluster needs a scalar quantized scan context, got: "
                     + (scanContext == null ? "null" : scanContext.getClass().getSimpleName())
             );
         }
+        if (!(scanBuffers instanceof SQScanBuffers sqBuffers)) {
+            throw new IllegalArgumentException(
+                "A scalar quantized cluster needs scalar quantized scan buffers, got: "
+                    + (scanBuffers == null ? "null" : scanBuffers.getClass().getSimpleName())
+            );
+        }
 
         load();
-        ScalarQuantizedBlockScorer scorer = new ScalarQuantizedBlockScorer(reader, sqScanContext, encoding, similarityFunction);
-        return new BlockPostingScorer(scorer, ordinals, acceptedOrds);
+
+        ScalarQuantizedBlockReader reader = sqBuffers.reader();
+        reader.reset(posting.slice("blocks", headerBytes, posting.length() - headerBytes), clusterSize);
+
+        SQComputeContext computeContext = new SQComputeContext(
+            reader.codes(),
+            reader.lower(),
+            reader.upper(),
+            reader.addCor(),
+            reader.sum(),
+            encoding,
+            encoding.getDocPackedLength(dimension),
+            sqScanContext
+        );
+        ScalarQuantizedBlockScorer scorer = new ScalarQuantizedBlockScorer(reader, computeContext, computer);
+        return new BlockPostingScorer(scorer, ordinals, clusterSize, acceptedOrds);
     }
 
     /**
@@ -185,7 +204,8 @@ public class ScalarQuantizedCluster implements Cluster {
             lower,
             scale,
             quantized.quantizedComponentSum(),
-            quantized.additionalCorrection()
+            quantized.additionalCorrection(),
+            similarityFunction
         );
     }
 
@@ -198,13 +218,14 @@ public class ScalarQuantizedCluster implements Cluster {
     }
 
     /**
-     * What this cluster holds on the heap, which is not fixed: an unscanned cluster is little more than its
-     * reader's buffers, and only a scan adds the ordinals and the centroid. The inputs are not counted — they are
-     * slices of a mapped file, not heap.
+     * What this cluster holds on the heap, which is not fixed: only a scan adds the ordinals and the centroid. The
+     * block buffers are deliberately absent — they belong to the scan's {@link SQScanBuffers}, shared by every
+     * cluster the query probes, so counting them here would report one scan's buffers once per probed cluster. The
+     * inputs are not counted either; they are slices of a mapped file, not heap.
      */
     @Override
     public long ramBytesUsed() {
-        long bytes = BASE_RAM_USAGE + reader.ramBytesUsed();
+        long bytes = BASE_RAM_USAGE;
         if (ordinals != null) {
             bytes += RamUsageEstimator.sizeOf(ordinals);
         }

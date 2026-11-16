@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read;
 
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
@@ -44,8 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ClusterANNFieldMetaTests {
 
-    /** An arbitrary positive budget: these tests round-trip the recorded value, not what it sizes. */
-    private static final int IO_FETCH_BYTES = 32 * 1024;
+    private static final int BLOCK_SIZE = 32;
 
     // ---------------------------------------------------------------- round trip
 
@@ -53,6 +47,7 @@ class ClusterANNFieldMetaTests {
     void testRead_whenEntryIsValid_thenRoundTripsEveryValue() throws IOException {
         // given
         ClusterANNFieldMetaEncoder encoder = new ClusterANNFieldMetaEncoder().dimension(16)
+            .blockSize(292)
             .vectorCount(30)
             .centroidCount(3)
             .similarityFunction(ClusterANNFieldMetaEncoder.SIMILARITY_COSINE)
@@ -73,7 +68,7 @@ class ClusterANNFieldMetaTests {
         ClusterANNFieldMeta meta = read(encoder);
 
         // then
-        assertEquals(IO_FETCH_BYTES, meta.ioFetchBytes(), "ioFetchBytes comes from the file header, not the entry");
+        assertEquals(292, meta.blockSize(), "blockSize is read from the field's own entry");
         assertEquals(16, meta.dimension());
         assertEquals(30, meta.vectorCount());
         assertEquals(3, meta.centroidCount());
@@ -125,12 +120,9 @@ class ClusterANNFieldMetaTests {
 
     // ---------------------------------------------------------------- emptiness
 
-    /**
-     * Emptiness is about vectors, not clusters: a field with vectors is not empty even if the entry claims no
-     * clusters for them, since the offsets it carries still locate real data.
-     */
+    /** Emptiness follows the vector count for every valid field shape. */
     @ParameterizedTest(name = "{0} vectors in {1} clusters")
-    @CsvSource({ "0, 0, true", "1, 1, false", "30, 3, false", "30, 0, false" })
+    @CsvSource({ "0, 0, true", "1, 1, false", "30, 3, false" })
     void testIsEmpty_thenFollowsVectorCountAlone(int vectorCount, int centroidCount, boolean expectedEmpty) throws IOException {
         // given / when
         ClusterANNFieldMeta meta = read(new ClusterANNFieldMetaEncoder().vectorCount(vectorCount).centroidCount(centroidCount));
@@ -183,7 +175,7 @@ class ClusterANNFieldMetaTests {
 
             // when
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
+                ClusterANNFieldMeta meta = ClusterANNFieldMeta.read(in);
 
                 // then
                 assertFalse(meta.hasRotation());
@@ -196,7 +188,7 @@ class ClusterANNFieldMetaTests {
     }
 
     @ParameterizedTest(name = "rotationId {0}")
-    @ValueSource(ints = { 2, 7, 127, -1 })
+    @ValueSource(ints = { 7, 127, -1 })
     void testRead_whenRotationIsUnknown_thenThrows(int rotationId) {
         // given / when
         CorruptIndexException e = assertThrows(
@@ -264,6 +256,29 @@ class ClusterANNFieldMetaTests {
         assertTrue(e.getMessage().contains("Dimension must be positive, got: " + dimension), e.getMessage());
     }
 
+    @ParameterizedTest(name = "blockSize {0}")
+    @ValueSource(ints = { 0, -1 })
+    void testRead_whenBlockSizeIsNotPositive_thenThrows(int blockSize) {
+        // given / when
+        CorruptIndexException e = assertThrows(
+            CorruptIndexException.class,
+            () -> read(new ClusterANNFieldMetaEncoder().blockSize(blockSize))
+        );
+
+        // then
+        assertTrue(e.getMessage().contains("Block size must be positive for a field with vectors, got: " + blockSize), e.getMessage());
+    }
+
+    @Test
+    void testRead_whenFieldIsEmpty_thenAcceptsAZeroBlockSize() throws IOException {
+        // given / when — an empty field has no blocks, so the writer records 0
+        ClusterANNFieldMeta meta = read(new ClusterANNFieldMetaEncoder().vectorCount(0).centroidCount(0).blockSize(0));
+
+        // then
+        assertTrue(meta.isEmpty());
+        assertEquals(0, meta.blockSize());
+    }
+
     @Test
     void testRead_whenVectorCountIsNegative_thenThrows() {
         // given / when
@@ -281,7 +296,7 @@ class ClusterANNFieldMetaTests {
      * before the sized arrays are read is what stops a corrupt count from driving a huge allocation.
      */
     @ParameterizedTest(name = "{0} clusters over {1} vectors")
-    @CsvSource({ "4, 3", "1, 0", "-1, 10" })
+    @CsvSource({ "4, 3", "1, 0", "0, 1", "-1, 10" })
     void testRead_whenCentroidCountCannotBeTrue_thenThrows(int centroidCount, int vectorCount) {
         // given / when
         CorruptIndexException e = assertThrows(
@@ -290,7 +305,11 @@ class ClusterANNFieldMetaTests {
         );
 
         // then
-        assertTrue(e.getMessage().contains("centroidCount must be in [0, " + vectorCount + "], got: " + centroidCount), e.getMessage());
+        final int minCentroidCount = vectorCount == 0 ? 0 : 1;
+        assertTrue(
+            e.getMessage().contains("centroidCount must be in [" + minCentroidCount + ", " + vectorCount + "], got: " + centroidCount),
+            e.getMessage()
+        );
     }
 
     /**
@@ -507,7 +526,7 @@ class ClusterANNFieldMetaTests {
         try (Directory directory = new ByteBuffersDirectory()) {
             write(directory, encoder, null);
             try (ChecksumIndexInput in = directory.openChecksumInput(ENTRY)) {
-                return ClusterANNFieldMeta.read(in, IO_FETCH_BYTES);
+                return ClusterANNFieldMeta.read(in);
             }
         }
     }
@@ -533,7 +552,7 @@ class ClusterANNFieldMetaTests {
         long clarLength
     ) {
         return new ClusterANNFieldMeta(
-            IO_FETCH_BYTES,
+            BLOCK_SIZE,
             8,
             30,
             centroidCount,

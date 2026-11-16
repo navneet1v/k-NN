@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block.scalar;
 
 import org.apache.lucene.store.ByteBuffersDirectory;
@@ -240,7 +235,7 @@ class SQScanContextBlockReaderTests {
     void testPrefetchBlock_thenHintsTheWholeBlockFromItsStart() throws IOException {
         // given
         PrefetchRecordingInput input = new PrefetchRecordingInput(open(VECTOR_COUNT, BLOCK_SIZE));
-        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(input, BLOCK_SIZE, VECTOR_COUNT, DIMENSION, ENCODING);
+        ScalarQuantizedBlockReader reader = reader(input, BLOCK_SIZE, VECTOR_COUNT);
         long blockBytes = fixedBlockBytes(BLOCK_SIZE);
 
         // when
@@ -257,7 +252,7 @@ class SQScanContextBlockReaderTests {
     void testPrefetchBlock_whenTheBlockIsTheShortLastOne_thenClampsToTheFileEnd() throws IOException {
         // given
         PrefetchRecordingInput input = new PrefetchRecordingInput(open(VECTOR_COUNT, BLOCK_SIZE));
-        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(input, BLOCK_SIZE, VECTOR_COUNT, DIMENSION, ENCODING);
+        ScalarQuantizedBlockReader reader = reader(input, BLOCK_SIZE, VECTOR_COUNT);
         long blockBytes = fixedBlockBytes(BLOCK_SIZE);
         long offset = 2 * blockBytes;
 
@@ -275,7 +270,7 @@ class SQScanContextBlockReaderTests {
     void testPrefetchBlock_whenTheBlockIsPastTheEnd_thenHintsNothing() throws IOException {
         // given
         PrefetchRecordingInput input = new PrefetchRecordingInput(open(VECTOR_COUNT, BLOCK_SIZE));
-        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(input, BLOCK_SIZE, VECTOR_COUNT, DIMENSION, ENCODING);
+        ScalarQuantizedBlockReader reader = reader(input, BLOCK_SIZE, VECTOR_COUNT);
 
         // when
         assertTrue(reader.advance(0));
@@ -349,7 +344,39 @@ class SQScanContextBlockReaderTests {
     }
 
     private ScalarQuantizedBlockReader readerOver(int vectorCount, int blockSize) throws IOException {
-        return new ScalarQuantizedBlockReader(open(vectorCount, blockSize), blockSize, vectorCount, DIMENSION, ENCODING);
+        return reader(open(vectorCount, blockSize), blockSize, vectorCount);
+    }
+
+    @Test
+    void testReset_whenBlocksAreNull_thenThrows() {
+        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(BLOCK_SIZE, DIMENSION, ENCODING);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> reader.reset(null, VECTOR_COUNT));
+        assertTrue(e.getMessage().contains("blocks"), e.getMessage());
+    }
+
+    @Test
+    void testReset_whenVectorCountIsNegative_thenThrows() throws IOException {
+        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(BLOCK_SIZE, DIMENSION, ENCODING);
+        IndexInput input = open(VECTOR_COUNT, BLOCK_SIZE);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> reader.reset(input, -1));
+        assertTrue(e.getMessage().contains("negative"), e.getMessage());
+    }
+
+    @Test
+    void testAdvance_whenNotResetOntoACluster_thenThrows() {
+        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(BLOCK_SIZE, DIMENSION, ENCODING);
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> reader.advance(0));
+        assertTrue(e.getMessage().contains("reset"), e.getMessage());
+    }
+
+    /** A reader of this fixture's geometry, already pointed at {@code input}. */
+    private static ScalarQuantizedBlockReader reader(IndexInput input, int blockSize, int vectorCount) {
+        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(blockSize, DIMENSION, ENCODING);
+        reader.reset(input, vectorCount);
+        return reader;
     }
 
     private IndexInput open(int vectorCount, int blockSize) throws IOException {

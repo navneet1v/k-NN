@@ -1,16 +1,13 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.clustering;
 
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnMergeAbortChecker;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
 import org.opensearch.knn.clusterann.ClusteringResult;
 import org.opensearch.knn.clusterann.math.VectorMath;
 import org.opensearch.knn.clusterann.parallel.ParallelVectorProcessor;
+import org.opensearch.knn.clusterann.stats.ClusterANNStat;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -79,6 +76,7 @@ public final class ClusterBuilder {
             .build();
 
         HierarchicalKMeans.Result result = HierarchicalKMeans.cluster(vectors, hConfig, initialCentroids);
+        ClusterANNStat.LLOYD_ITERATIONS.record(result.iterations());
         float[][] centroids = result.centroids();
         int[] assignments = result.assignments();
         int numCentroids = result.numCentroids();
@@ -89,6 +87,7 @@ public final class ClusterBuilder {
         // the space type: assignment/SOAR selection honor the configured metric, but the posting-list
         // pruning (CLIP early termination, inter-cluster max-distance pruning) is defined in terms of
         // L2 distance for every space type, so the values stored here must be L2.
+        KnnMergeAbortChecker.ensureMergeNotAborted();
         float[] distances = computePrimaryDistances(vectors, centroids, assignments, executor);
 
         int[] soarAssignments;
@@ -96,6 +95,7 @@ public final class ClusterBuilder {
         int[][] extraSoarAssignments = null;
         float[][] extraSoarDistances = null;
         if (ClusterBuilderConstants.SOAR_LAMBDA > 0 && numCentroids > 1) {
+            KnnMergeAbortChecker.ensureMergeNotAborted();
             SoarResult soar = computeSOAR(
                 vectors,
                 centroids,

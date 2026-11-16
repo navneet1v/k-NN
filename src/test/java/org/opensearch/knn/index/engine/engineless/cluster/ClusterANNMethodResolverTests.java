@@ -80,23 +80,16 @@ public class ClusterANNMethodResolverTests extends KNNTestCase {
         assertEncoderSQBits(result.getKnnMethodContext(), 4);
     }
 
-    public void test4xRejected() {
-        ValidationException e = expectThrows(
-            ValidationException.class,
-            () -> resolver.resolveMethod(
-                userContext(new HashMap<>()),
-                configContext(VectorDataType.FLOAT, CompressionLevel.x4),
-                false,
-                SpaceType.L2
-            )
+    public void test4xMapsToInt8() {
+        ResolvedMethodContext result = resolver.resolveMethod(
+            userContext(new HashMap<>()),
+            configContext(VectorDataType.FLOAT, CompressionLevel.x4),
+            false,
+            SpaceType.L2
         );
-        assertTrue(
-            "Error message should call out the supported levels explicitly, got: " + e.getMessage(),
-            e.getMessage().contains("8x")
-                && e.getMessage().contains("16x")
-                && e.getMessage().contains("32x")
-                && e.getMessage().contains("4x")
-        );
+
+        assertEquals(CompressionLevel.x4, result.getCompressionLevel());
+        assertEncoderSQBits(result.getKnnMethodContext(), 8);
     }
 
     public void test1xRejected() {

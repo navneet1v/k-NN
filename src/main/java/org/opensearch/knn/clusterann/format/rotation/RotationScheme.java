@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format.rotation;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -19,7 +14,10 @@ public enum RotationScheme {
     NONE(ClusterANNFormatConstants.ROTATION_NONE),
 
     /** A dense random Gaussian rotation held in {@code .clar}, applied to EUCLIDEAN fields. */
-    RANDOM_GAUSSIAN(ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN);
+    RANDOM_GAUSSIAN(ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN),
+
+    /** A data-blind Hadamard (FWHT) rotation; applied for every metric by the data-blind int8 backend. */
+    HADAMARD(ClusterANNFormatConstants.ROTATION_HADAMARD);
 
     private final int code;
 

@@ -5,12 +5,11 @@
 
 package org.opensearch.knn.clusterann.write.block.scalar;
 
-import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
+import org.opensearch.knn.clusterann.read.block.scalar.Lucene104Backports;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.knn.clusterann.read.block.scalar.Lucene104Backports;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer.QuantizationResult;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 
@@ -32,7 +31,8 @@ import java.io.IOException;
  * 4-bit {@code PACKED_NIBBLE}, whose whole codes are packed two per byte. Any other encoding is rejected.
  *
  * <p>Each block is written struct-of-arrays, corrective terms first, then the packed codes. Every block holds
- * {@link #blockSize()} vectors except the last, which may be partial. Blocks carry no header; the vector
+ * {@link #blockSize()} vectors except the last, which may be partial. Every vector occupies
+ * {@link #bytesPerVector} bytes, so a block of {@code n} vectors is exactly {@code n} times that. Blocks carry no header; the vector
  * count comes from the sequence length recorded in the field's metadata.
  *
  * <pre>
@@ -47,6 +47,9 @@ import java.io.IOException;
 public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFormat.Writer {
 
     private static final String UNSUPPORTED_ENCODING = "unsupported scalar encoding: ";
+
+    /** Corrective-term bytes each vector carries in a block: lower, upper, add and sum, one int each. */
+    private static final int CORRECTIVE_BYTES = 4 * Integer.BYTES;
 
     private final IndexOutput out;
     private final int blockSize;
@@ -75,30 +78,56 @@ public final class OptimizedScalarQuantizedBlockWriter implements BlockVectorFor
     /** Vectors currently buffered in the columns — the next write position; reset per sequence. */
     private int buffered;
 
+    /**
+     * @param out        the output the blocks are appended to
+     * @param blockSize  vectors per block
+     * @param dimension  the field's vector dimension
+     * @param quantizer  the quantizer each vector is encoded with
+     * @param encoding   the scalar encoding the codes are packed with
+     * @param centroid   the center every vector in the sequence is quantized against
+     */
     public OptimizedScalarQuantizedBlockWriter(
         final IndexOutput out,
-        final int ioFetchBytes,
+        final int blockSize,
         final int dimension,
         final OptimizedScalarQuantizer quantizer,
         final ScalarEncoding encoding,
         final float[] centroid
     ) {
         this.out = out;
+        this.blockSize = blockSize;
         this.dimension = dimension;
         this.quantizer = quantizer;
         this.encoding = encoding;
         this.centroid = centroid;
-        // The budget is resolved here because this is what knows a vector's cost: the layout below is this
-        // class's own, so nothing above it has to agree about how many vectors a block holds.
-        this.blockSize = ScalarBlockLayout.blockSize(ioFetchBytes, encoding, dimension);
+        this.quantized = new byte[encoding.getDiscreteDimensions(dimension)];
+        this.packed = new byte[packedLength(encoding, dimension)];
+        this.codeLength = packed.length;
         this.lower = new float[blockSize];
         this.upper = new float[blockSize];
         this.add = new float[blockSize];
         this.sum = new int[blockSize];
-        this.quantized = new byte[encoding.getDiscreteDimensions(dimension)];
-        this.packed = new byte[ScalarBlockLayout.packedLength(encoding, dimension)];
-        this.codeLength = packed.length;
         this.codes = new byte[blockSize * codeLength];
+    }
+
+    /**
+     * Bytes one vector occupies in a block: its four corrective terms plus its packed codes.
+     *
+     * @param encoding  the scalar encoding the codes are packed with
+     * @param dimension the field's vector dimension
+     * @throws UnsupportedOperationException if this writer does not support {@code encoding}
+     */
+    static int bytesPerVector(final ScalarEncoding encoding, final int dimension) {
+        return CORRECTIVE_BYTES + packedLength(encoding, dimension);
+    }
+
+    private static int packedLength(final ScalarEncoding encoding, final int dimension) {
+        return switch (encoding) {
+            case SINGLE_BIT_QUERY_NIBBLE, DIBIT_QUERY_NIBBLE, PACKED_NIBBLE -> encoding.getDocPackedLength(
+                encoding.getDiscreteDimensions(dimension)
+            );
+            default -> throw new UnsupportedOperationException(UNSUPPORTED_ENCODING + encoding);
+        };
     }
 
     @Override

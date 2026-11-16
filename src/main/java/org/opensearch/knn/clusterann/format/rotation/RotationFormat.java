@@ -1,14 +1,9 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format.rotation;
 
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 
-import org.opensearch.common.Nullable;
+import javax.annotation.Nullable;
 import java.io.IOException;
 
 /**

@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read;
 
 import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
@@ -37,7 +32,7 @@ public final class ClusterANNFieldMetaEncoder {
     public static final byte SIMILARITY_COSINE = 2;
 
     private int dimension = 8;
-    private int ioFetchBytes = 32 * 1024;
+    private int blockSize = 32;
     private int vectorCount = 30;
     private int centroidCount = 3;
     private byte similarityFunction = SIMILARITY_L2;
@@ -73,13 +68,13 @@ public final class ClusterANNFieldMetaEncoder {
     /** Written on the same terms as {@link #clarOffset}. */
     private long clarLength = 64L;
 
-    public ClusterANNFieldMetaEncoder ioFetchBytes(int ioFetchBytes) {
-        this.ioFetchBytes = ioFetchBytes;
+    public ClusterANNFieldMetaEncoder dimension(int dimension) {
+        this.dimension = dimension;
         return this;
     }
 
-    public ClusterANNFieldMetaEncoder dimension(int dimension) {
-        this.dimension = dimension;
+    public ClusterANNFieldMetaEncoder blockSize(int blockSize) {
+        this.blockSize = blockSize;
         return this;
     }
 
@@ -206,6 +201,7 @@ public final class ClusterANNFieldMetaEncoder {
     /** Writes the entry, in the order {@link ClusterANNFieldMeta#read} reads it. */
     public void write(DataOutput out) throws IOException {
         out.writeVInt(dimension);
+        out.writeVInt(blockSize);
         out.writeVInt(vectorCount);
         out.writeVInt(declaredCentroidCount == null ? centroidCount : declaredCentroidCount);
         out.writeByte(similarityFunction);

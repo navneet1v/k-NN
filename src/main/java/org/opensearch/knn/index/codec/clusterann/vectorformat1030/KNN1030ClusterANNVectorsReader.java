@@ -5,6 +5,12 @@
 
 package org.opensearch.knn.index.codec.clusterann.vectorformat1030;
 
+import org.apache.lucene.codecs.lucene95.OrdToDocDISIReaderConfiguration;
+import org.apache.lucene.codecs.lucene90.IndexedDISI;
+import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
+import org.opensearch.knn.clusterann.read.block.scalar.datablind.JavaInt8ScoreComputer;
+import org.opensearch.knn.clusterann.read.block.scalar.JavaAdcScoreComputer;
+import org.opensearch.knn.clusterann.read.ScoreComputer;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnVectorsReader;
@@ -143,7 +149,8 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
                         postings.slice("clap_" + suffix, fieldMeta.clapOffset(), fieldMeta.clapLength()),
                         centroids.slice("centroids_" + suffix, fieldMeta.clacOffset(), fieldMeta.clacLength()),
                         rotationSlice(fieldMeta, suffix),
-                        field.value
+                        field.value,
+                        javaScoreComputer(fieldMeta)
                     )
                 );
             }
@@ -244,14 +251,22 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
             return;
         }
 
-        final LongValues ordToDoc = fieldClusters.ordToDoc();
+        final OrdToDocDISIReaderConfiguration ordToDocConfig = fieldClusters.clusterMeta().ordToDoc();
+        final LongValues ordToDoc = ordToDoc(ordToDocConfig, postings);
         final OrdinalTranslatedKnnCollector translatedKnnCollector = new OrdinalTranslatedKnnCollector(
             knnCollector,
             (ord) -> Math.toIntExact(ordToDoc.get(ord))
         );
         Bits acceptedOrds = buildAcceptedOrds(acceptDocs, ordToDoc, fieldClusters.numVectors());
 
-        int[] probes = CentroidPlanner.plan(fieldClusters, query, PlanParams.of(fieldClusters.numClusters()));
+        int[] probes = CentroidPlanner.plan(
+            fieldClusters,
+            query,
+            PlanParams.of(fieldClusters.numClusters()),
+            knnCollector.k(),
+            acceptDocs,
+            () -> IndexedDISI.asDocIndexIterator(ordToDocConfig.getIndexedDISI(postings))
+        );
 
         float[] scanQuery = new float[query.length];
         fieldClusters.rotation().rotate(query, scanQuery);
@@ -320,7 +335,7 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
             if (info == null) {
                 throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
             }
-            final ClusterANNFieldMeta field = ClusterANNFieldMeta.read(meta, ioFetchBytes);
+            final ClusterANNFieldMeta field = ClusterANNFieldMeta.read(meta);
             validateFieldEntry(info, field, segmentReadState.segmentInfo.maxDoc(), meta);
             if (!field.isEmpty()) {
                 fields.put(fieldNumber, field);
@@ -374,5 +389,19 @@ public class KNN1030ClusterANNVectorsReader extends KnnVectorsReader {
                 meta
             );
         }
+    }
+
+    /** The format's own computer for a field's quantizer; the SIMD seam is not wired in this build. */
+    private static ScoreComputer javaScoreComputer(final ClusterANNFieldMeta fieldMeta) {
+        return fieldMeta.quantizerId() == ClusterANNFormatConstants.QUANTIZER_DATA_BLIND_INT8
+            ? JavaInt8ScoreComputer.INSTANCE
+            : JavaAdcScoreComputer.INSTANCE;
+    }
+
+    private static LongValues ordToDoc(final OrdToDocDISIReaderConfiguration config, final IndexInput postings) throws IOException {
+        if (config.isDense() || config.isEmpty()) {
+            return LongValues.IDENTITY;
+        }
+        return config.getDirectMonotonicReader(postings);
     }
 }

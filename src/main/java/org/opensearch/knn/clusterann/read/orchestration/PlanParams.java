@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.orchestration;
 
 /**
@@ -20,8 +15,11 @@ package org.opensearch.knn.clusterann.read.orchestration;
  */
 public record PlanParams(int minProbes, int maxProbes) {
 
-    /** Multiple of √centroids a plan may probe at most. */
-    public static final int NPROBE_MULTIPLIER = 2;
+    /** Hard cap on the multiplier. */
+    public static final double CAP_MULTIPLIER = 32.0;
+
+    /** Exponent applied to selectivity when computing the probe multiplier. */
+    public static final double SELECTIVITY_EXPONENT = 1.0 / 3.0;
 
     /** Probes a plan will not go below, however few clusters the field has. */
     public static final int MIN_NPROBE = 10;
@@ -43,10 +41,20 @@ public record PlanParams(int minProbes, int maxProbes) {
      * @param numCentroids the field's cluster count
      */
     public static PlanParams of(int numCentroids) {
+        return forSelectivity(numCentroids, 1.0);
+    }
+
+    /** Bounds for a given selectivity: ceil(multiplier(s) * floor(sqrt(centroids))). */
+    static PlanParams forSelectivity(int numCentroids, double selectivity) {
         int root = (int) Math.sqrt(numCentroids);
-        int maxProbes = Math.max(1, Math.min(NPROBE_MULTIPLIER * root, numCentroids));
+        int maxProbes = Math.max(1, Math.min((int) Math.ceil(multiplier(selectivity) * root), numCentroids));
         // The floor cannot exceed the ceiling: on a small field there are not ten clusters to insist on.
         int minProbes = Math.min(Math.max(MIN_NPROBE, root), maxProbes);
         return new PlanParams(minProbes, maxProbes);
+    }
+
+    /** m(s) = min(32, 1 + 2 / s^SELECTIVITY_EXPONENT). */
+    static double multiplier(double selectivity) {
+        return Math.min(CAP_MULTIPLIER, 1.0 + 2.0 / Math.pow(selectivity, SELECTIVITY_EXPONENT));
     }
 }

@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block.scalar;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -24,6 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.read.Centroid;
 import org.opensearch.knn.clusterann.read.PostingScorer;
 import org.opensearch.knn.clusterann.read.ScanParams;
+import org.opensearch.knn.clusterann.read.orchestration.ScanBuffers;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 
 import java.io.IOException;
@@ -50,11 +46,6 @@ class SQScanContextClusterTests {
     private static final int PACKED_BYTES = ENCODING.getDocPackedLength(DIMENSION);
 
     private static final int BLOCK_SIZE = 4;
-    /**
-     * The budget that yields exactly {@link #BLOCK_SIZE} vectors: the cluster is handed bytes and derives the
-     * count itself, so a test that wants a known block size has to state it in bytes.
-     */
-    private static final int IO_FETCH_BYTES = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(ENCODING, DIMENSION);
     private static final int CLUSTER_SIZE = 10;
     private static final int CENTROID_ORDINAL = 7;
     private static final String FILE = "posting";
@@ -95,7 +86,7 @@ class SQScanContextClusterTests {
     @Test
     void testScorer_whenNothingIsFiltered_thenVisitsEveryEntryInPostingOrder() throws IOException {
         // given
-        PostingScorer scorer = cluster().scorer(scanContext(), null);
+        PostingScorer scorer = scorer(cluster(), null);
 
         // when
         List<Integer> visited = drain(scorer);
@@ -112,7 +103,7 @@ class SQScanContextClusterTests {
         accepted.set(ORDINALS[0]);
         accepted.set(ORDINALS[5]);
         accepted.set(ORDINALS[9]);
-        PostingScorer scorer = cluster().scorer(scanContext(), accepted);
+        PostingScorer scorer = scorer(cluster(), accepted);
 
         // when
         List<Integer> visited = drain(scorer);
@@ -124,7 +115,7 @@ class SQScanContextClusterTests {
     @Test
     void testScorer_thenEveryScoreIsAUsableSimilarity() throws IOException {
         // given
-        PostingScorer scorer = cluster().scorer(scanContext(), null);
+        PostingScorer scorer = scorer(cluster(), null);
 
         // when / then
         while (scorer.advance(Float.NEGATIVE_INFINITY)) {
@@ -144,8 +135,8 @@ class SQScanContextClusterTests {
         ScalarQuantizedCluster cluster = cluster();
 
         // when
-        List<Integer> first = drain(cluster.scorer(scanContext(), null));
-        List<Integer> second = drain(cluster.scorer(scanContext(), null));
+        List<Integer> first = drain(scorer(cluster, null));
+        List<Integer> second = drain(scorer(cluster, null));
 
         // then
         assertEquals(CLUSTER_SIZE, first.size());
@@ -166,7 +157,7 @@ class SQScanContextClusterTests {
 
         // when
         ScanContext context = cluster.prepareScan(ScanParams.of(query()));
-        List<Integer> visited = drain(cluster.scorer(context, null));
+        List<Integer> visited = drain(cluster.scorer(context, null, buffers()));
 
         // then
         assertArrayEquals(ORDINALS, visited.stream().mapToInt(Integer::intValue).toArray());
@@ -179,7 +170,7 @@ class SQScanContextClusterTests {
         ScalarQuantizedCluster cluster = cluster();
 
         // when
-        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query())), null);
+        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query())), null, buffers());
 
         // then
         while (scorer.advance(Float.NEGATIVE_INFINITY)) {
@@ -235,7 +226,7 @@ class SQScanContextClusterTests {
         ScalarQuantizedCluster cluster = cluster(dimension, encoding);
 
         // when
-        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query(dimension))), null);
+        PostingScorer scorer = cluster.scorer(cluster.prepareScan(ScanParams.of(query(dimension))), null, buffers(dimension, encoding));
 
         // then
         int scored = 0;
@@ -304,7 +295,7 @@ class SQScanContextClusterTests {
 
     /**
      * A scan obtains every cluster it might visit and scans only the nearest few, so obtaining one must cost
-     * nothing at all — not the posting header, and not the centroid. Hinting does not count as scanning.
+     * nothing at all — not the posting header, and not the centroid.
      */
     @Test
     void testConstructor_thenReadsNothing() throws IOException {
@@ -314,11 +305,9 @@ class SQScanContextClusterTests {
 
         // when
         ScalarQuantizedCluster cluster = cluster(input, centroidSupplier);
-        cluster.prefetch(true);
-        cluster.prefetch(false);
 
         // then
-        assertEquals(0, input.reads(), "obtaining and hinting a cluster must not read its posting");
+        assertEquals(0, input.reads(), "obtaining a cluster must not read its posting");
         assertEquals(0, centroidSupplier.calls, "nor its centroid");
         assertEquals(CENTROID_ORDINAL, cluster.ordinal(), "identity comes from the caller, not from the file");
         assertEquals(CLUSTER_SIZE, cluster.size());
@@ -333,9 +322,9 @@ class SQScanContextClusterTests {
         ScalarQuantizedCluster cluster = cluster(input, centroidSupplier);
 
         // when
-        drain(cluster.scorer(scanContext(), null));
+        drain(scorer(cluster, null));
         int headerReads = input.reads();
-        drain(cluster.scorer(scanContext(), null));
+        drain(scorer(cluster, null));
 
         // then
         assertTrue(headerReads > 0, "the first scan has to read the header");
@@ -357,7 +346,7 @@ class SQScanContextClusterTests {
         long beforeScan = cluster.ramBytesUsed();
 
         // when
-        drain(cluster.scorer(scanContext(), null));
+        drain(scorer(cluster, null));
 
         // then
         long afterScan = cluster.ramBytesUsed();
@@ -367,22 +356,48 @@ class SQScanContextClusterTests {
         assertTrue(afterScan - beforeScan >= ordinalsAndCentroid, "both must be counted, not just one");
     }
 
-    // ---------------------------------------------------------------- prefetch
+    // ---------------------------------------------------------------- helpers
 
-    @ParameterizedTest(name = "partial={0}")
-    @ValueSource(booleans = { true, false })
-    void testPrefetch_thenHintsWithoutReading(boolean partial) throws IOException {
-        // given
+    @Test
+    void testScorer_whenGivenAnotherFamilysBuffers_thenRejectsThemRatherThanMisreadThem() throws IOException {
         ScalarQuantizedCluster cluster = cluster();
+        ScanContext context = cluster.prepareScan(ScanParams.of(query()));
 
-        // when — a hint is advisory, so the assertion is that it is accepted and changes nothing
-        cluster.prefetch(partial);
-
-        // then
-        assertArrayEquals(ORDINALS, drain(cluster.scorer(scanContext(), null)).stream().mapToInt(Integer::intValue).toArray());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> cluster.scorer(context, null, new ScanBuffers() {
+        }));
+        assertTrue(e.getMessage().contains("scan buffers"), e.getMessage());
     }
 
-    // ---------------------------------------------------------------- helpers
+    @Test
+    void testScorer_whenGivenNoBuffers_thenRejectsThemRatherThanAllocateItsOwn() throws IOException {
+        ScalarQuantizedCluster cluster = cluster();
+        ScanContext context = cluster.prepareScan(ScanParams.of(query()));
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> cluster.scorer(context, null, null));
+        assertTrue(e.getMessage().contains("scan buffers"), e.getMessage());
+    }
+
+    @Test
+    void testScorer_whenAnEarlierScorerIsLeftUndrained_thenItRefusesToScoreTheWrongCluster() throws IOException {
+        ScalarQuantizedCluster first = cluster();
+        ScalarQuantizedCluster second = cluster();
+        SQScanBuffers shared = buffers();
+
+        PostingScorer stale = first.scorer(first.prepareScan(ScanParams.of(query())), null, shared);
+        second.scorer(second.prepareScan(ScanParams.of(query())), null, shared); // moves the shared reader
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> stale.advance(Float.NEGATIVE_INFINITY));
+        assertTrue(e.getMessage().contains("another cluster"), e.getMessage());
+    }
+
+    /** Buffers of this field's geometry, as {@code ClusterFactory#newScanBuffers()} makes in production. */
+    private static SQScanBuffers buffers() {
+        return buffers(DIMENSION, ENCODING);
+    }
+
+    private static SQScanBuffers buffers(int dimension, ScalarEncoding encoding) {
+        return new SQScanBuffers(BLOCK_SIZE, dimension, encoding);
+    }
 
     private static float expectedDistance(int position) {
         return 0.5f + position * 0.25f;
@@ -406,7 +421,7 @@ class SQScanContextClusterTests {
         return query;
     }
 
-    private static SQScanContext scanContext() {
+    private static SQScanContext scanContext(ScalarQuantizedCluster cluster) {
         float[] query = query();
 
         // The kernels read four query stripes per doc byte, so this length is what keeps them in bounds.
@@ -414,7 +429,7 @@ class SQScanContextClusterTests {
         for (int i = 0; i < transposed.length; i++) {
             transposed[i] = (byte) (0x33 + i);
         }
-        return new SQScanContext(query, 4, 1.0f, transposed, -0.75f, 0.05f, 42f, 2.5f);
+        return new SQScanContext(query, 4, 1.0f, transposed, -0.75f, 0.05f, 42f, 2.5f, VectorSimilarityFunction.EUCLIDEAN);
     }
 
     /**
@@ -533,6 +548,11 @@ class SQScanContextClusterTests {
         return cluster(countingInput(), new CountingCentroid());
     }
 
+    /** A scorer over {@code cluster} for a hand-built context bound to that cluster's reader. */
+    private static PostingScorer scorer(ScalarQuantizedCluster cluster, FixedBitSet accepted) throws IOException {
+        return cluster.scorer(scanContext(cluster), accepted, buffers());
+    }
+
     /** As {@link #cluster()}, at a dimension and encoding of the caller's choosing rather than the fixture's. */
     private ScalarQuantizedCluster cluster(int dimension, ScalarEncoding encoding) throws IOException {
         return new ScalarQuantizedCluster(
@@ -540,11 +560,12 @@ class SQScanContextClusterTests {
             CENTROID_ORDINAL,
             CLUSTER_SIZE,
             new CountingCentroid(dimension),
-            IO_FETCH_BYTES,
+            BLOCK_SIZE,
             dimension,
             encoding,
             new OptimizedScalarQuantizer(VectorSimilarityFunction.EUCLIDEAN),
-            VectorSimilarityFunction.EUCLIDEAN
+            VectorSimilarityFunction.EUCLIDEAN,
+            JavaAdcScoreComputer.INSTANCE
         );
     }
 
@@ -554,11 +575,12 @@ class SQScanContextClusterTests {
             CENTROID_ORDINAL,
             CLUSTER_SIZE,
             centroidSupplier,
-            IO_FETCH_BYTES,
+            BLOCK_SIZE,
             DIMENSION,
             ENCODING,
             new OptimizedScalarQuantizer(VectorSimilarityFunction.EUCLIDEAN),
-            VectorSimilarityFunction.EUCLIDEAN
+            VectorSimilarityFunction.EUCLIDEAN,
+            JavaAdcScoreComputer.INSTANCE
         );
     }
 

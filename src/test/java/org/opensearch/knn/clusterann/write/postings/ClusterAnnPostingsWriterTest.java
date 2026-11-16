@@ -1,14 +1,9 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.write.postings;
 
-import org.opensearch.knn.clusterann.read.block.scalar.ScalarBlockLayout;
 import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
-import org.opensearch.knn.clusterann.read.block.scalar.ScalarEncoding;
+import org.apache.lucene.index.AbortedMergeThread;
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
@@ -32,15 +27,9 @@ import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROT
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * End-to-end component test for the {@code .clap} write path: postings writer -&gt; cluster writer -&gt; real
- * block writer. Reads the whole file back and checks, per cluster, the header (ordinals nearest-first,
- * secondary bitset, distances) and every code block's struct-of-arrays bytes against an independent reference
- * quantization of the member at that position. Covers the unrotated path and the rotated (L2) path, where the
- * rotation must be applied to both the vectors and the centroid before quantization.
- */
 class ClusterAnnPostingsWriterTest {
 
     private static final int DIMENSION = 2;
@@ -48,13 +37,10 @@ class ClusterAnnPostingsWriterTest {
     private static final int DOC_BITS = 1;
     private static final VectorSimilarityFunction METRIC = VectorSimilarityFunction.EUCLIDEAN;
     private static final ScalarEncoding ENCODING = ScalarEncoding.fromNumBits(DOC_BITS);
-    /**
-     * The budget that yields exactly {@link #BLOCK_SIZE} vectors. The writer is handed bytes and the block
-     * layout derives the count, so a test wanting a known block shape has to state it in bytes.
-     */
-    private static final int IO_FETCH_BYTES = BLOCK_SIZE * ScalarBlockLayout.bytesPerVector(ENCODING, DIMENSION);
     private static final int DISCRETE_DIMS = ENCODING.getDiscreteDimensions(DIMENSION);
     private static final int CODE_LENGTH = ENCODING.getDocPackedLength(DISCRETE_DIMS);
+    /** A storage block that holds exactly {@link #BLOCK_SIZE} vectors: 4 corrective ints plus the codes each. */
+    private static final int STORAGE_BLOCK_BYTES = BLOCK_SIZE * (4 * Integer.BYTES + CODE_LENGTH);
 
     private static final float[][] VECTORS = { { 0f, 0f }, { 1f, 0f }, { 0f, 1f }, { 1f, 1f } };
     private static final float[][] CENTROIDS = { { 0f, 0f }, { 1f, 1f } };
@@ -76,8 +62,7 @@ class ClusterAnnPostingsWriterTest {
         final PostingsRegions layout;
         try (Directory dir = new ByteBuffersDirectory()) {
             try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                layout = new ClusterAnnPostingsWriter(IO_FETCH_BYTES, quantization(), RotationFormats.create(ROTATION_NONE, DIMENSION))
-                    .write(out, clustering(), source(), METRIC);
+                layout = postingsWriter(RotationFormats.create(ROTATION_NONE, DIMENSION)).write(out, clustering(), source(), METRIC);
             }
 
             // Two clusters were written: two distinct, non-empty regions laid out back to back, together
@@ -131,7 +116,7 @@ class ClusterAnnPostingsWriterTest {
         final PostingsRegions layout;
         try (Directory dir = new ByteBuffersDirectory()) {
             try (IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
-                layout = new ClusterAnnPostingsWriter(IO_FETCH_BYTES, quantization(), rotation).write(out, clustering(), source(), METRIC);
+                layout = postingsWriter(rotation).write(out, clustering(), source(), METRIC);
             }
 
             final float[][] rotatedVectors = new float[VECTORS.length][];
@@ -242,10 +227,31 @@ class ClusterAnnPostingsWriterTest {
         return FloatVectorValues.fromFloats(List.of(VECTORS[0], VECTORS[1], VECTORS[2], VECTORS[3]), DIMENSION);
     }
 
+    private static ClusterAnnPostingsWriter postingsWriter(final Rotation rotation) {
+        assertEquals(
+            BLOCK_SIZE,
+            ClusterWriterFactory.vectorsPerBlock(quantization(), DIMENSION, STORAGE_BLOCK_BYTES),
+            "the storage block must hold exactly BLOCK_SIZE vectors"
+        );
+        return new ClusterAnnPostingsWriter(new ClusterWriterFactory(quantization(), DIMENSION, METRIC, STORAGE_BLOCK_BYTES), rotation);
+    }
+
     private static QuantizationParams quantization() {
         return QuantizationParams.of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, DOC_BITS);
     }
 
     private record Expected(float lower, float upper, float add, int sum, byte[] code) {
+    }
+
+    @Test
+    void write_onAbortedMergeThread_stopsWithMergeAborted() throws IOException {
+        try (Directory dir = new ByteBuffersDirectory(); IndexOutput out = dir.createOutput("clap", IOContext.DEFAULT)) {
+            final ClusterAnnPostingsWriter writer = postingsWriter(RotationFormats.create(ROTATION_NONE, DIMENSION));
+
+            assertThrows(
+                MergePolicy.MergeAbortedException.class,
+                () -> AbortedMergeThread.run(() -> writer.write(out, clustering(), source(), METRIC))
+            );
+        }
     }
 }

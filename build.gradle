@@ -469,6 +469,8 @@ tasks.register('generateTaskGraph') {
 // Dependencies
 //****************************************************************************/
 dependencies {
+    // JSR-305 annotations used by the ClusterANN sources ported from SearchServicesKnnVectorFormats
+    compileOnly group: 'com.google.code.findbugs', name: 'jsr305', version: '3.0.2'
     api "org.opensearch:opensearch:${opensearch_version}"
     api project(":remote-index-build-client")
     compileOnly "org.opensearch.plugin:opensearch-scripting-painless-spi:${versions.opensearch}"

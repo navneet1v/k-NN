@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.orchestration;
 
 import org.apache.lucene.util.Bits;
@@ -17,8 +12,12 @@ import java.io.IOException;
  *
  * <p>A new instance is created per query and serves every cluster in that query, so implementations
  * may hold query-level context and reuse it across clusters rather than re-deriving it per cluster.
- * {@link #scorer} may be called concurrently for different clusters, so that context must be
- * thread-safe.
+ *
+ * <p><b>One cluster at a time.</b> The clusters of a single scan are visited sequentially: a caller must drain the
+ * scorer it was given before asking for the next cluster's. That lets the per-query context carry mutable scratch
+ * sized to the field — the data-blind int8 family reuses one block reader across every probe this way, rather than
+ * allocating a block's worth of buffers per cluster — so neither the context nor the scorer need be thread-safe.
+ * Concurrency across queries is unaffected, since each query gets its own instance.
  */
 public interface ClusterScan {
 

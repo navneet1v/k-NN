@@ -328,7 +328,7 @@ public class KNN1030ClusterANNVectorsWriterFlushTest extends LuceneTestCase {
             final int ioFetchBytes = meta.readVInt();
             for (int fieldNumber = meta.readInt(); fieldNumber != KNN1030ClusterANNVectorsFormat.NO_MORE_FIELDS; fieldNumber = meta
                 .readInt()) {
-                entries.put(fieldNumber, ClusterANNFieldMeta.read(meta, ioFetchBytes));
+                entries.put(fieldNumber, ClusterANNFieldMeta.read(meta));
             }
             CodecUtil.checkFooter(meta);
         }

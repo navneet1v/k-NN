@@ -28,7 +28,7 @@ import static org.opensearch.knn.common.KNNConstants.MODE_PARAMETER;
 import static org.opensearch.knn.common.KNNConstants.SQ_BITS;
 
 /**
- * ClusterANN's resolver. Supports {@code compression_level} (8x, 16x, 32x; 8x default) and an
+ * ClusterANN's resolver. Supports {@code compression_level} (4x, 8x, 16x, 32x; 8x default) and an
  * optional {@code encoder} block that must agree with the compression level. Uses the shared
  * {@link AbstractMethodResolver} helpers to reconcile the two.
  */
@@ -37,6 +37,7 @@ public class ClusterANNMethodResolver extends AbstractMethodResolver {
     private static final Set<SpaceType> SUPPORTED_SPACE_TYPES = Set.of(SpaceType.L2, SpaceType.INNER_PRODUCT, SpaceType.COSINESIMIL);
 
     private static final Set<CompressionLevel> SUPPORTED_COMPRESSION = Set.of(
+        CompressionLevel.x4,
         CompressionLevel.x8,
         CompressionLevel.x16,
         CompressionLevel.x32

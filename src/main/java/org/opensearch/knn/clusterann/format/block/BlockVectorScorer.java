@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format.block;
 
 import lombok.Getter;
@@ -38,6 +33,15 @@ public interface BlockVectorScorer {
      * or beyond the block's vector count are never set.
      */
     float scoreBlock(FixedBitSet validPos, BlockCandidates out);
+
+    /**
+     * Throws if {@link #reader()} has moved to another sequence since this scorer was built. A family whose buffers
+     * are shared across sequences overrides this; one that owns its own cannot go stale, so the default does nothing.
+     *
+     * <p>The walk calls this before touching anything the move would have invalidated, which includes the parallel
+     * arrays the caller holds, not just the reader's own buffers.
+     */
+    default void ensureCurrentSequence() {}
 
     /** Scores from one block, in ascending position order. A caller-owned buffer the scorer fills. */
     @Getter

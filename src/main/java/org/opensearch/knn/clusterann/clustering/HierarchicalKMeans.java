@@ -1,12 +1,8 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.clustering;
 
 import lombok.Builder;
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnMergeAbortChecker;
 import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
@@ -150,7 +146,7 @@ public final class HierarchicalKMeans {
             assignments = assignLeavesCoarseToFine(vectors, n, centroids, leafParents, topResult.centroids(), config);
         }
 
-        return new Result(centroids, assignments, centroids.length, dim);
+        return new Result(centroids, assignments, centroids.length, dim, topResult.iterations());
     }
 
     /**
@@ -173,6 +169,7 @@ public final class HierarchicalKMeans {
         float[][] topCentroids,
         Config config
     ) throws IOException {
+        KnnMergeAbortChecker.ensureMergeNotAborted();
         int numTop = topCentroids.length;
         int numLeaves = leafCentroids.length;
         int probe = Math.min(ASSIGN_PROBE_TOP, numTop);
@@ -276,6 +273,7 @@ public final class HierarchicalKMeans {
             return result;
         }
 
+        KnnMergeAbortChecker.ensureMergeNotAborted();
         int k = Math.max(2, Math.min(MAX_K_PER_LEVEL, (n + config.targetSize / 2) / config.targetSize));
         FloatVectorValues levelSubset = extractSubset(allVectors, indices);
         KMeans.Result kResult = KMeans.cluster(levelSubset, k, kmeansConfig);
@@ -492,12 +490,19 @@ public final class HierarchicalKMeans {
         private final int[] assignments;
         private final int numCentroids;
         private final int dimension;
+        /** Lloyd iterations run by the top-level k-means (0 for the trivial single-cluster/empty cases). */
+        private final int iterations;
 
         Result(float[][] centroids, int[] assignments, int numCentroids, int dimension) {
+            this(centroids, assignments, numCentroids, dimension, 0);
+        }
+
+        Result(float[][] centroids, int[] assignments, int numCentroids, int dimension, int iterations) {
             this.centroids = centroids;
             this.assignments = assignments;
             this.numCentroids = numCentroids;
             this.dimension = dimension;
+            this.iterations = iterations;
         }
 
         public float[][] centroids() {
@@ -514,6 +519,11 @@ public final class HierarchicalKMeans {
 
         public int dimension() {
             return dimension;
+        }
+
+        /** Lloyd iterations the top-level k-means ran to converge; a clustering-effort signal. */
+        public int iterations() {
+            return iterations;
         }
 
         public float[] getCentroid(int i) {

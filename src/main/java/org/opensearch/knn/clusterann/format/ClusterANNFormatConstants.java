@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format;
 
 /**
@@ -20,6 +15,12 @@ public final class ClusterANNFormatConstants {
     /** {@code .clam} rotation code for a dense random Gaussian rotation held in {@code .clar}. */
     public static final int ROTATION_RANDOM_GAUSSIAN = 1;
 
+    /** {@code .clam} rotation code for a data-blind Hadamard (FWHT) rotation; {@code .clar} holds only its seed. */
+    public static final int ROTATION_HADAMARD = 2;
+
     /** {@code .clam} quantizer code for optimized scalar quantization. */
     public static final int QUANTIZER_OPTIMIZED_SQ = 0;
+
+    /** {@code .clam} quantizer code for data-blind absolute int8 (IVFaster-style). */
+    public static final int QUANTIZER_DATA_BLIND_INT8 = 1;
 }

@@ -1,12 +1,8 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.clustering;
 
 import lombok.Builder;
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnMergeAbortChecker;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
 import org.opensearch.knn.clusterann.math.VectorMath;
@@ -136,6 +132,8 @@ public final class KMeans {
         // Neighborhood-aware: first 2 iterations check all centroids, then use centroidProximityMap
         int[][] centroidProximityMap = null;
         for (iter = 0; iter < config.maxIterations && !converged; iter++) {
+            // One Lloyd iteration is the unit of work an aborted merge can still pay for.
+            KnnMergeAbortChecker.ensureMergeNotAborted();
             if (iter == 2 && k > PROXIMITY_MAP_SIZE * 2) {
                 sanitizeCentroids(centroids, k, dim);
                 centroidProximityMap = computeCentroidProximityMap(centroids, k);
@@ -168,6 +166,7 @@ public final class KMeans {
         // hitting the iteration cap means the veto above had no next iteration to reconcile them,
         // so counts/assignments would otherwise be inconsistent with the returned centroids.
         if (needsSampling || lastIterationRebalanced) {
+            KnnMergeAbortChecker.ensureMergeNotAborted();
             assignmentStep(vectors, centroids, assignments, clusterSums, clusterCounts, config, centroidProximityMap);
             updateCentroids(centroids, clusterSums, clusterCounts, k, config.metric);
             sanitizeCentroids(centroids, k, dim);

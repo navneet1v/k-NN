@@ -1,11 +1,8 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.clustering;
 
+import org.apache.lucene.index.AbortedMergeThread;
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
 import org.junit.jupiter.api.AfterAll;
@@ -540,5 +537,17 @@ class KMeansTests {
             vectors.add(v);
         }
         return vectors;
+    }
+
+    @Test
+    void cluster_onAbortedMergeThread_stopsWithMergeAborted() {
+        List<float[]> vectors = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            vectors.add(new float[] { i, i % 7 });
+        }
+        FloatVectorValues source = FloatVectorValues.fromFloats(vectors, 2);
+        KMeans.Config config = KMeans.Config.builder().seed(42L).build();
+
+        assertThrows(MergePolicy.MergeAbortedException.class, () -> AbortedMergeThread.run(() -> KMeans.cluster(source, 4, config)));
     }
 }

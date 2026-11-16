@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format;
 
 /**
@@ -19,7 +14,7 @@ package org.opensearch.knn.clusterann.format;
 public record QuantizationParams(ClusterANNEncoding encoding, int docBits) {
 
     /** The default encoding: Lucene optimized scalar quantization at 2 bits per coordinate. */
-    public static final QuantizationParams DEFAULT = of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 2);
+    public static final QuantizationParams DEFAULT = of(ClusterANNEncoding.OPTIMIZED_SCALAR_QUANTIZATION, 4);
 
     /**
      * A quantization for the given backend at {@code bits} bits per coordinate.

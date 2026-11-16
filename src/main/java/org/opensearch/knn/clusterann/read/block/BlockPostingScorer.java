@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block;
 
 import org.apache.lucene.util.Bits;
@@ -10,7 +5,6 @@ import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.knn.clusterann.format.block.BlockVectorFormat;
 import org.opensearch.knn.clusterann.format.block.BlockVectorScorer;
 import org.opensearch.knn.clusterann.read.PostingScorer;
-import org.opensearch.knn.plugin.stats.ClusterANNQueryValue;
 
 import java.io.IOException;
 
@@ -29,6 +23,7 @@ public class BlockPostingScorer implements PostingScorer {
     private final BlockVectorScorer scorer;
     private final BlockVectorFormat.Reader reader;
     private final int[] ordinals;
+    private final int vectorCount;
     private final Bits acceptedOrds;
     private final int numBlocks;
     private final int blockSize;
@@ -50,10 +45,16 @@ public class BlockPostingScorer implements PostingScorer {
     /** Cursor into {@link #candidates}. */
     private int cursor = -1;
 
-    public BlockPostingScorer(final BlockVectorScorer scorer, final int[] ordinals, final Bits acceptedOrds) {
+    /**
+     * @param ordinals position-to-ordinal map for this posting; only the first {@code vectorCount} entries are
+     *     this posting's, since it may be a buffer the scan reuses across postings
+     * @param vectorCount entries in this posting
+     */
+    public BlockPostingScorer(final BlockVectorScorer scorer, final int[] ordinals, final int vectorCount, final Bits acceptedOrds) {
         this.scorer = scorer;
         this.reader = scorer.reader();
         this.ordinals = ordinals;
+        this.vectorCount = vectorCount;
         this.acceptedOrds = acceptedOrds;
         this.numBlocks = reader.numBlocks();
         this.blockSize = reader.blockSize();
@@ -66,6 +67,9 @@ public class BlockPostingScorer implements PostingScorer {
         if (cursor != -1 && ++cursor < candidates.getSize()) {
             return true;
         }
+        // Before reading `ordinals`, which may be a buffer the scan shares: if the reader has moved on, the walk
+        // would silently run out of blocks against another posting's ordinals rather than fail.
+        scorer.ensureCurrentSequence();
 
         while (reader.advance(blockIndex)) {
             int currentBlock = blockIndex;
@@ -78,14 +82,9 @@ public class BlockPostingScorer implements PostingScorer {
 
             int postingVectorOffset = currentBlock * blockSize;
             int vectorCount = reader.blockVectorCount();
-            int wantedInBlock = validPos(postingVectorOffset, vectorCount);
-            if (wantedInBlock != 0) {
+            if (validPos(postingVectorOffset, vectorCount) != 0) {
                 reader.fetchBlock();
                 reader.readBlockVectors();
-                // Counted here because here is where it becomes true: this block was read, and its accepted positions
-                // are about to be scored whether or not any of them ends up competitive.
-                ClusterANNQueryValue.BLOCKS_FETCHED.increment();
-                ClusterANNQueryValue.VECTORS_SCORED.incrementBy(wantedInBlock);
 
                 float maxScore = scorer.scoreBlock(validPos, candidates);
                 scoredBlockVectorOffset = postingVectorOffset;
@@ -122,7 +121,7 @@ public class BlockPostingScorer implements PostingScorer {
 
         for (int block = from; block < numBlocks; block++) {
             int startPos = block * blockSize;
-            int endPos = Math.min(startPos + blockSize, ordinals.length);
+            int endPos = Math.min(startPos + blockSize, vectorCount);
             for (int pos = startPos; pos < endPos; pos++) {
                 if (acceptedOrds.get(ordinals[pos])) {
                     return block;

@@ -1,14 +1,9 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.write.postings;
 
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnMergeAbortChecker;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexOutput;
-import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterMembers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter.ClusterRegion;
 import org.opensearch.knn.clusterann.ClusteringResult;
@@ -28,13 +23,15 @@ import java.io.IOException;
  */
 public final class ClusterAnnPostingsWriter implements PostingsWriter {
 
-    private final int ioFetchBytes;
-    private final QuantizationParams quantizationParams;
+    private final ClusterWriterFactory clusterWriterFactory;
     private final Rotation rotation;
 
-    public ClusterAnnPostingsWriter(final int ioFetchBytes, final QuantizationParams quantizationParams, final Rotation rotation) {
-        this.ioFetchBytes = ioFetchBytes;
-        this.quantizationParams = quantizationParams;
+    /**
+     * @param clusterWriterFactory creates the writer for each of the field's clusters
+     * @param rotation             the field's rotation, applied to vectors and centroids as they are read
+     */
+    public ClusterAnnPostingsWriter(final ClusterWriterFactory clusterWriterFactory, final Rotation rotation) {
+        this.clusterWriterFactory = clusterWriterFactory;
         this.rotation = rotation;
     }
 
@@ -58,8 +55,9 @@ public final class ClusterAnnPostingsWriter implements PostingsWriter {
         final int[] centroidLengths = new int[numCentroids];
         final int[] clusterSizes = new int[numCentroids];
         for (int c = 0; c < numCentroids; c++) {
+            KnnMergeAbortChecker.ensureMergeNotAborted(); // one cluster's encode is the unit an aborted merge still pays for
             final ClusterMembers members = sortMembersByDistance(clusters, postings[c], metric);
-            final ClusterRegion region = writeCluster(out, members, clusters.centroids()[c], vectors, metric);
+            final ClusterRegion region = writeCluster(out, members, clusters.centroids()[c], vectors);
             // Relative to this field's .clap start (clapOffset): the reader slices the region and seeks within it.
             centroidOffsets[c] = region.startOffset() - clapOffset;
             centroidLengths[c] = clusterRegionLength(c, region.length());
@@ -87,18 +85,11 @@ public final class ClusterAnnPostingsWriter implements PostingsWriter {
         final IndexOutput out,
         final ClusterMembers members,
         final float[] centroid,
-        final FloatVectorValues vectors,
-        final VectorSimilarityFunction metric
+        final FloatVectorValues vectors
     ) throws IOException {
         final int dimension = vectors.dimension();
-        final float[] preparedCentroid = rotateCentroid(rotation, centroid, dimension);
-        final ClusterWriter clusterWriter = ClusterWriterFactory.newWriter(
-            quantizationParams,
-            ioFetchBytes,
-            dimension,
-            metric,
-            preparedCentroid
-        );
+        final float[] rotatedCentroid = rotateCentroid(rotation, centroid, dimension);
+        final ClusterWriter clusterWriter = clusterWriterFactory.newWriter(rotatedCentroid);
         final FloatVectorValues clusterVectors = new PreparedFloatVectorValues(vectors, members.ordinals(), rotation);
         return clusterWriter.write(out, clusterVectors, members);
     }

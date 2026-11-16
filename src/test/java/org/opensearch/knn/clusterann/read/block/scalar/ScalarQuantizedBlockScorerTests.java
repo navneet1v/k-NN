@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read.block.scalar;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -33,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Fast, isolated unit tests for {@link ScalarQuantizedBlockScorer} (JUnit 5).
+ * Fast, isolated unit tests for {@link ScalarQuantizedBlockScorer} driving {@link JavaAdcScoreComputer} (JUnit 5).
  */
 class ScalarQuantizedBlockScorerTests {
 
@@ -61,6 +56,15 @@ class ScalarQuantizedBlockScorerTests {
 
         // when / then
         assertSame(reader, scorer(reader, VectorSimilarityFunction.EUCLIDEAN).reader());
+    }
+
+    @Test
+    void testComputeContext_thenQueryContextIsTheQuery() throws IOException {
+        // given
+        SQScanContext query = scanContext(ENCODING, ScanParams.DEFAULT_QUERY_BITS, VectorSimilarityFunction.EUCLIDEAN);
+
+        // when / then
+        assertSame(query, computeContext(reader(), ENCODING, query).queryContext());
     }
 
     // ---------------------------------------------------------------- output contract
@@ -279,7 +283,7 @@ class ScalarQuantizedBlockScorerTests {
     }
 
     /**
-     * A width with no kernel is refused when the encoding is handed over, not when scoring first reaches for one: the
+     * A width with no kernel is refused when the scorer is built, not when scoring first reaches for one: the
      * reader stores any width happily, so the constructor is the only place that can catch it early. SEVEN_BIT is the
      * case at hand - 7-bit codes occupy a byte per dimension like 8-bit, but nothing has been verified to score them.
      */
@@ -313,6 +317,28 @@ class ScalarQuantizedBlockScorerTests {
         assertEquals(1, out.getSize());
     }
 
+    /** A context built from one cluster's buffers cannot score another: the arrays inside it are the cluster's own. */
+    @Test
+    void testConstructor_whenContextHoldsAnotherReadersBuffers_thenThrows() throws IOException {
+        // given
+        ScalarQuantizedBlockReader own = reader();
+        ScalarQuantizedBlockReader other = reader();
+        SQComputeContext context = computeContext(
+            other,
+            ENCODING,
+            scanContext(ENCODING, ScanParams.DEFAULT_QUERY_BITS, VectorSimilarityFunction.EUCLIDEAN)
+        );
+
+        // when
+        IllegalArgumentException e = assertThrows(
+            IllegalArgumentException.class,
+            () -> new ScalarQuantizedBlockScorer(own, context, JavaAdcScoreComputer.INSTANCE)
+        );
+
+        // then
+        assertTrue(e.getMessage().contains("another reader"), e.getMessage());
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static BlockVectorScorer.BlockCandidates candidates() {
@@ -338,7 +364,9 @@ class ScalarQuantizedBlockScorerTests {
         int packedBytes = encoding.getDocPackedLength(DIMENSION);
         write(directory, packedBytes);
         IndexInput in = directory.openInput(FILE, IOContext.DEFAULT);
-        return new ScalarQuantizedBlockReader(in, BLOCK_SIZE, VECTOR_COUNT, DIMENSION, encoding);
+        ScalarQuantizedBlockReader reader = new ScalarQuantizedBlockReader(BLOCK_SIZE, DIMENSION, encoding);
+        reader.reset(in, VECTOR_COUNT);
+        return reader;
     }
 
     private static ScalarQuantizedBlockScorer scorer(ScalarQuantizedBlockReader reader, VectorSimilarityFunction sim) {
@@ -359,17 +387,35 @@ class ScalarQuantizedBlockScorerTests {
         ScalarEncoding encoding,
         int queryBits
     ) {
-        return new ScalarQuantizedBlockScorer(reader, scanContext(encoding, queryBits), encoding, sim);
+        return new ScalarQuantizedBlockScorer(
+            reader,
+            computeContext(reader, encoding, scanContext(encoding, queryBits, sim)),
+            JavaAdcScoreComputer.INSTANCE
+        );
+    }
+
+    /** The reader's block buffers and the prepared query, as {@code ScalarQuantizedCluster.scorer} assembles them. */
+    static SQComputeContext computeContext(ScalarQuantizedBlockReader reader, ScalarEncoding encoding, SQScanContext query) {
+        return new SQComputeContext(
+            reader.codes(),
+            reader.lower(),
+            reader.upper(),
+            reader.addCor(),
+            reader.sum(),
+            encoding,
+            encoding.getDocPackedLength(DIMENSION),
+            query
+        );
     }
 
     /**
      * A prepared query, built here rather than by quantising one.
      *
-     * <p>The scorer no longer quantises: it takes the already-prepared {@link SQScanContext}, so a test supplies the
+     * <p>The scorer does not quantise: it takes the already-prepared {@link SQScanContext}, so a test supplies the
      * quantised query directly. That is the point of the split — the arithmetic can be driven with chosen values
      * instead of whatever {@code OptimizedScalarQuantizer} happens to produce.
      */
-    private static SQScanContext scanContext(ScalarEncoding encoding, int queryBits) {
+    static SQScanContext scanContext(ScalarEncoding encoding, int queryBits, VectorSimilarityFunction sim) {
         float[] query = new float[DIMENSION];
         for (int i = 0; i < DIMENSION; i++) {
             query[i] = (i % 7) * 0.25f - 0.5f;
@@ -391,7 +437,8 @@ class ScalarQuantizedBlockScorerTests {
             -0.75f,      // lower
             0.05f,       // scale
             42f,         // componentSum
-            2.5f         // correction
+            2.5f,        // correction
+            sim
         );
     }
 

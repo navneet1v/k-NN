@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
@@ -19,6 +14,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.opensearch.knn.clusterann.format.ClusterANNFormatConstants;
+import org.opensearch.knn.clusterann.read.block.scalar.JavaAdcScoreComputer;
 import org.opensearch.knn.clusterann.read.block.scalar.SQScanContext;
 
 import java.io.IOException;
@@ -87,8 +83,9 @@ class ClusterFactoryTests {
     }
 
     /** Only scalar quantization exists so far; the other ids are in the layout but unimplemented. */
+    /** Only optimized scalar (0) and data-blind int8 (1) exist; the other ids are in the layout but unimplemented. */
     @ParameterizedTest(name = "quantizerId {0}")
-    @ValueSource(ints = { 1, 2, 7, -1 })
+    @ValueSource(ints = { 2, 7, -1 })
     void testCreate_whenQuantizerIsNotScalar_thenThrows(int quantizerId) {
         // given / when
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> factory(fieldMeta(quantizerId, 1)).create(0));
@@ -144,7 +141,8 @@ class ClusterFactoryTests {
             fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1),
             clap(),
             centroids,
-            null
+            null,
+            JavaAdcScoreComputer.INSTANCE
         );
 
         // when
@@ -167,7 +165,13 @@ class ClusterFactoryTests {
         // when / then
         assertThrows(
             Exception.class,
-            () -> new ClusterFactory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1), clap(), shortClac, null),
+            () -> new ClusterFactory(
+                fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1),
+                clap(),
+                shortClac,
+                null,
+                JavaAdcScoreComputer.INSTANCE
+            ),
             "a centroid region running past the end of the file cannot be sliced"
         );
     }
@@ -188,7 +192,13 @@ class ClusterFactoryTests {
         // when / then
         assertThrows(
             Exception.class,
-            () -> new ClusterFactory(fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1), shortClap, clac(), null).create(2),
+            () -> new ClusterFactory(
+                fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1),
+                shortClap,
+                clac(),
+                null,
+                JavaAdcScoreComputer.INSTANCE
+            ).create(2),
             "a posting running past the end of the file cannot be sliced"
         );
     }
@@ -218,7 +228,8 @@ class ClusterFactoryTests {
             fieldMeta(ClusterANNFormatConstants.QUANTIZER_OPTIMIZED_SQ, 1, CENTROID_LENGTHS, rotated),
             clap(),
             centroidsWithBothRegions(),
-            rotated ? open("clar", 64) : null
+            rotated ? open("clar", 64) : null,
+            JavaAdcScoreComputer.INSTANCE
         );
 
         // when — preparing a scan is what reads the centroid, and it carries the norm it read
@@ -233,7 +244,7 @@ class ClusterFactoryTests {
 
     /** One factory per field, as the reader builds it: it owns the data inputs and the centroid cursor. */
     private ClusterFactory factory(ClusterANNFieldMeta fieldMeta) throws IOException {
-        return new ClusterFactory(fieldMeta, clap(), clac(), null);
+        return new ClusterFactory(fieldMeta, clap(), clac(), null, JavaAdcScoreComputer.INSTANCE);
     }
 
     /** Centroids are only read when a cluster is scanned, so an empty region is enough to build one. */

@@ -21,7 +21,8 @@ import static org.opensearch.knn.common.KNNConstants.SQ_BITS;
 
 /**
  * Scalar-quantization encoder for the ClusterANN engineless method. Maps a stamped {@code bits}
- * value on the resolved encoder context to a {@link CompressionLevel} (1 → x32, 2 → x16, 4 → x8).
+ * value on the resolved encoder context to a {@link CompressionLevel} (1 → x32, 2 → x16, 4 → x8,
+ * 8 → x4).
  */
 public class ClusterANNSQEncoder implements Encoder {
 
@@ -29,7 +30,9 @@ public class ClusterANNSQEncoder implements Encoder {
     public static final int DEFAULT_BITS = 4;
 
     private static final Set<VectorDataType> SUPPORTED_DATA_TYPES = ImmutableSet.of(VectorDataType.FLOAT);
-    private static final Set<Integer> SUPPORTED_BITS = Set.of(1, 2, 4);
+    // 8 bits selects the data-blind int8 backend rather than optimized scalar quantization; see
+    // ClusterANNMethod#resolveKnnVectorsFormat.
+    private static final Set<Integer> SUPPORTED_BITS = Set.of(1, 2, 4, 8);
 
     private static final MethodComponent METHOD_COMPONENT = MethodComponent.Builder.builder(NAME)
         .addSupportedDataTypes(SUPPORTED_DATA_TYPES)
@@ -63,6 +66,7 @@ public class ClusterANNSQEncoder implements Encoder {
      */
     public static int compressionLevelToBits(CompressionLevel level) {
         return switch (level) {
+            case x4 -> 8;
             case x8 -> 4;
             case x16 -> 2;
             case x32 -> 1;
@@ -75,6 +79,7 @@ public class ClusterANNSQEncoder implements Encoder {
             case 1 -> CompressionLevel.x32;
             case 2 -> CompressionLevel.x16;
             case 4 -> CompressionLevel.x8;
+            case 8 -> CompressionLevel.x4;
             default -> CompressionLevel.NOT_CONFIGURED;
         };
     }

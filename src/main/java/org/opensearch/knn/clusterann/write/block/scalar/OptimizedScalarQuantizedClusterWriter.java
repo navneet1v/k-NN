@@ -11,7 +11,7 @@ import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
-import org.opensearch.knn.clusterann.read.block.scalar.ScalarQuantizers;
+import org.opensearch.knn.quantization.ScalarQuantizers;
 import org.opensearch.knn.clusterann.write.postings.ClusterWriter;
 
 import java.io.IOException;
@@ -33,33 +33,48 @@ import java.io.IOException;
  *   ordinals                    clusterSize x int              one int per member, in array order
  *   secondaryAssignmentBitSet   bits2words(clusterSize) x long bit i set =&gt; ordinals[i] is a spill member
  *   distances                   clusterSize x float            parallel to ordinals
- *   code blocks                 SoA blocks sized by the budget (see OptimizedScalarQuantizedBlockWriter)
+ *   code blocks                 SoA blocks of blockSize        (see OptimizedScalarQuantizedBlockWriter)
  * </pre>
  */
 public final class OptimizedScalarQuantizedClusterWriter implements ClusterWriter {
 
-    private final int ioFetchBytes;
+    private final int vectorsPerBlock;
     private final int dimension;
     private final OptimizedScalarQuantizer quantizer;
     private final ScalarEncoding encoding;
     private final float[] centroid;
 
     /**
-     * @param ioFetchBytes the byte budget of one code block, handed to the block writer as it stands; what it
-     *     works out to in vectors is that writer's business, since it is the one that knows what a vector costs
-     * @param dimension the field's vector dimension
-     * @param metric    the field's similarity function, driving the scalar quantizer
-     * @param docBits   bits per quantized coordinate, driving the scalar code width
-     * @param centroid  this cluster's centre, already rotation-prepared, that members are quantized against
+     * Vectors per code block for a field this writer stores: as many whole vectors as one storage block holds, and at
+     * least one, so a vector wider than a storage block gets a code block of its own.
+     *
+     * @param storageBlockBytes bytes the storage layer fetches in one block
+     * @param dimension  the field's vector dimension
+     * @param docBits    bits per quantized coordinate, driving the scalar code width
+     */
+    public static int vectorsPerBlock(final int storageBlockBytes, final int dimension, final int docBits) {
+        return Math.max(
+            1,
+            storageBlockBytes / OptimizedScalarQuantizedBlockWriter.bytesPerVector(ScalarEncoding.fromNumBits(docBits), dimension)
+        );
+    }
+
+    /**
+     * @param storageBlockBytes bytes the storage layer fetches in one block; code blocks hold
+     *     {@link #vectorsPerBlock(int, int, int)} vectors
+     * @param dimension         the field's vector dimension
+     * @param metric            the field's similarity function, driving the scalar quantizer
+     * @param docBits           bits per quantized coordinate, driving the scalar code width
+     * @param centroid          this cluster's centre, already rotation-prepared, that members are quantized against
      */
     public OptimizedScalarQuantizedClusterWriter(
-        final int ioFetchBytes,
+        final int storageBlockBytes,
         final int dimension,
         final VectorSimilarityFunction metric,
         final int docBits,
         final float[] centroid
     ) {
-        this.ioFetchBytes = ioFetchBytes;
+        this.vectorsPerBlock = vectorsPerBlock(storageBlockBytes, dimension, docBits);
         this.dimension = dimension;
         this.quantizer = ScalarQuantizers.forSimilarity(metric);
         this.encoding = ScalarEncoding.fromNumBits(docBits);
@@ -79,7 +94,7 @@ public final class OptimizedScalarQuantizedClusterWriter implements ClusterWrite
         final long start = out.getFilePointer();
 
         writeHeader(out, members);
-        new OptimizedScalarQuantizedBlockWriter(out, ioFetchBytes, dimension, quantizer, encoding, centroid).writeBlocks(vectors);
+        new OptimizedScalarQuantizedBlockWriter(out, vectorsPerBlock, dimension, quantizer, encoding, centroid).writeBlocks(vectors);
 
         return new ClusterRegion(start, out.getFilePointer() - start);
     }

@@ -28,6 +28,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.TaskExecutor;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.IOUtils;
+import org.opensearch.knn.clusterann.format.ClusterANNEncoding;
 import org.opensearch.knn.clusterann.format.ClusterANNFieldMeta;
 import org.opensearch.knn.clusterann.format.QuantizationParams;
 import org.opensearch.knn.clusterann.write.CentroidsWriter;
@@ -348,7 +349,6 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
 
         if (vectors.size() == 0) {
             ClusterANNFieldMeta.empty(
-                ioFetchBytes,
                 dimension,
                 metric,
                 quantizationParams.docBits(),
@@ -360,7 +360,11 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
             return;
         }
 
-        final RotationScheme scheme = RotationScheme.forMetric(metric);
+        // Data-blind int8 requires a Hadamard rotation for every metric (one fixed int8 grid is only accurate once
+        // per-dimension variance is flattened); every other backend keeps the metric default.
+        final RotationScheme scheme = quantizationParams.encoding() == ClusterANNEncoding.DATA_BLIND_INT8
+            ? RotationScheme.HADAMARD
+            : RotationScheme.forMetric(metric);
         final int rotationId = scheme.code();
         final Rotation rotation = RotationFormats.create(rotationId, dimension);
         final Optional<RotationRegion> rotationRegion = maybeWriteRotation(scheme, rotation);
@@ -369,18 +373,16 @@ public class KNN1030ClusterANNVectorsWriter extends KnnVectorsWriter {
         final ClusteringResult clusters = ClusterBuilder.build(vectors, metric, executor);
         log.debug("field [{}]: clustered into {} centroid(s)", name, clusters.numCentroids());
 
-        final PostingsRegions postings = new ClusterAnnPostingsWriter(ioFetchBytes, quantizationParams, rotation).write(
-            clap,
-            clusters,
-            vectors,
-            metric
-        );
+        final PostingsRegions postings = new ClusterAnnPostingsWriter(
+            new ClusterWriterFactory(quantizationParams, dimension, metric, ioFetchBytes),
+            rotation
+        ).write(clap, clusters, vectors, metric);
 
         final CentroidOffsets centroids = writeCentroids(clusters, rotation);
         final long clacLength = clac.getFilePointer() - centroids.clacOffset();
 
         final ClusterANNFieldMeta meta = new ClusterANNFieldMeta(
-            ioFetchBytes,
+            ClusterWriterFactory.vectorsPerBlock(quantizationParams, dimension, ioFetchBytes),
             dimension,
             vectors.size(),
             clusters.numCentroids(),

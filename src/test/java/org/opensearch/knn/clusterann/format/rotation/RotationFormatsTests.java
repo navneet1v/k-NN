@@ -1,8 +1,3 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.format.rotation;
 
 import org.apache.lucene.store.ByteBuffersDirectory;
@@ -18,6 +13,7 @@ import java.io.IOException;
 
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_NONE;
 import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_RANDOM_GAUSSIAN;
+import static org.opensearch.knn.clusterann.format.ClusterANNFormatConstants.ROTATION_HADAMARD;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -46,6 +42,7 @@ class RotationFormatsTests {
     void testForId_thenMapsEachIdToItsImplementation() {
         assertInstanceOf(IdentityRotationFormat.class, RotationFormats.forId(ROTATION_NONE));
         assertInstanceOf(BlockDiagonalRotationFormat.class, RotationFormats.forId(ROTATION_RANDOM_GAUSSIAN));
+        assertInstanceOf(HadamardRotationFormat.class, RotationFormats.forId(ROTATION_HADAMARD));
     }
 
     /**
@@ -53,7 +50,7 @@ class RotationFormatsTests {
      * time guarantee rather than a runtime check, so this only has to show the pair meets at all.
      */
     @ParameterizedTest(name = "rotationId {0}")
-    @ValueSource(ints = { ROTATION_NONE, ROTATION_RANDOM_GAUSSIAN })
+    @ValueSource(ints = { ROTATION_NONE, ROTATION_RANDOM_GAUSSIAN, ROTATION_HADAMARD })
     void testCreate_thenProducesARotationOfTheDimensionAsked(int rotationId) {
         assertEquals(DIMENSION, RotationFormats.create(rotationId, DIMENSION).dimension());
     }
@@ -64,7 +61,7 @@ class RotationFormatsTests {
      * were never stored in, silently.
      */
     @ParameterizedTest(name = "rotationId {0}")
-    @ValueSource(ints = { 2, 7, 42, -1 })
+    @ValueSource(ints = { 7, 42, -1 })
     void testForId_whenTheFamilyIsUnknown_thenThrows(int rotationId) {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> RotationFormats.forId(rotationId));
         assertTrue(e.getMessage().contains("Unsupported rotationId: " + rotationId), e.getMessage());
@@ -78,7 +75,7 @@ class RotationFormatsTests {
      * points usable at all — a caller with only an id never sees the implementation's own type.
      */
     @ParameterizedTest(name = "rotationId {0}")
-    @ValueSource(ints = { ROTATION_NONE, ROTATION_RANDOM_GAUSSIAN })
+    @ValueSource(ints = { ROTATION_NONE, ROTATION_RANDOM_GAUSSIAN, ROTATION_HADAMARD })
     void testWrite_thenTheSameIdReadsItBack(int rotationId) throws IOException {
         // given
         Rotation generated = RotationFormats.create(rotationId, DIMENSION);
@@ -134,6 +131,16 @@ class RotationFormatsTests {
                 () -> RotationFormats.write(42, out, RotationFormats.create(ROTATION_NONE, DIMENSION))
             );
         }
+    }
+
+    /**
+     * A Hadamard field always writes an 8-byte seed, so a null region at read time is metadata inconsistency, not an
+     * empty region. Defaulting the seed would rebuild a different rotation and score against the wrong space silently,
+     * so {@code read} refuses it rather than defaulting — unlike the identity, whose null region is the normal case.
+     */
+    @Test
+    void testRead_whenHadamardRegionIsMissing_thenThrowsRatherThanDefaulting() {
+        assertThrows(IllegalStateException.class, () -> RotationFormats.read(ROTATION_HADAMARD, null, DIMENSION));
     }
 
     // ---------------------------------------------------------------- identity

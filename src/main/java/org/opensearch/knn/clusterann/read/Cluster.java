@@ -1,14 +1,11 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.clusterann.read;
 
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
+import org.opensearch.knn.clusterann.read.orchestration.ScanBuffers;
 import org.opensearch.knn.clusterann.read.orchestration.ScanContext;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 
 /**
@@ -33,27 +30,28 @@ public interface Cluster extends Accountable {
     int size();
 
     /**
-     * Hint that this posting will be read soon so it can be warmed first.
-     *
-     * @param partial if true, hint only the prefix the scan is near-certain to read and stream the rest;
-     *     if false, hint the whole posting (better when a near-full scan is expected).
-     */
-    void prefetch(boolean partial) throws IOException;
-
-    /**
      * A cursor over this cluster's postings that scores as it advances.
+     *
+     * <p>{@code scanBuffers} belong to the scan, not to this cluster, so the scorer returned here must be drained
+     * before another cluster of the same scan is scored — a scan visits its clusters one at a time (see
+     * {@link org.opensearch.knn.clusterann.read.orchestration.ClusterScan}).
      *
      * @param scanContext a query prepared by this cluster's own {@link #prepareScan}; a context from
      *     another cluster family is rejected rather than misread.
      * @param acceptedOrds ordinals to score, or {@code null} for all; honoured before scoring, not after.
+     * @param scanBuffers buffers for this field, from
+     *     {@link org.opensearch.knn.clusterann.read.ClusterFactory#newScanBuffers()}, reused by every
+     *     cluster of the scan; buffers from another family are rejected rather than misread. {@code null} for a
+     *     family that keeps none.
      */
-    PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds) throws IOException;
+    PostingScorer scorer(ScanContext scanContext, Bits acceptedOrds, @Nullable ScanBuffers scanBuffers) throws IOException;
 
     /**
      * Turn a query into the form this cluster scores against.
      *
      * @param scanParams the query and per-query knobs to honour
-     * @return a context for {@link #scorer}, valid only for this cluster
+     * @return a context for {@link #scorer}, valid only for this cluster unless the context itself reports
+     *     {@link ScanContext#isQueryScoped()}
      */
     ScanContext prepareScan(ScanParams scanParams) throws IOException;
 }

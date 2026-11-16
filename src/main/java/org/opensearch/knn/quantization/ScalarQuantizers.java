@@ -1,9 +1,4 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
-package org.opensearch.knn.clusterann.read.block.scalar;
+package org.opensearch.knn.quantization;
 
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
