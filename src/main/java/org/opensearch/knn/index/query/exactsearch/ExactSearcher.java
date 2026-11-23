@@ -390,7 +390,7 @@ public class ExactSearcher {
 
         if (quantizationInfo == null || scorerMode == VectorScorerMode.RESCORE) {
             return VectorScorers.createScorer(
-                iteratorValues,
+                floatIteratorValues(reader, fieldInfo, context, scorerMode, quantizationInfo, iteratorValues),
                 context.getFloatQueryVector(),
                 scorerMode,
                 spaceType,
@@ -428,6 +428,31 @@ public class ExactSearcher {
             context.getMatchedDocsIterator(),
             parentBitSet
         );
+    }
+
+    /**
+     * Picks the float vectors to score. With memory-optimized search, the first pass ({@link VectorScorerMode#SCORE}) of a
+     * field without quantization scores the vectors stored in the native engine index (for example FP16 codes in the FAISS
+     * file, which approximate search already reads), instead of reading the full precision flat vectors. Rescoring, and
+     * segments without a native engine index, use the full precision flat vectors.
+     */
+    private static KNNVectorValuesIterator.DocIdsIteratorValues floatIteratorValues(
+        final SegmentReader reader,
+        final FieldInfo fieldInfo,
+        final ExactSearcherContext context,
+        final VectorScorerMode scorerMode,
+        final SegmentLevelQuantizationInfo quantizationInfo,
+        final KNNVectorValuesIterator.DocIdsIteratorValues flatIteratorValues
+    ) throws IOException {
+        if (scorerMode != VectorScorerMode.SCORE
+            || quantizationInfo != null
+            || Boolean.TRUE.equals(context.isMemoryOptimizedSearchEnabled) == false) {
+            return flatIteratorValues;
+        }
+        final KNNVectorValues<?> nativeIndexValues = KNNVectorValuesFactory.getNativeIndexVectorValues(fieldInfo, reader);
+        return nativeIndexValues == null
+            ? flatIteratorValues
+            : (KNNVectorValuesIterator.DocIdsIteratorValues) nativeIndexValues.getVectorValuesIterator();
     }
 
     /**

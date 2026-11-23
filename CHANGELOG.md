@@ -28,3 +28,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 * Added capability to retrieve float data type vectors using doc_values [#3321](https://github.com/opensearch-project/k-NN/pull/3321)
 * Add base64 binary encoding as default format for knn_vector docvalue_fields [#3324](https://github.com/opensearch-project/k-NN/pull/3324)
 * Add support for binary and byte field support in doc_values [#3340](https://github.com/opensearch-project/k-NN/pull/3340)
+* Score the vectors stored in the FAISS file (for example FP16 codes with native SIMD) in exact search with memory-optimized search, instead of reading the full precision flat vectors
