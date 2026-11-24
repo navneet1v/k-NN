@@ -29,3 +29,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 * Add base64 binary encoding as default format for knn_vector docvalue_fields [#3324](https://github.com/opensearch-project/k-NN/pull/3324)
 * Add support for binary and byte field support in doc_values [#3340](https://github.com/opensearch-project/k-NN/pull/3340)
 * Score the vectors stored in the FAISS file (for example FP16 codes with native SIMD) in exact search with memory-optimized search, instead of reading the full precision flat vectors
+* Cache the `knn.feature.prefetch.enabled` feature flag and update it on cluster setting changes, instead of looking up cluster settings on every bulk score call

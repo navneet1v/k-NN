@@ -26,6 +26,7 @@ import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.IndexModule;
 import org.opensearch.knn.index.engine.MemoryOptimizedSearchSupportSpec;
+import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManagerDto;
 import org.opensearch.knn.index.util.IndexHyperParametersUtil;
@@ -620,6 +621,7 @@ public class KNNSettings {
         clusterService.getClusterSettings().addSettingsUpdateConsumer(QUANTIZATION_STATE_CACHE_EXPIRY_TIME_MINUTES_SETTING, it -> {
             quantizationStateCacheManager.rebuildCache();
         });
+        KNNFeatureFlags.initialize(clusterService.getClusterSettings());
     }
 
     /**
